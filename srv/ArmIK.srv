@@ -1,0 +1,7 @@
+string method          # 逆解方法选项："std", "ofst", "comb"
+float64[7] init_joints # 初始关节角度
+geometry_msgs/Pose target_pose # 目标位姿
+---
+float64[7] solution    # 求解结果关节角度
+bool success           # 是否求解成功
+string message         # 详细结果信息
