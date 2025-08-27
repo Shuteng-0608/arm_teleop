@@ -28,6 +28,8 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   geometry_msgs
   roslib
+  sensor_msgs
+  trajectory_msgs
 )
 
 # --- 查找依赖包 ---
@@ -144,7 +146,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES arm
- CATKIN_DEPENDS roscpp rospy std_msgs
+ CATKIN_DEPENDS roscpp rospy std_msgs sensor_msgs trajectory_msgs
 #  DEPENDS system_lib
 )
 
@@ -231,6 +233,7 @@ target_link_libraries(ik_service_node
 catkin_install_python(PROGRAMS
   scripts/main_ros.py
   scripts/test_ik.py
+  scripts/arm_mujoco_ros_interface.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
