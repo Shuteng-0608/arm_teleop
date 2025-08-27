@@ -30,6 +30,8 @@
     <mesh name="link_little_2" file="link_little_2.STL"/>
   </asset>
 
+
+
   <worldbody>
     <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="base_link"/>
     <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="base_link"/>
@@ -142,4 +144,29 @@
       </body>
     </body>
   </worldbody>
+
+  <actuator>
+    <!-- 为每个关节添加执行器 -->
+    <motor name="motor_joint_1" joint="joint_1" gear="1"/>
+    <motor name="motor_joint_2" joint="joint_2" gear="1"/>
+    <motor name="motor_joint_3" joint="joint_3" gear="1"/>
+    <motor name="motor_joint_4" joint="joint_4" gear="1"/>
+    <motor name="motor_joint_5" joint="joint_5" gear="1"/>
+    <motor name="motor_joint_6" joint="joint_6" gear="1"/>
+    <motor name="motor_joint_7" joint="joint_7" gear="1"/>
+    <motor name="motor_joint_hand" joint="joint_hand" gear="1"/>
+    <!-- 为手指关节添加执行器 -->
+    <motor name="motor_joint_thumb_1" joint="joint_thumb_1" gear="1"/>
+    <motor name="motor_joint_thumb_2" joint="joint_thumb_2" gear="1"/>
+    <motor name="motor_joint_index_1" joint="joint_index_1" gear="1"/>
+    <motor name="motor_joint_index_2" joint="joint_index_2" gear="1"/>
+    <motor name="motor_joint_middle_1" joint="joint_middle_1" gear="1"/>
+    <motor name="motor_joint_middle_2" joint="joint_middle_2" gear="1"/>
+    <motor name="motor_joint_ring_1" joint="joint_ring_1" gear="1"/>
+    <motor name="motor_joint_ring_2" joint="joint_ring_2" gear="1"/>
+    <motor name="motor_joint_little_1" joint="joint_little_1" gear="1"/>
+    <motor name="motor_joint_little_2" joint="joint_little_2" gear="1"/>
+  </actuator>
+
+
 </mujoco>
