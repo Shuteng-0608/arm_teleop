@@ -256,3 +256,5 @@ void double_array_to_serial_joints(const double* current_joints_array, SerialJoi
     std::get<5>(current_joints_tuple) = current_joints_array[5];
     std::get<6>(current_joints_tuple) = current_joints_array[6];
 }
+
+

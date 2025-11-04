@@ -5,7 +5,6 @@
 #include <iostream>
 
 
-
 const SerialJoints SerialZeros = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
 
@@ -487,11 +486,13 @@ IKResult ArmKineStd::calculateIK(
             checked_serial_joints.push_back(solution_tuple);
 
         } else {
-            // 打印违规详情，仅用于调试
-            // for (int violation_idx : std::get<2>(validation_result)) {
-            //     std::cout << violation_idx << " ";
-            // }
-            // std::cout << "\n";
+            if (ENABLE_LOG == true){
+                // 打印违规详情，仅用于调试
+                for (int violation_idx : std::get<2>(validation_result)) {
+                    std::cout << violation_idx << " ";
+                }
+                std::cout << "\n";
+            }
         }
     }
 
@@ -1081,6 +1082,93 @@ IKResult ArmKineComb::calculateIK(
     return combined_result;
 }
 
+/**
+ * @brief 计算最佳臂角以找到一个有效的、且关节跳变最小的IK解。
+ * * 逻辑：
+ * 1. 尝试使用 current_arm_angle 进行计算。
+ * 2. 如果失败，遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation。
+ * * @param target_pose 目标位姿。
+ * @param current_joints_array 当前关节角度数组 (JOINT_COUNT个)。
+ * @param current_arm_angle 初始尝试的臂角值。
+ * @param arm_angle_deviation_list 臂角的偏差值列表 (Delta Arm Angle)，默认值: [-0.5, -0.25, 0, 0.25, 0.5]。
+ * @param offset_ref 允许的最大关节跳变阈值。
+ * @return 最佳的IKResult。如果所有尝试都失败，返回一个 is_valid=false 的结果。
+ */
+IKResult ArmKineComb::cal_IK_feasible_armAngle(
+    const Matrix4d& target_pose,
+    double current_joints_array[],
+    double current_arm_angle,
+    const std::vector<double>& arm_angle_deviation_list , // 默认臂角偏差列表
+    double offset_ref  // 默认最大关节跳变阈值
+) {
+    IKResult feasible_res;
+    feasible_res.is_valid = false;
+    int cnt=0;
+
+    
+    // --- 步骤 1: 尝试初始的 current_arm_angle ---
+    
+    double initial_arm_angle = current_arm_angle;
+    
+    IKResult initial_result = ArmKineComb::calculateIK(
+        target_pose,
+        current_joints_array,
+        initial_arm_angle, // 初始臂角
+        std::nullopt
+    );
+
+    // 检查偏差解是否有效，以及检查偏差距离
+    if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
+        // 初始臂角计算成功且解符合要求，直接返回
+        // std::cout << "Optimal IK solution found with initial Arm Angle: " << current_arm_angle << std::endl;
+        return initial_result;
+    }
+    
+    // --- 步骤 2: 遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation ---
+    
+    // 检查偏差列表是否为空
+    if (arm_angle_deviation_list.empty()) {
+        std::cerr << "Warning: Initial arm angle failed and deviation list is empty." << std::endl;
+        return IKResult{}; // 返回一个无效结果
+    }
+
+    // 遍历臂角偏差列表
+    for (double deviation : arm_angle_deviation_list) {
+        cnt ++;
+        // 跳过偏差为0的情况，因为已经在步骤1中计算过了
+        if (std::abs(deviation) < 1e-6) { // 使用一个小的阈值判断是否接近0
+            continue; 
+        }
+        
+        // 计算新的臂角
+        double new_arm_angle = current_arm_angle + deviation;
+
+        // 调用原始的 IK 计算函数
+        IKResult result = calculateIK(
+            target_pose,
+            current_joints_array,
+            new_arm_angle, // 使用计算出的新臂角
+            std::nullopt
+        );
+
+        // 检查 IK 解是否有效且符合跳变要求
+        if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
+            // 找到一个符合所有条件的解，立即返回
+            // std::cout << "Optimal IK solution found with deviated Arm Angle: " << new_arm_angle 
+            //           << " (Deviation: " << deviation << ")" << std::endl;
+            std::cout << "寻找次数： cnt = " << cnt << std::endl;
+            result.arm_angle = new_arm_angle; // 记录使用的臂角
+            return result;
+        }
+    }
+
+    // 如果遍历完所有臂角都没有找到符合条件的解
+    std::cerr << "Warning: No valid IK solution found within deviation limit for any arm angle attempt." << std::endl;
+    return feasible_res; // 返回一个 is_valid=false 的结果
+}
+
+
+
 // --- ArmKine FK 的实现 (沿用 ArmKineOfst 的正解) ---
 FKResult ArmKineComb::calculateFK(const Vector7d& theta) {
     FKResult result;
@@ -1093,7 +1181,243 @@ FKResult ArmKineComb::calculateFK(const Vector7d& theta) {
     }
 }
 
+// 手腕关节
+// --- WristConfig 构造函数的实现 (读取 YAML) ---
+WristConfig::WristConfig(const std::string& filepath) {
 
+    try {
+        YAML::Node config = YAML::LoadFile(filepath);
+
+
+        a_wf = config["wrist_parameters"]["a_wf"].as<double>();
+        ax = config["wrist_parameters"]["ax"].as<double>();
+        ay = config["wrist_parameters"]["ay"].as<double>();
+        az = config["wrist_parameters"]["az"].as<double>();
+        cx = config["wrist_parameters"]["cx"].as<double>();
+        cy = config["wrist_parameters"]["cy"].as<double>();
+        cz = config["wrist_parameters"]["cz"].as<double>();
+        dx = config["wrist_parameters"]["dx"].as<double>();
+        dy = config["wrist_parameters"]["dy"].as<double>();
+        dz = config["wrist_parameters"]["dz"].as<double>();
+
+        // Rod Init Lengths
+        l_m10 = config["motor_init_lengths"]["l_m10"].as<double>();
+        l_m20 = config["motor_init_lengths"]["l_m20"].as<double>();
+        l_m30 = config["motor_init_lengths"]["l_m30"].as<double>();
+
+        // Wrist Joint Parameters
+        d_cx = config["wrist_joint_params"]["d_cx"].as<double>();
+        d_cy = config["wrist_joint_params"]["d_cy"].as<double>();
+        d_cz = config["wrist_joint_params"]["d_cz"].as<double>();
+        d_ax = config["wrist_joint_params"]["d_ax"].as<double>();
+        d_ay = config["wrist_joint_params"]["d_ay"].as<double>();
+        d_az = config["wrist_joint_params"]["d_az"].as<double>();
+
+
+        std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
+
+    } catch (const YAML::BadFile& e) {
+        std::cerr << "Error: Could not open config file: " << filepath << ". " << e.what() << std::endl;
+        // 可以在这里抛出异常或设置默认值
+        throw std::runtime_error("Failed to open kinematics config file.");
+    } catch (const YAML::Exception& e) {
+        std::cerr << "Error parsing config file: " << filepath << ". " << e.what() << std::endl;
+        throw std::runtime_error("Failed to parse kinematics config file.");
+    }
+
+
+
+}
+
+// 构造函数现在只接收最终预计算的数值，将其存储为常量成员
+WristResidual::WristResidual(double in_l1_sq, double in_l2_sq,
+                           double in_G1, double in_G2, double in_G3,
+                           double in_G5, double in_G6, double in_H4, double in_H8)
+    : l1_sq_(in_l1_sq), l2_sq_(in_l2_sq),
+      G1_(in_G1), G2_(in_G2), G3_(in_G3),
+      G5_(in_G5), G6_(in_G6), H4_(in_H4), H8_(in_H8)
+{}
+
+bool WristResidual::Evaluate(double const* const* parameters,
+                             double* residuals,
+                             double** jacobians) const {
+    // 提取优化变量：theta6 和 theta7
+    // parameters[0] 是指向包含优化变量的数组的指针
+    const double theta6 = parameters[0][0]; // 第一个优化变量 (theta6)
+    const double theta7 = parameters[0][1]; // 第二个优化变量 (theta7)
+    
+    // --- 计算残差 (Residuals) ---
+    // 直接使用类中存储的预计算系数（G1_, G2_, ... l1_sq_, l2_sq_）
+    residuals[0] = G1_
+                 + G2_ * std::sin(theta6)
+                 + G3_ * std::cos(theta6)
+                 + G5_ * std::cos(theta7)
+                 + G6_ * std::cos(theta6) * std::cos(theta7)
+                 - (l1_sq_ + l2_sq_); // 注意这里使用 l1_sq_, l2_sq_
+
+    residuals[1] = H4_ * std::sin(theta7)
+                 + H8_ * std::cos(theta6) * std::sin(theta7)
+                 - (l1_sq_ - l2_sq_); // 注意这里使用 l1_sq_, l2_sq_
+
+    // --- 计算雅可比矩阵 (Jacobians) ---
+    // 只有当 jacobians 指针不为空时才计算，并且确保 jacobians[0] 也存在
+    if (jacobians != nullptr && jacobians[0] != nullptr) {
+        double* jac = jacobians[0]; // jac 实际上是一个大小为 4 的数组 (dF1/dtheta6, dF1/dtheta7, dF2/dtheta6, dF2/dtheta7)
+
+        // d(residuals[0])/d(theta6)
+        jac[0] = G2_ * std::cos(theta6) - G3_ * std::sin(theta6) - G6_ * std::sin(theta6) * std::cos(theta7);
+        
+        // d(residuals[0])/d(theta7)
+        jac[1] = -G5_ * std::sin(theta7) - G6_ * std::cos(theta6) * std::sin(theta7);
+        
+        // d(residuals[1])/d(theta6)
+        jac[2] = -H8_ * std::sin(theta6) * std::sin(theta7);
+        
+        // d(residuals[1])/d(theta7)
+        jac[3] = H4_ * std::cos(theta7) + H8_ * std::cos(theta6) * std::cos(theta7);
+    }
+    
+    return true;
+}
+
+// 构造函数：只负责读取 YAML 文件
+WristKinematicsSolver::WristKinematicsSolver(const std::string& config_filepath)
+: raw_config_(config_filepath) {} 
+
+
+WristAngleResult WristKinematicsSolver::CalculateWristFK(double l1, double l2) {
+    WristAngleResult result;
+    result.success = false;
+    result.error_message = "Unknown error during wrist angle calculation.";
+
+    // --- 在这里执行所有预计算 ---
+    const double l1_sq = l1 * l1;
+    const double l2_sq = l2 * l2;
+    const double G1 = 2 * pow(raw_config_.ax,2) + 2 * pow(raw_config_.ay,2) + 2 * pow(raw_config_.az,2)
+                      + pow(raw_config_.cx,2) + pow(raw_config_.cy,2) + pow(raw_config_.cz,2)
+                      + pow(raw_config_.dx,2) + pow(raw_config_.dy,2) + pow(raw_config_.dz,2)
+                      + 2 * pow(raw_config_.a_wf,2);
+    const double G2 = -2 * raw_config_.az * (raw_config_.cz + raw_config_.dz) + 4 * raw_config_.ax * raw_config_.a_wf;
+    const double G3 = -2 * raw_config_.ax * (raw_config_.cz + raw_config_.dz) - 4 * raw_config_.az * raw_config_.a_wf;
+    const double G5 = 2 * raw_config_.ay * (raw_config_.cy - raw_config_.dy) + 2 * raw_config_.a_wf * (raw_config_.cx + raw_config_.dx);
+    const double G6 = -2 * raw_config_.az * (raw_config_.cx + raw_config_.dx);
+    const double H4 = 2 * raw_config_.ay * (raw_config_.cx + raw_config_.dx) - 2 * raw_config_.a_wf * (raw_config_.cy - raw_config_.dy);
+    const double H8 = 2 * raw_config_.az * (raw_config_.cy - raw_config_.dy);
+
+    // 设置 Ceres 问题
+    ceres::Problem problem;
+    double angles_to_optimize[2] = {0.0, 0.0};
+    
+    // 手腕关节的约束范围
+    const double theta6_min = -M_PI / 2;
+    const double theta6_max = M_PI / 2;
+    const double theta7_min = -M_PI / 4;
+    const double theta7_max = M_PI / 4;
+
+    // 将预计算后的系数传递给 WristResidual 构造函数
+    ceres::CostFunction* cost_function = new WristResidual(
+        l1_sq, l2_sq, G1, G2, G3, G5, G6, H4, H8
+    );
+    problem.AddResidualBlock(cost_function, nullptr, angles_to_optimize);
+
+    // --- 添加 Ceres 参数约束 ---
+    problem.SetParameterLowerBound(angles_to_optimize, 0, theta6_min);
+    problem.SetParameterUpperBound(angles_to_optimize, 0, theta6_max);
+    problem.SetParameterLowerBound(angles_to_optimize, 1, theta7_min);
+    problem.SetParameterUpperBound(angles_to_optimize, 1, theta7_max);
+
+    // 设置 Ceres 求解器选项
+    ceres::Solver::Options options;
+    options.max_num_iterations = 1000;
+    options.linear_solver_type = ceres::DENSE_QR;
+    options.minimizer_progress_to_stdout = false;
+    options.function_tolerance = 1e-10;
+    options.parameter_tolerance = 1e-10;
+
+    // 运行求解器
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    
+    // --- ========== 安全检查 ========== ---
+    // 1. 检查 Ceres 优化是否收敛
+    if (summary.termination_type != ceres::CONVERGENCE) {
+        result.error_message = "Ceres optimization failed: " + summary.message;
+        return result;
+    }
+
+    // 2. 检查结果是否为无效数值 (NaN)
+    if (std::isnan(angles_to_optimize[0]) || std::isnan(angles_to_optimize[1])) {
+        result.error_message = "Calculated result contains NaN values.";
+        return result;
+    }
+
+    // 3. 检查结果是否在约束范围内（考虑浮点误差）
+    const double epsilon = 1e-6; // 误差容忍度
+    auto is_within_bounds = [epsilon](double val, double min, double max) {
+        return (val >= min - epsilon) && (val <= max + epsilon);
+    };
+
+    if (!is_within_bounds(angles_to_optimize[0], theta6_min, theta6_max)) {
+        result.error_message = "theta6 out of bounds: calculated value " + std::to_string(angles_to_optimize[0]) +
+                               " is outside of range [" + std::to_string(theta6_min) +
+                               ", " + std::to_string(theta6_max) + "]";
+        return result;
+    }
+
+    if (!is_within_bounds(angles_to_optimize[1], theta7_min, theta7_max)) {
+        result.error_message = "theta7 out of bounds: calculated value " + std::to_string(angles_to_optimize[1]) +
+                               " is outside of range [" + std::to_string(theta7_min) +
+                               ", " + std::to_string(theta7_max) + "]";
+        return result;
+    }
+    // --- ========== 安全检查通过 ========== ---
+
+    // 填充成功结果
+    result.success = true;
+    result.error_message = "Solution found successfully.";
+    result.angles.push_back(angles_to_optimize[0]);
+    result.angles.push_back(-angles_to_optimize[1]); // 加上负号进行符号调整
+
+    return result;
+}
+
+
+std::pair<double, double> WristKinematicsSolver::CalculateWristIK(double theta6, double theta7){
+        // 构建变换矩阵
+    // std::cout << "theta6 = " << theta6 << std::endl;
+    // std::cout << "theta7 = " << theta7 << std::endl;
+    const Matrix4d A6 =  modified_DH_transform(theta6 + pi/2, 0, 0, pi/2);
+    const Matrix4d A7 =  modified_DH_transform(theta7, 0, raw_config_.a_wf, pi/2);
+    const Matrix4d T_57 = A6 * A7;
+    
+
+    // 计算delta2
+    const Vector4d P_7_C(-raw_config_.d_cx, raw_config_.d_cy, raw_config_.d_cz, 1);
+    const Vector4d P_5_C = T_57 * P_7_C;
+    
+    const Vector4d P_5_A(raw_config_.d_ax, -raw_config_.d_ay, -raw_config_.d_az, 1);
+    const Eigen::Vector3d vec_AC = P_5_C.head<3>() - P_5_A.head<3>();
+    const double len_rod2 = vec_AC.norm(); // 推杆2的长度
+    // const double delta2 = vec_AC.norm() - raw_config_.l_m20; //手腕左，直线进给量
+    // const double linear_motor2 = delta2 /lead_screw2 * 2 * pi; //转化为编码值
+
+    // 计算delta3
+    const Vector4d P_7_D(-raw_config_.d_cx, -raw_config_.d_cy, raw_config_.d_cz, 1);
+    const Vector4d P_5_D = T_57 * P_7_D;
+    const Vector4d P_5_E(raw_config_.d_ax, raw_config_.d_ay, -raw_config_.d_az, 1);
+    const Eigen::Vector3d vec_ED = P_5_D.head<3>() - P_5_E.head<3>();
+    const double len_rod3 = vec_ED.norm(); 
+    // const double delta3 = vec_ED.norm() - l_m30; //手腕右
+    // const double linear_motor3 = delta3 / lead_screw2 * 2 * pi; //转化为编码值
+
+
+
+
+    // 构建输出结果
+    return std::make_pair(len_rod2,len_rod3); // 2 = 左，3 = 右
+
+
+}
 
 
  

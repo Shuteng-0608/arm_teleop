@@ -36,6 +36,7 @@ public:
     bool handleRequest(arm_teleop::ArmIK::Request& req, arm_teleop::ArmIK::Response& res) {
         // 转换初始关节角
         ROS_INFO("Received IK request using method: %s", req.method.c_str());
+        ROS_INFO("Current arm angle: %f", req.current_arm_angle);
         ROS_INFO("Initial joints: [%f, %f, %f, %f, %f, %f, %f]",
                 req.init_joints[0], req.init_joints[1], req.init_joints[2],
                 req.init_joints[3], req.init_joints[4], req.init_joints[5],
@@ -85,9 +86,11 @@ public:
             } else if (req.method == "ofst") {
                 ik_res = ofst_solver->calculateIK(Tee, init_joints_array, std::nullopt, 0.14);
             } else if (req.method == "comb") {
-                ik_res = comb_solver->calculateIK(Tee, init_joints_array, req.arm_angle, std::nullopt);
+                ik_res = comb_solver->calculateIK(Tee, init_joints_array, 0.1, std::nullopt);
+            } else if (req.method == "feasible") {
+                ik_res = comb_solver->cal_IK_feasible_armAngle(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
             } else {
-                throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb");
+                throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, feasible");
             }
         } catch (const std::exception& e) {
             res.success = false;
@@ -105,6 +108,7 @@ public:
             res.solution[4] = std::get<4>(ik_res.final_sol);
             res.solution[5] = std::get<5>(ik_res.final_sol);
             res.solution[6] = std::get<6>(ik_res.final_sol);
+            res.new_arm_angle = ik_res.arm_angle;
             
             // 验证结果
             Vector7d sol_vec = serial_joints_to_vec7d(ik_res.final_sol);

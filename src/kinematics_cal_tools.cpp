@@ -1,4 +1,5 @@
 #include "kinematics_cal_tools.h"
+#include "tools.h"
 
 
 Eigen::Matrix4d modified_DH_transform(double theta, double d, double a, double alpha) {
@@ -50,60 +51,6 @@ std::tuple<bool, Vector7d, std::vector<int>> validate_solution(
     return {violations.empty(), normalized, violations};
 }
 
-// /**
-//  * @brief 从给定的可能解中选择距离当前关节位置最近的一组解。
-//  *
-//  * @param possible_serial_joints_vec 包含多组关节解的vector，每组是一个 SerialJoints 类型。
-//  * @param current_joints_tuple 当前的关节位置，一个 SerialJoints 类型。
-//  * @return 距离 current_joints_tuple 最近的关节解 (std::optional<SerialJoints> 类型)。
-//  * 如果 possible_serial_joints_vec 为空，则返回一个空的 std::optional 对象。
-//  */
-// std::optional<SerialJoints> select_closest_ik_solution(
-//     const std::vector<SerialJoints>& possible_serial_joints_vec,
-//     const SerialJoints& current_joints_tuple)
-// {
-//     // 如果没有可能的解，返回一个空的 std::optional
-//     if (possible_serial_joints_vec.empty()) {
-//         std::cerr << "警告: possible_serial_joints_vec 为空。返回一个空的 optional 对象。" << std::endl;
-//         return std::nullopt; // 返回一个表示“无值”的 std::optional 对象
-//     }
-
-//     double min_distance_sq = std::numeric_limits<double>::max(); // 初始化为最大可能值
-//     SerialJoints closest_solution; // 用于存储最近的解
-
-//     // 使用 std::apply 来计算距离，避免运行时索引
-//     auto calculate_distance_sq = [&](const SerialJoints& s1, const SerialJoints& s2) {
-//         double dist_sq = 0.0;
-//         std::apply([&](auto&&... args1) {
-//             std::apply([&](auto&&... args2) {
-//                 // 使用折叠表达式计算平方和
-//                 double temp_arr[] = { ( (args1 - args2) * (args1 - args2) )... };
-//                 for (double val : temp_arr) {
-//                     dist_sq += val;
-//                 }
-//             }, s2);
-//         }, s1);
-//         return dist_sq;
-//     };
-
-//     // 遍历所有可能的关节解
-//     for (const auto& solution_tuple : possible_serial_joints_vec) {
-//         // 计算当前解与当前关节位置之间的欧几里得距离平方
-//         double current_distance_sq = calculate_distance_sq(solution_tuple, current_joints_tuple);
-
-//         // 如果当前距离更小，则更新最小距离和最近的解
-//         if (current_distance_sq < min_distance_sq) {
-//             min_distance_sq = current_distance_sq;
-//             closest_solution = solution_tuple;
-//         }
-//     }
-
-//     // 找到了最近的解，将其包装在 std::optional 中返回
-//     return closest_solution;
-// }
-
-
-
 /**
  * @brief 从给定的可能解中选择距离当前关节位置最近的一组解。
  * 新的选择原则：以每个关节差值的最大值作为比较标准，选择最大差值最小的一组解。
@@ -154,84 +101,6 @@ std::optional<SerialJoints> select_closest_ik_solution(
     // 找到了最近的解，将其包装在 std::optional 中返回
     return closest_solution;
 }
-
-
-
-
-// /**
-//  * @brief 从给定的可能解中选择距离当前关节位置最近的一组解.
-//  * @param possible_serial_joints_vec 包含多组关节解的vector，每组是一个 SerialJoints 类型 加上臂角记录phi。
-//  * @param current_joints_tuple 当前的关节位置，一个 SerialJoints 类型。
-//  * @return 距离 current_joints_tuple 最近的关节解 (std::optional<SerialJoints> 类型， 加上臂角)。
-//  * 如果 possible_serial_joints_vec 为空，则返回一个空的 std::optional 对象。
-//  */
-// std::optional<SerialJointsWithPhi> 
-//     select_closest_ik_solution_with_phi(
-//         const std::vector<SerialJointsWithPhi>& 
-//                                     possible_serial_joints_vec_with_phi,
-//         const SerialJoints& current_joints_tuple)
-// {
-//     // 如果没有可能的解，返回一个空的 std::optional
-//     if (possible_serial_joints_vec_with_phi.empty()) {
-//         std::cerr << "警告: possible_serial_joints_vec_with_phi 为空。返回一个空的 optional 对象。" << std::endl;
-//         return std::nullopt; // 返回一个表示“无值”的 std::optional 对象
-//     }
-
-//     double min_distance_sq = std::numeric_limits<double>::max(); // 初始化为最大可能值
-//     double min_phi_abs = std::numeric_limits<double>::max();     // 初始化最小phi绝对值
-//     std::tuple<double, double, double, double, double, double, double, double> closest_solution_with_phi; // 用于存储最近的解
-
-//     // 使用 std::apply 来计算距离，避免运行时索引
-//     auto calculate_distance_sq = [&](const SerialJoints& s1, const SerialJoints& s2) {
-//         double dist_sq = 0.0;
-//         std::apply([&](auto&&... args1) {
-//             std::apply([&](auto&&... args2) {
-//                 // 使用折叠表达式计算平方和
-//                 double temp_arr[] = { ( (args1 - args2) * (args1 - args2) )... };
-//                 for (double val : temp_arr) {
-//                     dist_sq += val;
-//                 }
-//             }, s2);
-//         }, s1);
-//         return dist_sq;
-//     };
-
-//     // 遍历所有可能的关节解
-//     for (const auto& solution_tuple_with_phi : possible_serial_joints_vec_with_phi) {
-//         // 计算当前解与当前关节位置之间的欧几里得距离平方
-//         solWithPhi temp_sol;
-//         seperate_serial_joints_with_arm_angle(temp_sol,solution_tuple_with_phi);
-//         SerialJoints solution_tuple = temp_sol.sol;
-//         double current_phi = temp_sol.arm_angle;
-//         double current_distance_sq = calculate_distance_sq(solution_tuple, current_joints_tuple);
-
-//         if (fabs(current_distance_sq - min_distance_sq) <= EPSILON*1e5) {
-//             if (std::fabs(current_phi) < min_phi_abs) {
-//                 min_phi_abs = std::fabs(current_phi); // 更新最小phi绝对值
-//                 closest_solution_with_phi = solution_tuple_with_phi; // 更新为当前解
-//             }
-//         }
-
-//         // 如果当前距离更小，则更新最小距离和最近的解
-//         else if (current_distance_sq < min_distance_sq) {
-//             min_distance_sq = current_distance_sq;
-//             min_phi_abs = std::fabs(current_phi);
-//             closest_solution_with_phi = solution_tuple_with_phi;
-//         }
-
-//     }
-
-//     // 找到了最近的解，将其包装在 std::optional 中返回
-//     return closest_solution_with_phi;
-// }
-
-
-
-
-
-
-
-
 
 /**
  * @brief 从给定的可能解中选择距离当前关节位置最近的一组解.
@@ -299,18 +168,6 @@ std::optional<SerialJointsWithPhi>
     return closest_solution_with_phi;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 // 定义一个辅助函数来处理 atan2 的结果
 double normalize_angle_to_open_interval(double angle) {
     if (std::abs(angle - M_PI) < 1e-9) { // 如果角度非常接近 pi
@@ -363,3 +220,53 @@ void seperate_serial_joints_with_arm_angle(
     }
 }
 
+
+/**
+ * @brief 计算两组关节角度的最大绝对偏差。
+ * @param joints_sol IK计算出的关节解。
+ * @param current_joints_array 当前的关节位置。
+ * @return 最大的绝对偏差值。
+ */
+double calculate_max_joint_deviation(SerialJoints joints_sol, 
+                                     const double current_joints_array[]) {
+    double sol_array[7];
+    serial_joints_to_double_array(joints_sol, sol_array);
+
+    double max_dev = 0.0;
+    for (int i = 0; i < 7; ++i) {
+        double deviation = std::abs(sol_array[i] - current_joints_array[i]);
+        if (deviation > max_dev) {
+            max_dev = deviation;
+        }
+    }
+    return max_dev;
+}
+
+
+/**
+ * @brief 检查一个 IKResult 是否有效且不发生关节跳变。
+ * @param result IK计算结果。
+ * @param current_joints_array 当前的关节位置。
+ * @param offset_ref 允许的最大关节跳变阈值。
+ * @return true 如果解有效且跳变在限制内，否则 false。
+ */
+bool is_solution_acceptable(const IKResult& result, 
+                            const double current_joints_array[], 
+                            double offset_ref) {
+    // 1. 检查 IK 解是否有效
+    if (!result.is_valid) {
+        return false;
+    }
+
+    // 2. 检查关节跳变 (最大绝对偏差)
+    double max_deviation = calculate_max_joint_deviation(result.final_sol, current_joints_array);
+    
+    // 3. 判断是否发生跳变
+    if (max_deviation > offset_ref) {
+        // 发生跳变
+        return false;
+    }
+
+    // 符合所有条件
+    return true;
+}
