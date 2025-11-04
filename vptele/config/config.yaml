@@ -1,0 +1,96 @@
+# VisionPro配置
+vp_ip: "192.168.1.144"
+vp_record: false  # 是否记录VisionPro数据流
+vuer: false
+
+# 机械臂配置
+robot_ip: "192.168.1.18"
+robot_port: 8080
+robot_level: 3  # 机械臂连接级别
+robot_thread_mode: 2  # 线程模式(0:单线程, 1:双线程, 2:三线程)
+arm_model: "RM_65"  # 机械臂型号，用于逆运动学计算
+
+# 机械臂算法控制器配置
+algo_config:
+  install_angle: [0, 0, 0]  # 机械臂安装角度 (度)
+  workframe: [0, 0, 0, 0, 0, 0]  # 工作坐标系 [x,y,z,rx,ry,rz]
+  toolframe:  # 工具坐标系
+    pose: [0, 0, 0, 0, 0, 0]  # 工具位姿 [x,y,z,rx,ry,rz]
+    payload: 0.0  # 负载(kg)
+    center_of_mass: [0, 0, 0]  # 质心坐标
+
+# 机械臂实时控制参数
+robot_control:
+  max_line_speed: 0.4  # 最大线速度(m/s)
+  max_line_acc: 5.0  # 最大线加速度(m/s²)
+  collision_level: 3  # 碰撞检测级别
+  # test_initial_pose
+  initial_pose: [-0.3, 0, 0.35, 2.8, -0.5, -2.67]
+
+# 轨迹记录与回放配置
+trajectory_config:
+  save_dir: "trajectories/one"  # 轨迹文件保存目录
+  trajectory_dir: "trajectories/one"  # 回放轨迹文件目录
+  record_frequency: 0.01    # 记录频率，单位秒
+  record_joint_angles: true  # 是否记录关节角度
+  record_cartesian_pose: true # 是否记录笛卡尔位姿
+  speed_factor: 1.0  # 回放速度因子，大于1加速，小于1减速
+  use_joint_control: true  # 回放时优先使用关节控制
+
+# 末端执行器选择: none, hand, gripper
+# end_effector: "none"
+end_effector: "hand"
+
+# 机械臂遥控参数
+arm_config:
+  scaling_factor: 1.0
+  smoothing_factor: 0.5
+  update_frequency: 0.01
+  position_logging_interval: 0.1  # 位置日志记录间隔(秒)
+
+  # 启用自适应控制
+  # use_adaptive_control: true
+  use_adaptive_control: false
+  
+  # 自适应控制参数
+  adaptive_config:
+    window_size: 10  # 运动历史窗口大小
+    velocity_threshold: 0.15  # 快速移动阈值 (m/s)
+    precision_threshold: 0.005  # 精细操作阈值 (m)
+    smoothing_range: [0.2, 0.9]  # 平滑系数范围
+    scaling_range: [0.5, 1.5]  # 缩放系数范围
+
+  # 位置范围限制
+  x_range: [-0.5, -0.3]
+  y_range: [-0.2, 0.2]
+  z_range: [0.2, 0.5]
+  # 旋转范围限制 (弧度制)
+  limit_rotation: true  # 启用旋转限制
+  rx_range: [2.6, 3.0]  # rx旋转范围
+  ry_range: [-0.7, -0.3]  # ry旋转范围
+  rz_range: [-2.8, -2.5]  # rz旋转范围
+  # rz_range: [-3.8, 2.5]  # rz旋转范围
+
+# 灵巧手参数
+hand_config:
+  smoothing_factor: 0.6
+  update_frequency: 0.01
+  max_hand_range: 1.57  # 灵巧手最大开合范围 (弧度)
+  hand_speed: 1000  # 灵巧手最大速度 (1-1000)
+
+# 夹爪参数
+gripper_config:
+  max_width: 85
+  update_frequency: 0.05
+  grip_sensitivity: 0.7
+  default_speed: 100  # 夹爪默认速度 (1-100)
+  # 手势检测参数
+  grip_activation_threshold: 0.3  # 激活抓取的阈值
+  grip_release_threshold: 0.6  # 释放抓取的阈值
+
+# 日志配置
+logging:
+  console_level: "info"
+  file_level: "debug"
+  max_file_size: 104857600  # 最大日志文件大小 (100MB)
+  backup_count: 5  # 备份日志文件数量
