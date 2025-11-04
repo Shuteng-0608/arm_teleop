@@ -9,9 +9,6 @@ from utils.logger import get_logger
 from scipy.spatial.transform import Rotation as R
 logger = get_logger()
 
-# 导入自适应控制器
-# from arm_control.adaptive_controller import AdaptiveController
-
 class ArmTeleopROS:
     def __init__(self, vp_streamer, robot_controller, config=None):
         """
@@ -121,16 +118,6 @@ class ArmTeleopROS:
         self.last_smooth_joints = self.last_joint_angles.copy() if self.last_joint_angles is not None else None
         self.joints_buffer = []
         
-        # 初始化自适应控制器
-        # self.use_adaptive_control = self.config.get('use_adaptive_control', False)
-        # if self.use_adaptive_control:
-        #     adaptive_config = self.config.get('adaptive_config', {})
-        #     adaptive_config['leftright'] = self.config.get('leftright', 'right')
-        #     self.adaptive_controller = AdaptiveController(adaptive_config)
-        #     logger.info("已启用上下文感知自适应控制")
-        # else:
-        #     self.adaptive_controller = None
-        #     logger.info("未启用自适应控制，使用固定控制参数")
         self.teleop_active = True  # 默认不激活遥操作
         logger.info("遥操作初始化完成，等待手势激活...")
         # 校准手部位置
@@ -172,32 +159,6 @@ class ArmTeleopROS:
         """
         # 提取手部位置
         hand_position = hand_transform[:3, 3]
-        
-        # 如果启用了自适应控制，更新运动历史并获取自适应参数
-        # if self.adaptive_controller:
-        #     self.adaptive_controller.update_motion_history(hand_position)
-        #     # 获取当前最新的VisionPro数据，用于手势检测
-        #     hand_data = self.vp_streamer.latest
-        #     adaptive_params = self.adaptive_controller.get_adaptive_parameters(hand_data)
-            
-        #     # 动态更新控制参数
-        #     current_scaling = adaptive_params["scaling_factor"]
-        #     current_smoothing = adaptive_params["smoothing_factor"]
-            
-        #     # 仅在发生变化时记录日志，避免日志过多
-        #     if hasattr(self, 'last_adaptive_params'):
-        #         if self.last_adaptive_params["mode"] != adaptive_params["mode"]:
-        #             logger.info(f"自适应模式: {adaptive_params['mode']}, 平滑: {current_smoothing:.2f}, 缩放: {current_scaling:.2f}")
-        #     else:
-        #         logger.info(f"初始自适应模式: {adaptive_params['mode']}, 平滑: {current_smoothing:.2f}, 缩放: {current_scaling:.2f}")
-                
-        #     self.last_adaptive_params = adaptive_params
-            
-        #     # 更新控制参数
-        #     self.smoothing_factor = current_smoothing
-        #     self.scaling_factor = current_scaling
-        # else:
-        #     pass
         
         # 计算手部位置相对于初始位置的偏移
         hand_offset = hand_position - self.initial_hand_position
@@ -334,6 +295,8 @@ class ArmTeleopROS:
         # 添加 FPS 计算相关变量
         frame_count = 0
         last_fps_time = time.time()
+        max_record_time = 0.0
+        recorded_time = 0.0
         while self.running:
             try:
                 # 增加帧计数
@@ -349,24 +312,6 @@ class ArmTeleopROS:
                 
                 # 获取最新的手部数据
                 hand_data = self.vp_streamer.latest
-                # if hand_data is not None and len(hand_data) > 0:
-                #     # 检查手势控制
-                #     if self.use_adaptive_control and self.adaptive_controller:
-                #         gesture = self.adaptive_controller.process_mode_gesture(hand_data)
-                #         logger.info(f"当前手势是：{gesture}")
-                        
-                #         # 处理手势控制
-                #         if gesture == "start_teleop" and not self.teleop_active:
-                #             self.teleop_active = True
-                #             logger.info("检测到开始手势，遥操作已激活！")
-                #             time.sleep(self.update_frequency)
-                #             continue  # 跳过本次循环，避免立即移动
-                        
-                #         elif gesture == "stop_teleop" and self.teleop_active:
-                #             self.teleop_active = False
-                #             logger.info("检测到停止手势，遥操作已停止！")
-                #             time.sleep(self.update_frequency)
-                #             continue  # 跳过本次循环
                     
                 hand_data = self.vp_streamer.get_hand_position(hand=self.config.get('leftright', 'right'))
                 # 只有当遥操作激活时才执行控制
@@ -403,41 +348,47 @@ class ArmTeleopROS:
                         self.last_log_time = current_time
                     
                     # 使用逆运动学计算关节角度
-                    for angle in [0, 0.1, -0.1, 0.5, -0.5]:
-                        # current_arm_angle += angle
-                        # TODO: call 逆解服务
-                        start_time = time.time()
-                        ik_request = ArmIKRequest()
-                        ik_request.method = 'comb'  # 使用组合方法
-                        ik_request.arm_angle = self.current_arm_angle + angle
-                        rospy.loginfo(f"请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target]}")
-                        smooth_target_in_quat = self.euler_to_quaternion(smooth_target)
-                        ik_request.target_pose.position.x = smooth_target_in_quat[0]
-                        ik_request.target_pose.position.y = smooth_target_in_quat[1]
-                        ik_request.target_pose.position.z = smooth_target_in_quat[2]
-                        ik_request.target_pose.orientation.w = smooth_target_in_quat[3]
-                        ik_request.target_pose.orientation.x = smooth_target_in_quat[4]
-                        ik_request.target_pose.orientation.y = smooth_target_in_quat[5]
-                        ik_request.target_pose.orientation.z = smooth_target_in_quat[6]
-                        ik_request.init_joints = self.last_joint_angles if self.last_joint_angles is not None else []
-                        response = self.ik_service.call(ik_request)
-                        success = response.success
-                        joint_angles = response.solution
-                        print(f"逆解耗时: {time.time() - start_time:.4f} 秒")
+                    # for angle in [0, 0.1, -0.1, 0.5, -0.5]:
+                    # TODO: call 逆解服务
+                    start_time = time.time()
+                    ik_request = ArmIKRequest()
+                    ik_request.method = 'feasible'  # 使用组合方法
+                    ik_request.current_arm_angle = self.current_arm_angle
+                    ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+                    ik_request.offset_refer = 0.5
+                    rospy.loginfo(f"请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target]}")
+                    smooth_target_in_quat = self.euler_to_quaternion(smooth_target)
+                    ik_request.target_pose.position.x = smooth_target_in_quat[0]
+                    ik_request.target_pose.position.y = smooth_target_in_quat[1]
+                    ik_request.target_pose.position.z = smooth_target_in_quat[2]
+                    ik_request.target_pose.orientation.w = smooth_target_in_quat[3]
+                    ik_request.target_pose.orientation.x = smooth_target_in_quat[4]
+                    ik_request.target_pose.orientation.y = smooth_target_in_quat[5]
+                    ik_request.target_pose.orientation.z = smooth_target_in_quat[6]
+                    ik_request.init_joints = self.last_joint_angles if self.last_joint_angles is not None else []
+                    response = self.ik_service.call(ik_request)
+                    success = response.success
+                    joint_angles = response.solution
+                    recorded_time = time.time() - start_time
+                    max_record_time = recorded_time if recorded_time > max_record_time else max_record_time 
+                    print(f"逆解耗时: {time.time() - start_time:.4f} 秒")
+                    print(f"当前最大逆解耗时: {max_record_time:.4f} 秒")
+                    
 
-                        # yanzheng
-                        offset = [0.0]*7
-                        offset = [abs(response.solution[i] - self.last_joint_angles[i]) for i in range(7)]
-                        if max(offset) > 1.0:
-                            rospy.logwarn(f"逆解结果跳变过大，忽略本次结果，偏移量: {[round(x, 4) for x in offset]}")
-                            success = False
-                        else:
-                            self.current_arm_angle = ik_request.arm_angle
-                            break
+                    # yanzheng
+                    # offset = [0.0]*7
+                    # offset = [abs(response.solution[i] - self.last_joint_angles[i]) for i in range(7)]
+                    # if max(offset) > 1.0:
+                    #     rospy.logwarn(f"逆解结果跳变过大，忽略本次结果，偏移量: {[round(x, 4) for x in offset]}")
+                    #     success = False
+                    # else:
+                    #     self.current_arm_angle = response.arm_angle
+                    #     break
                     
                     if success:
                         # 更新最后使用的关节角度
-                        # self.last_joint_angles = joint_angles
+                        self.current_arm_angle = response.new_arm_angle
+                        rospy.loginfo(f"当前臂角: {self.current_arm_angle}")
                         self.last_joint_angles = [round(angle, 4) for angle in joint_angles]
                         rospy.loginfo(f"逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")
                         
@@ -461,8 +412,6 @@ class ArmTeleopROS:
                         if self.config.get('move', True):
                             rospy.loginfo(f"移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
                             self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
-                            # 如果配置中允许移动，则使用关节控制
-                            # self.robot_controller.movej_follow(smooth_joint_angles)
                     else:
                         rospy.logwarn(f"逆解失败，无法控制到位置: {smooth_target}")
                     
