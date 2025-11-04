@@ -233,8 +233,6 @@ target_link_libraries(ik_service_node
 catkin_install_python(PROGRAMS
   # scripts/main_ros.py
   scripts/test_ik.py
-  scripts/arm_mujoco_ros_interface.py
-  scripts/min_teleop.py
   scripts/avp_test.py
   vptele/main_ros.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
