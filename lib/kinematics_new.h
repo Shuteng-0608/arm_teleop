@@ -172,6 +172,15 @@ class ArmKineComb{
             std::optional<double> theta7 = std::nullopt  // std 下这个传入空
         );
 
+        // 从参数列表中寻找可用的臂角
+        IKResult cal_IK_feasible_armAngle(
+            const Matrix4d& target_pose,
+            double current_joints_array[],
+            double current_arm_angle,
+            const std::vector<double>& arm_angle_deviation_list = {-0.5, -0.25, 0.0, 0.25, 0.5}, // 默认臂角偏差列表
+            double offset_ref = 3.0 // 默认最大关节跳变阈值
+        );
+
         FKResult calculateFK(const Vector7d& theta);
 
     private:
@@ -181,9 +190,70 @@ class ArmKineComb{
 };
 
 
+// ------- 手腕计算 --------
+struct WristConfig {
+    // 原始参数，直接从 YAML 读取
+    double a_wf, ax, ay, az;
+    double cx, cy, cz;
+    double dx, dy, dz;
+    double l_m10, l_m20, l_m30;
+    double d_cx, d_cy, d_cz;
+    double d_ax, d_ay, d_az;
+    
+    // 构造函数声明
+    explicit WristConfig(const std::string& filepath);
+    // explicit WristConfig(const YAML::Node& wrist_params_node);
+    
+    // 显式声明一个默认构造函数
+    WristConfig() = default;
+    
+};
+
+
+// --- 2. 手腕角度计算结果结构体   ---
+struct WristAngleResult {
+    bool success;
+    std::string error_message;
+    std::vector<double> angles;
+};
+
+
+// --- 3. Ceres 残差类 (只接收最终预计算值) ---
+class WristResidual : public ceres::SizedCostFunction<2, 2> { // 2个残差，2个参数
+public:
+    // 构造函数只接收最终的预计算系数，这是它真正需要的
+    explicit WristResidual(
+        double in_l1_sq, double in_l2_sq,
+        double in_G1, double in_G2, double in_G3,
+        double in_G5, double in_G6, double in_H4, double in_H8
+    );
+                           
+    virtual bool Evaluate(double const* const* parameters,
+                          double* residuals,
+                          double** jacobians) const override;
+private:
+    // 存储所有最终的预计算系数，这些是 const 的
+    const double l1_sq_, l2_sq_;
+    const double G1_, G2_, G3_, G5_, G6_, H4_, H8_;
+};
 
 
 
+// --- 4. 手腕运动学求解器类 ---
+class WristKinematicsSolver {
+public:
+    // 构造函数：只接受配置文件路径。
+    explicit WristKinematicsSolver(const std::string& config_filepath);
+
+    // 求解手腕角度的核心方法：现在接收 l1 和 l2 作为参数,内部执行预计算，然后进行求解。
+    WristAngleResult CalculateWristFK(double l1, double l2);
+    std::pair<double, double> CalculateWristIK (double theta6, double theta7);
+
+private:
+    // WristKinematicsSolver 只存储从 YAML 读取的原始配置。
+    WristConfig raw_config_; 
+
+};
 
 
 

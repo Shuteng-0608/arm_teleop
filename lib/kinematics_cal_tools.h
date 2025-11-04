@@ -51,4 +51,13 @@ void seperate_serial_joints_with_arm_angle(
     solWithPhi& result, // 通过引用传递，函数会直接修改它
     const std::optional<SerialJointsWithPhi>& closest_solution_with_phi);
 
+
+bool is_solution_acceptable(const IKResult& result, 
+                            const double current_joints_array[], 
+                            double offset_ref);
+
+double calculate_max_joint_deviation(SerialJoints joints_sol, 
+                                     const double current_joints_array[]);
+
+
 #endif
