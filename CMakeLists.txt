@@ -191,6 +191,7 @@ target_link_libraries(arm_kinematics_core
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a  # 正确链接静态库
 )
 
+
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure
@@ -219,7 +220,11 @@ target_link_libraries(ik_service_node
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
   
   arm_kinematics_core
+  /usr/lib/libceres.so
+
 )
+include_directories(/usr/include)
+
 
 #############
 ## Install ##
