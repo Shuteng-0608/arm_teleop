@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation as R
 logger = get_logger()
 
 # 导入自适应控制器
-from arm_control.adaptive_controller import AdaptiveController
+# from arm_control.adaptive_controller import AdaptiveController
 
 class ArmTeleopROS:
     def __init__(self, vp_streamer, robot_controller, config=None):
@@ -122,15 +122,15 @@ class ArmTeleopROS:
         self.joints_buffer = []
         
         # 初始化自适应控制器
-        self.use_adaptive_control = self.config.get('use_adaptive_control', False)
-        if self.use_adaptive_control:
-            adaptive_config = self.config.get('adaptive_config', {})
-            adaptive_config['leftright'] = self.config.get('leftright', 'right')
-            self.adaptive_controller = AdaptiveController(adaptive_config)
-            logger.info("已启用上下文感知自适应控制")
-        else:
-            self.adaptive_controller = None
-            logger.info("未启用自适应控制，使用固定控制参数")
+        # self.use_adaptive_control = self.config.get('use_adaptive_control', False)
+        # if self.use_adaptive_control:
+        #     adaptive_config = self.config.get('adaptive_config', {})
+        #     adaptive_config['leftright'] = self.config.get('leftright', 'right')
+        #     self.adaptive_controller = AdaptiveController(adaptive_config)
+        #     logger.info("已启用上下文感知自适应控制")
+        # else:
+        #     self.adaptive_controller = None
+        #     logger.info("未启用自适应控制，使用固定控制参数")
         self.teleop_active = True  # 默认不激活遥操作
         logger.info("遥操作初始化完成，等待手势激活...")
         # 校准手部位置
@@ -174,30 +174,30 @@ class ArmTeleopROS:
         hand_position = hand_transform[:3, 3]
         
         # 如果启用了自适应控制，更新运动历史并获取自适应参数
-        if self.adaptive_controller:
-            self.adaptive_controller.update_motion_history(hand_position)
-            # 获取当前最新的VisionPro数据，用于手势检测
-            hand_data = self.vp_streamer.latest
-            adaptive_params = self.adaptive_controller.get_adaptive_parameters(hand_data)
+        # if self.adaptive_controller:
+        #     self.adaptive_controller.update_motion_history(hand_position)
+        #     # 获取当前最新的VisionPro数据，用于手势检测
+        #     hand_data = self.vp_streamer.latest
+        #     adaptive_params = self.adaptive_controller.get_adaptive_parameters(hand_data)
             
-            # 动态更新控制参数
-            current_scaling = adaptive_params["scaling_factor"]
-            current_smoothing = adaptive_params["smoothing_factor"]
+        #     # 动态更新控制参数
+        #     current_scaling = adaptive_params["scaling_factor"]
+        #     current_smoothing = adaptive_params["smoothing_factor"]
             
-            # 仅在发生变化时记录日志，避免日志过多
-            if hasattr(self, 'last_adaptive_params'):
-                if self.last_adaptive_params["mode"] != adaptive_params["mode"]:
-                    logger.info(f"自适应模式: {adaptive_params['mode']}, 平滑: {current_smoothing:.2f}, 缩放: {current_scaling:.2f}")
-            else:
-                logger.info(f"初始自适应模式: {adaptive_params['mode']}, 平滑: {current_smoothing:.2f}, 缩放: {current_scaling:.2f}")
+        #     # 仅在发生变化时记录日志，避免日志过多
+        #     if hasattr(self, 'last_adaptive_params'):
+        #         if self.last_adaptive_params["mode"] != adaptive_params["mode"]:
+        #             logger.info(f"自适应模式: {adaptive_params['mode']}, 平滑: {current_smoothing:.2f}, 缩放: {current_scaling:.2f}")
+        #     else:
+        #         logger.info(f"初始自适应模式: {adaptive_params['mode']}, 平滑: {current_smoothing:.2f}, 缩放: {current_scaling:.2f}")
                 
-            self.last_adaptive_params = adaptive_params
+        #     self.last_adaptive_params = adaptive_params
             
-            # 更新控制参数
-            self.smoothing_factor = current_smoothing
-            self.scaling_factor = current_scaling
-        else:
-            pass
+        #     # 更新控制参数
+        #     self.smoothing_factor = current_smoothing
+        #     self.scaling_factor = current_scaling
+        # else:
+        #     pass
         
         # 计算手部位置相对于初始位置的偏移
         hand_offset = hand_position - self.initial_hand_position
@@ -349,24 +349,24 @@ class ArmTeleopROS:
                 
                 # 获取最新的手部数据
                 hand_data = self.vp_streamer.latest
-                if hand_data is not None and len(hand_data) > 0:
-                    # 检查手势控制
-                    if self.use_adaptive_control and self.adaptive_controller:
-                        gesture = self.adaptive_controller.process_mode_gesture(hand_data)
-                        logger.info(f"当前手势是：{gesture}")
+                # if hand_data is not None and len(hand_data) > 0:
+                #     # 检查手势控制
+                #     if self.use_adaptive_control and self.adaptive_controller:
+                #         gesture = self.adaptive_controller.process_mode_gesture(hand_data)
+                #         logger.info(f"当前手势是：{gesture}")
                         
-                        # 处理手势控制
-                        if gesture == "start_teleop" and not self.teleop_active:
-                            self.teleop_active = True
-                            logger.info("检测到开始手势，遥操作已激活！")
-                            time.sleep(self.update_frequency)
-                            continue  # 跳过本次循环，避免立即移动
+                #         # 处理手势控制
+                #         if gesture == "start_teleop" and not self.teleop_active:
+                #             self.teleop_active = True
+                #             logger.info("检测到开始手势，遥操作已激活！")
+                #             time.sleep(self.update_frequency)
+                #             continue  # 跳过本次循环，避免立即移动
                         
-                        elif gesture == "stop_teleop" and self.teleop_active:
-                            self.teleop_active = False
-                            logger.info("检测到停止手势，遥操作已停止！")
-                            time.sleep(self.update_frequency)
-                            continue  # 跳过本次循环
+                #         elif gesture == "stop_teleop" and self.teleop_active:
+                #             self.teleop_active = False
+                #             logger.info("检测到停止手势，遥操作已停止！")
+                #             time.sleep(self.update_frequency)
+                #             continue  # 跳过本次循环
                     
                 hand_data = self.vp_streamer.get_hand_position(hand=self.config.get('leftright', 'right'))
                 # 只有当遥操作激活时才执行控制
