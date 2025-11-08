@@ -4,6 +4,7 @@ from end_effectors.end_effector_base import EndEffectorBase
 from utils.logger import get_logger
 import rospy
 from aiui.srv import DH5SetPosition, DH5SetPositionRequest
+import time
 logger = get_logger()
 
 class HandTeleopROS(EndEffectorBase):
@@ -341,23 +342,36 @@ class HandTeleopROS(EndEffectorBase):
     def update(self):
         """更新灵巧手状态"""
         # 获取最新的手部数据
+        # update_start_time = time.time()
+        # data_get_start_time = time.time()
         hand_data = self.vp_streamer.latest
+        # print(f"[hand_teleop] 获取手部数据耗时: {time.time() - data_get_start_time:.4f}秒")
         
         if hand_data is not None and "right_fingers" in hand_data:
             # 将手部数据映射到灵巧手控制值
+            # process_start_time = time.time()
             hand_pos = self.process_vp_data(hand_data)
+            # print(f"[hand_teleop] 处理手部数据耗时: {time.time() - process_start_time:.4f}秒")
             
             # 应用平滑过滤
             # smooth_hand_pos = self.smooth_hand_position(hand_pos)
             
             # 控制灵巧手
             # self.robot_controller.set_hand_positions(hand_pos)
+            
+            # dh5_start_time = time.time()
+
             try:
+                
                 dh5_req = DH5SetPositionRequest()
                 dh5_req.hand_type = 'right'
                 dh5_req.hand_mode = 'hand'
                 dh5_req.right_position_list = hand_pos
                 self.dh5_service(dh5_req)
+                
             except rospy.ServiceException as e:
                 logger.error(f"调用灵巧手服务失败: {e}")
+            # logger.info(f"[hand_teleop] 调用灵巧手服务耗时: {time.time() - dh5_start_time:.4f}秒")
+            
             print(f"设置灵巧手位置: {hand_pos}")
+        # logger.info(f"[hand_teleop] 灵巧手位置更新耗时: {time.time() - update_start_time:.4f}秒")

@@ -23,8 +23,8 @@ class ArmTeleopROS:
         if not rospy.core.is_initialized():
             rospy.init_node('arm_teleop', anonymous=True)
         
-        rospy.wait_for_service('/aiui_node/arm_ik_srv')
-        self.ik_service = rospy.ServiceProxy('/aiui_node/arm_ik_srv', ArmIK)
+        rospy.wait_for_service('/arm_teleop/arm_ik_srv')
+        self.ik_service = rospy.ServiceProxy('/arm_teleop/arm_ik_srv', ArmIK)
         # rospy.wait_for_service('/aris_node/pq_movej_srv')
         # self.pq_movej_service = rospy.ServiceProxy('/aris_node/pq_movej_srv', PqMovejService)
 
@@ -165,11 +165,11 @@ class ArmTeleopROS:
         
         # 计算手部位置相对于初始位置的偏移
         hand_offset = hand_position - self.initial_hand_position
-        rospy.loginfo(f"手部偏移: {[round(x, 4) for x in hand_offset]}")
+        # rospy.loginfo(f"手部偏移: {[round(x, 4) for x in hand_offset]}")
         
         # 将偏移应用到机械臂初始位置
         target_position = self.initial_robot_pose.copy()
-        rospy.loginfo(f"上一次机械臂位置: {[round(x, 4) for x in target_position]}")
+        # rospy.loginfo(f"上一次机械臂位置: {[round(x, 4) for x in target_position]}")
         
         # 调整位置偏移方向和缩放
         # target_position[0] += hand_offset[0] * self.scaling_factor
@@ -178,7 +178,7 @@ class ArmTeleopROS:
         target_position[0] += hand_offset[1] * 1.5
         target_position[1] += hand_offset[2] * 1.5
         target_position[2] += hand_offset[0] * 1.5
-        rospy.loginfo(f"位置调整后: {[round(x, 4) for x in target_position]}")
+        # rospy.loginfo(f"位置调整后: {[round(x, 4) for x in target_position]}")
 
         
         # 从变换矩阵中提取旋转信息，转为欧拉角
@@ -187,7 +187,7 @@ class ArmTeleopROS:
         # 计算相对于初始手部姿态的旋转变化
         # 相对旋转 = 当前旋转 × 初始旋转的逆
         relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation)
-        rospy.loginfo(f"相对旋转矩阵: \n{relative_rotation}")
+        # rospy.loginfo(f"相对旋转矩阵: \n{relative_rotation}")
         
         # 转换为欧拉角
         euler_angles = rotation_matrix_to_euler(relative_rotation)
@@ -336,7 +336,7 @@ class ArmTeleopROS:
                     smooth_target = [round(angle, 4) for angle in smooth_target]
                     self.last_target_pose = smooth_target.copy()
                     
-                    logger.info(f"平滑位置: {[round(x, 4) for x in smooth_target]}")
+                    # logger.info(f"平滑位置: {[round(x, 4) for x in smooth_target]}")
                     
                     # debug 限制位置，全部设置为初始值
                     # smooth_target[:3] = self.initial_robot_pose[:3]
@@ -403,7 +403,7 @@ class ArmTeleopROS:
                                 self.joints_buffer,
                                 self.joints_smoothing_factor
                             )
-                            rospy.loginfo(f"平滑关节角度: {[round(angle, 4) for angle in smooth_joint_angles]}")
+                            # rospy.loginfo(f"平滑关节角度: {[round(angle, 4) for angle in smooth_joint_angles]}")
                             # 更新上一次的平滑关节角度
                             self.last_smooth_joints = smooth_joint_angles.copy()
                         else:
@@ -411,7 +411,7 @@ class ArmTeleopROS:
                             self.last_smooth_joints = joint_angles.copy()
                         
                         # 使用平滑后的关节角度控制机械臂移动
-                        logger.debug(f"关节角度控制: {[round(angle, 4) for angle in smooth_joint_angles]}")
+                        # logger.debug(f"关节角度控制: {[round(angle, 4) for angle in smooth_joint_angles]}")
                         if self.config.get('move', True):
                             rospy.loginfo(f"移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
                             # self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
