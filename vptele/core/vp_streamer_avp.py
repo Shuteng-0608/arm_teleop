@@ -55,7 +55,7 @@ class VPStreamer:
             
         key = f"{hand}_wrist"
         if key in data:
-            logger.info(f"{hand}手腕位置: {data[key]}")
+            # logger.info(f"{hand}手腕位置: {data[key]}")
             return data[key]
         return None
     

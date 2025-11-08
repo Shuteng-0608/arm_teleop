@@ -30,7 +30,7 @@ public:
         }
 
         // 注册服务
-        service_ = nh.advertiseService("arm_ik_service", &ArmKinematicsServer::handleRequest, this);
+        service_ = nh.advertiseService("/arm_teleop/arm_ik_srv", &ArmKinematicsServer::handleRequest, this);
     }
 
     bool handleRequest(arm_teleop::ArmIK::Request& req, arm_teleop::ArmIK::Response& res) {
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
 
     try {
         ArmKinematicsServer server(nh, config_path);
-        ROS_INFO("Arm IK Service ready");
+        ROS_INFO("[arm_teleop] Arm IK Service ready");
         ros::spin();
     } catch (const std::exception& e) {
         ROS_FATAL("Service initialization failed: %s", e.what());
