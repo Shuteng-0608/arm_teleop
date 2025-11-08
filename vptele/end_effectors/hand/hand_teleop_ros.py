@@ -3,6 +3,7 @@ from end_effectors.end_effector_base import EndEffectorBase
 # from end_effectors.hand.hand_controller_mujoco import HandControllerMujoco
 from utils.logger import get_logger
 import rospy
+from aiui.srv import DH5SetPosition, DH5SetPositionRequest
 logger = get_logger()
 
 class HandTeleopROS(EndEffectorBase):
@@ -31,6 +32,11 @@ class HandTeleopROS(EndEffectorBase):
         ]
         self.smoothing_factor = self.config.get('smoothing_factor', 0.6)
         self.last_hand_pos = [0, 0, 0, 0, 0, 0]
+        if not rospy.core.is_initialized():
+            rospy.init_node('hand_teleop', anonymous=True)
+        
+        rospy.wait_for_service('/dh5/set_all_position')
+        self.dh5_service = rospy.ServiceProxy('/dh5/set_all_position', DH5SetPosition)
         self.initialize()
         
     def initialize(self):
@@ -165,7 +171,7 @@ class HandTeleopROS(EndEffectorBase):
         bend = pow(bend, 0.8)  # 使用幂函数增强响应
         
         # 限制在0-1范围内
-        bend = max(0.0, min(-0.6, bend))
+        bend = max(0.0, min(1, bend))
         
         return bend
     
@@ -252,20 +258,61 @@ class HandTeleopROS(EndEffectorBase):
         
         # 转换为灵巧手控制值范围 (0-65535)
         # RIGHT_HAND
-        pinky_value = pinky_bend * self.max_hand_range
-        ring_value = ring_bend * self.max_hand_range
-        middle_value = middle_bend * self.max_hand_range
-        index_value = index_bend * self.max_hand_range
-        thumb_bend_value = thumb_bend
-        thumb_rot_value = thumb_rot * (1.57)
+        # pinky_value = pinky_bend * self.max_hand_range
+        # ring_value = ring_bend * self.max_hand_range
+        # middle_value = middle_bend * self.max_hand_range
+        # index_value = index_bend * self.max_hand_range
+        # thumb_bend_value = thumb_bend
+        # thumb_rot_value = thumb_rot * (1.57)
         
         # 按照灵巧手控制顺序排列
-        hand_pos = [thumb_rot_value, thumb_bend_value, index_value, middle_value, ring_value,
-                    pinky_value]
+        # hand_pos = [thumb_rot_value, thumb_bend_value, index_value, middle_value, ring_value,
+        #             pinky_value]
+        hand_pos = self.map_finger_values_to_limits(
+            thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
+            self.position_limits_right
+        )
         
         
                     
         return hand_pos
+    
+    def map_finger_values_to_limits(self, thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot, position_limits):
+        """
+        将0-1范围的手指弯曲值映射到指定的位置限制范围
+        
+        参数:
+            thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot: 0-1范围内的值
+            position_limits: 位置限制列表，包含6个范围的[min, max]
+        
+        返回:
+            映射后的整数值列表
+        """
+        # 计算各手指的映射值
+        # thumb_bend_value = thumb_bend * position_limits[0][1] + (1 - thumb_bend) * position_limits[0][0]
+        # index_value = index_bend * position_limits[1][1] + (1 - index_bend) * position_limits[1][0]
+        # middle_value = middle_bend * position_limits[2][1] + (1 - middle_bend) * position_limits[2][0]
+        # ring_value = ring_bend * position_limits[3][1] + (1 - ring_bend) * position_limits[3][0]
+        # pinky_value = pinky_bend * position_limits[4][1] + (1 - pinky_bend) * position_limits[4][0]
+        # thumb_rot_value = thumb_rot * position_limits[5][1] + (1 - thumb_rot) * position_limits[5][0]
+        thumb_bend_value = (1 - thumb_bend) * position_limits[0][1] + thumb_bend * position_limits[0][0]
+        index_value = (1 - index_bend) * position_limits[1][1] + index_bend * position_limits[1][0]
+        middle_value = (1 - middle_bend) * position_limits[2][1] + middle_bend * position_limits[2][0]
+        ring_value = (1 - ring_bend) * position_limits[3][1] + ring_bend * position_limits[3][0]
+        pinky_value = (1 - pinky_bend) * position_limits[4][1] + pinky_bend * position_limits[4][0]
+        thumb_rot_value = (1 - thumb_rot) * position_limits[5][1] + thumb_rot * position_limits[5][0]
+        
+        # 转换为整数
+        mapped_values = [
+            int(round(thumb_bend_value)),
+            int(round(index_value)),
+            int(round(middle_value)),
+            int(round(ring_value)),
+            int(round(pinky_value)),
+            int(round(thumb_rot_value))
+        ]
+        
+        return mapped_values
     
     def smooth_hand_position(self, new_pos):
         """
@@ -304,5 +351,13 @@ class HandTeleopROS(EndEffectorBase):
             # smooth_hand_pos = self.smooth_hand_position(hand_pos)
             
             # 控制灵巧手
-            self.robot_controller.set_hand_positions(hand_pos)
+            # self.robot_controller.set_hand_positions(hand_pos)
+            try:
+                dh5_req = DH5SetPositionRequest()
+                dh5_req.hand_type = 'right'
+                dh5_req.hand_mode = 'hand'
+                dh5_req.right_position_list = hand_pos
+                self.dh5_service(dh5_req)
+            except rospy.ServiceException as e:
+                logger.error(f"调用灵巧手服务失败: {e}")
             print(f"设置灵巧手位置: {hand_pos}")
