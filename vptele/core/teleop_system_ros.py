@@ -80,7 +80,7 @@ class TeleopSystemROS:
         }
         from arm_control.robot_controller_mujoco import RobotControllerMuJoCo
         self.robot_controller = RobotControllerMuJoCo(
-            model_path=self.config.get('mujoco_model_path', '/home/stw/pangu/src/arm_teleop/model/right_arm_stable.xml'),
+            model_path=self.config.get('mujoco_model_path', '/home/pangu/pangu/src/arm_teleop/model/right_arm_stable.xml'),
             config = sim_config
         )
     
