@@ -40,13 +40,13 @@ find_package(yaml-cpp CONFIG REQUIRED)
 
 
 # 打印 yaml-cpp 信息
-if(yaml-cpp_FOUND)
-    message(STATUS "Found yaml-cpp version: ${yaml-cpp_VERSION}")
-    message(STATUS "yaml-cpp include directory: ${yaml-cpp_INCLUDE_DIRS}")
-    message(STATUS "yaml-cpp libraries: ${yaml-cpp_LIBRARIES}")
-else()
-    message(FATAL_ERROR "yaml-cpp not found! Please install it.")
-endif()
+# if(yaml-cpp_FOUND)
+#     message(STATUS "Found yaml-cpp version: ${yaml-cpp_VERSION}")
+#     message(STATUS "yaml-cpp include directory: ${yaml-cpp_INCLUDE_DIRS}")
+#     message(STATUS "yaml-cpp libraries: ${yaml-cpp_LIBRARIES}")
+# else()
+#     message(FATAL_ERROR "yaml-cpp not found! Please install it.")
+# endif()
 
 
 
@@ -98,6 +98,7 @@ catkin_python_setup()
 add_service_files(
   FILES
   ArmIK.srv
+  PqMovejService.srv
 )
 
 ## Generate actions in the 'action' folder
