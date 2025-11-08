@@ -358,6 +358,7 @@ class HandTeleopROS(EndEffectorBase):
             
             # 控制灵巧手
             # self.robot_controller.set_hand_positions(hand_pos)
+            
             # dh5_start_time = time.time()
 
             try:

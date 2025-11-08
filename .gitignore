@@ -33,8 +33,12 @@ $RECYCLE.BIN/
 # ===== Python 特定文件 =====
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 *.py[cod]
 *$py.class
+
 
 # C extensions
 *.so
