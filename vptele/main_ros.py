@@ -54,7 +54,7 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
     logger.info(f"正在启动VisionPro机械臂遥操控系统... 配置文件: {config_path}")
     
     # 命令行参数覆盖配置文件
-    vp_ip = "192.168.1.144"
+    vp_ip = "192.168.8.145"
     if vp_ip:
         config['vp_ip'] = vp_ip
     # if robot_ip:

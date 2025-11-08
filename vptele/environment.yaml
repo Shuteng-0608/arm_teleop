@@ -69,4 +69,4 @@ dependencies:
       - six==1.17.0
       - urllib3==2.3.0
       - zipp==3.21.0
-prefix: /home/stw/miniconda3/envs/vrtele
+prefix: /home/pangu/miniconda3/envs/vrtele
