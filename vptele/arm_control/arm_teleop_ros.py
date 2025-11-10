@@ -1,6 +1,6 @@
 import rospy
 from arm_teleop.srv import ArmIK, ArmIKRequest
-from arm_teleop.srv import PqMovejService, PqMovejServiceRequest
+from arm_teleop.srv import MovejService, MovejServiceRequest
 from geometry_msgs.msg import Pose, Point, Quaternion
 import time
 import numpy as np
@@ -25,8 +25,8 @@ class ArmTeleopROS:
         
         rospy.wait_for_service('/arm_teleop/arm_ik_srv')
         self.ik_service = rospy.ServiceProxy('/arm_teleop/arm_ik_srv', ArmIK)
-        # rospy.wait_for_service('/aris_node/pq_movej_srv')
-        # self.pq_movej_service = rospy.ServiceProxy('/aris_node/pq_movej_srv', PqMovejService)
+        rospy.wait_for_service('/aris_node/movej_srv')
+        self.pq_movej_service = rospy.ServiceProxy('/aris_node/movej_srv', MovejService)
 
         logger.info("已连接到逆运动学服务")
 
@@ -415,12 +415,16 @@ class ArmTeleopROS:
                         if self.config.get('move', True):
                             rospy.loginfo(f"移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
                             # self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
-                            # pq_request = PqMovejServiceRequest()
-                            # pq_request.arm_id = 1
-                            # pq_request.target_pq = smooth_joint_angles
-                            # pq_response = self.pq_movej_service.call(pq_request)
-                            # if pq_response.response:
-                            #     rospy.loginfo("机械臂移动命令已发送")
+                            pq_request = MovejServiceRequest()
+                            pq_request.arm_id = 1
+                            pq_request.target_joints = smooth_joint_angles
+                            pq_request.vel = 0.5
+                            pq_request.acc = 5.0
+                            pq_request.jerk = 10.0
+                            pq_response = self.pq_movej_service.call(pq_request)
+                            
+                            if pq_response.response:
+                                rospy.loginfo("机械臂移动命令已发送")
                             
                     else:
                         rospy.logwarn(f"逆解失败，无法控制到位置: {smooth_target}")
