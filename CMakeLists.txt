@@ -88,11 +88,11 @@ catkin_python_setup()
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  DualArmJoints.msg
+  Joint7.msg
+)
 
 ## Generate services in the 'srv' folder
 add_service_files(
@@ -201,7 +201,8 @@ target_link_libraries(arm_kinematics_core
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(ik_service_node src/ik_service.cpp)
+add_executable(ik_service_right_node src/ik_service.cpp)
+add_executable(ik_service_left_node src/ik_service_left.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -214,7 +215,7 @@ add_executable(ik_service_node src/ik_service.cpp)
 # add_dependencies(ik_service_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(ik_service_node
+target_link_libraries(ik_service_right_node
   ${catkin_LIBRARIES}
   yaml-cpp
   # ${YAML_CPP_LIBRARIES}
@@ -225,6 +226,16 @@ target_link_libraries(ik_service_node
 
 )
 include_directories(/usr/include)
+target_link_libraries(ik_service_left_node
+  ${catkin_LIBRARIES}
+  yaml-cpp
+  # ${YAML_CPP_LIBRARIES}
+  # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
+  
+  arm_kinematics_core
+  /usr/lib/libceres.so
+
+)
 
 
 #############
@@ -241,6 +252,7 @@ catkin_install_python(PROGRAMS
   scripts/test_ik.py
   scripts/avp_test.py
   vptele/main_ros.py
+  scripts/movej_agent.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

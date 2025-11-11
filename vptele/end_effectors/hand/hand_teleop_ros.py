@@ -23,6 +23,8 @@ class HandTeleopROS(EndEffectorBase):
         # self.hand_controller = self.robot_controller
         # self.max_hand_range = self.config.get('max_hand_range', 1.57) # TODO RIGHT_HAND
         self.max_hand_range = 1.57
+        # 手指位置限制范围 [弯曲, 伸直]，根据实际灵巧手调整
+        self.latest_hand_pos_right = [930, 1771, 1707, 1731, 1731, 981]
         self.position_limits_right = [
             [30, 930],
             [10, 1771],
@@ -30,6 +32,15 @@ class HandTeleopROS(EndEffectorBase):
             [30, 1731],
             [30, 1731],
             [30, 981],
+        ]
+        self.latest_hand_pos_left = [966, 1725, 1686, 1725, 1732, 838]
+        self.position_limits_left = [
+            [0, 966],
+            [0, 1725],
+            [0, 1686],
+            [0, 1725],
+            [0, 1732],
+            [0, 838],
         ]
         self.smoothing_factor = self.config.get('smoothing_factor', 0.6)
         self.last_hand_pos = [0, 0, 0, 0, 0, 0]
@@ -52,7 +63,7 @@ class HandTeleopROS(EndEffectorBase):
         # 大拇指旋转需要用到的关节
         self.thumb_rot_joints = (4, 1, 0, 5)  # 大拇指尖, 大拇指根部, 手腕, 食指根部
         
-    def get_joint_position(self, hand_data, joint_idx):
+    def get_joint_position(self, hand_data, joint_idx, hand_side="right"):
         """
         从手部数据中获取指定关节的位置
         
@@ -63,13 +74,19 @@ class HandTeleopROS(EndEffectorBase):
         返回:
             np.array: 关节的3D位置
         """
-        if hand_data is None or "right_fingers" not in hand_data:
-            return None
-            
-        # 关节位置在变换矩阵的第4列前3行
-        return hand_data["right_fingers"][joint_idx, :3, 3]
+        if hand_side == "right":
+            if hand_data is None or "right_fingers" not in hand_data:
+                return None
+                
+            # 关节位置在变换矩阵的第4列前3行
+            return hand_data["right_fingers"][joint_idx, :3, 3]
+        elif hand_side == "left":
+            if hand_data is None or "left_fingers" not in hand_data:
+                return None
+                
+            return hand_data["left_fingers"][joint_idx, :3, 3]
         
-    def calculate_finger_bend_by_angle(self, hand_data, tip_idx, distal_idx, middle_idx, proximal_idx):
+    def calculate_finger_bend_by_angle(self, hand_data, tip_idx, distal_idx, middle_idx, proximal_idx, hand_side="right"):
         """
         通过关节角度计算手指弯曲程度
         
@@ -83,14 +100,24 @@ class HandTeleopROS(EndEffectorBase):
         返回:
             float: 弯曲程度 (0-1)，0表示完全伸直，1表示完全弯曲
         """
-        if hand_data is None or "right_fingers" not in hand_data:
-            return 0
-            
-        # 获取各关节位置
-        tip_pos = self.get_joint_position(hand_data, tip_idx)
-        distal_pos = self.get_joint_position(hand_data, distal_idx)
-        middle_pos = self.get_joint_position(hand_data, middle_idx)
-        proximal_pos = self.get_joint_position(hand_data, proximal_idx)
+        if hand_side == "right":
+            if hand_data is None or "right_fingers" not in hand_data:
+                return 0
+                
+            # 获取各关节位置
+            tip_pos = self.get_joint_position(hand_data, tip_idx, hand_side="right")
+            distal_pos = self.get_joint_position(hand_data, distal_idx, hand_side="right")
+            middle_pos = self.get_joint_position(hand_data, middle_idx, hand_side="right")
+            proximal_pos = self.get_joint_position(hand_data, proximal_idx, hand_side="right")
+        elif hand_side == "left":
+            if hand_data is None or "left_fingers" not in hand_data:
+                return 0
+                
+            # 获取各关节位置
+            tip_pos = self.get_joint_position(hand_data, tip_idx, hand_side="left")
+            distal_pos = self.get_joint_position(hand_data, distal_idx, hand_side="left")
+            middle_pos = self.get_joint_position(hand_data, middle_idx, hand_side="left")
+            proximal_pos = self.get_joint_position(hand_data, proximal_idx, hand_side="left")
         
         if tip_pos is None or distal_pos is None or middle_pos is None or proximal_pos is None:
             return 0
@@ -120,7 +147,7 @@ class HandTeleopROS(EndEffectorBase):
         
         return bend
     
-    def calculate_thumb_bend_by_angle(self, hand_data):
+    def calculate_thumb_bend_by_angle(self, hand_data, hand_side="right"):
         """
         针对大拇指特殊结构的弯曲度计算
         
@@ -130,15 +157,26 @@ class HandTeleopROS(EndEffectorBase):
         返回:
             float: 弯曲程度 (0-1)，0表示完全伸直，1表示完全弯曲
         """
-        if hand_data is None or "right_fingers" not in hand_data:
-            return 0
-            
-        # 获取大拇指关节位置
-        tip_pos = self.get_joint_position(hand_data, self.thumb_joints[0])  # 拇指尖(4)
-        distal_pos = self.get_joint_position(hand_data, self.thumb_joints[1])  # 远端指节(3)
-        proximal_pos = self.get_joint_position(hand_data, self.thumb_joints[2])  # 近端指节(2)
-        metacarpal_pos = self.get_joint_position(hand_data, self.thumb_joints[3])  # 掌骨(1)
-        wrist_pos = self.get_joint_position(hand_data, 0)  # 手腕
+        if hand_side == "right":
+            if hand_data is None or "right_fingers" not in hand_data:
+                return 0
+                
+            # 获取大拇指关节位置
+            tip_pos = self.get_joint_position(hand_data, self.thumb_joints[0], hand_side="right")  # 拇指尖(4)
+            distal_pos = self.get_joint_position(hand_data, self.thumb_joints[1], hand_side="right")  # 远端指节(3)
+            proximal_pos = self.get_joint_position(hand_data, self.thumb_joints[2], hand_side="right")  # 近端指节(2)
+            metacarpal_pos = self.get_joint_position(hand_data, self.thumb_joints[3], hand_side="right")  # 掌骨(1)
+            wrist_pos = self.get_joint_position(hand_data, 0, hand_side="right")  # 手腕
+        elif hand_side == "left":
+            if hand_data is None or "left_fingers" not in hand_data:
+                return 0
+                
+            # 获取大拇指关节位置
+            tip_pos = self.get_joint_position(hand_data, self.thumb_joints[0], hand_side="left")  # 拇指尖(4)
+            distal_pos = self.get_joint_position(hand_data, self.thumb_joints[1], hand_side="left")  # 远端指节(3)
+            proximal_pos = self.get_joint_position(hand_data, self.thumb_joints[2], hand_side="left")  # 近端指节(2)
+            metacarpal_pos = self.get_joint_position(hand_data, self.thumb_joints[3], hand_side="left")  # 掌骨(1)
+            wrist_pos = self.get_joint_position(hand_data, 0, hand_side="left")  # 手腕
         
         if tip_pos is None or distal_pos is None or proximal_pos is None or metacarpal_pos is None or wrist_pos is None:
             return 0
@@ -176,7 +214,7 @@ class HandTeleopROS(EndEffectorBase):
         
         return bend
     
-    def calculate_thumb_rotation(self, hand_data):
+    def calculate_thumb_rotation(self, hand_data, hand_side="right"):
         """
         计算大拇指旋转角度
         
@@ -186,14 +224,24 @@ class HandTeleopROS(EndEffectorBase):
         返回:
             float: 旋转程度 (0-1)，0表示大拇指与其他手指在同一平面，1表示形成夹爪状态
         """
-        if hand_data is None or "right_fingers" not in hand_data:
-            return 0
-            
-        # 获取大拇指尖、大拇指根部、手腕和食指根部的位置
-        thumb_tip = self.get_joint_position(hand_data, self.thumb_rot_joints[0])  # 大拇指尖
-        thumb_base = self.get_joint_position(hand_data, self.thumb_rot_joints[1])  # 大拇指根部
-        wrist = self.get_joint_position(hand_data, self.thumb_rot_joints[2])  # 手腕
-        index_base = self.get_joint_position(hand_data, self.thumb_rot_joints[3])  # 食指根部
+        if hand_side == "right":
+            if hand_data is None or "right_fingers" not in hand_data:
+                return 0
+                
+            # 获取大拇指尖、大拇指根部、手腕和食指根部的位置
+            thumb_tip = self.get_joint_position(hand_data, self.thumb_rot_joints[0], hand_side="right")  # 大拇指尖
+            thumb_base = self.get_joint_position(hand_data, self.thumb_rot_joints[1], hand_side="right")  # 大拇指根部
+            wrist = self.get_joint_position(hand_data, self.thumb_rot_joints[2], hand_side="right")  # 手腕
+            index_base = self.get_joint_position(hand_data, self.thumb_rot_joints[3], hand_side="right")  # 食指根部
+        elif hand_side == "left":
+            if hand_data is None or "left_fingers" not in hand_data:
+                return 0
+                
+            # 获取大拇指尖、大拇指根部、手腕和食指根部的位置
+            thumb_tip = self.get_joint_position(hand_data, self.thumb_rot_joints[0], hand_side="left")  # 大拇指尖
+            thumb_base = self.get_joint_position(hand_data, self.thumb_rot_joints[1], hand_side="left")  # 大拇指根部
+            wrist = self.get_joint_position(hand_data, self.thumb_rot_joints[2], hand_side="left")  # 手腕
+            index_base = self.get_joint_position(hand_data, self.thumb_rot_joints[3], hand_side="left")  # 食指根部
         
         if thumb_tip is None or thumb_base is None or wrist is None or index_base is None:
             return 0
@@ -231,7 +279,7 @@ class HandTeleopROS(EndEffectorBase):
         
         return rotation
         
-    def process_vp_data(self, hand_data):
+    def process_vp_data(self, hand_data, hand_side="right"):
         """
         将VisionPro手部数据映射到灵巧手控制值
         
@@ -241,17 +289,21 @@ class HandTeleopROS(EndEffectorBase):
         返回:
             list: 6个元素的灵巧手控制值数组
         """
-        if hand_data is None or "right_fingers" not in hand_data:
-            return self.last_hand_pos
+        if hand_side == "right":
+            if hand_data is None or "right_fingers" not in hand_data:
+                return self.latest_hand_pos_right
+        elif hand_side == "left":
+            if hand_data is None or "left_fingers" not in hand_data:
+                return self.latest_hand_pos_left
             
         # 使用角度法计算手指弯曲程度 (0-1范围)
-        pinky_bend = self.calculate_finger_bend_by_angle(hand_data, *self.pinky_joints)
-        ring_bend = self.calculate_finger_bend_by_angle(hand_data, *self.ring_joints)
-        middle_bend = self.calculate_finger_bend_by_angle(hand_data, *self.middle_joints)
-        index_bend = self.calculate_finger_bend_by_angle(hand_data, *self.index_joints)
+        pinky_bend = self.calculate_finger_bend_by_angle(hand_data, *self.pinky_joints, hand_side=hand_side)
+        ring_bend = self.calculate_finger_bend_by_angle(hand_data, *self.ring_joints, hand_side=hand_side)
+        middle_bend = self.calculate_finger_bend_by_angle(hand_data, *self.middle_joints, hand_side=hand_side)
+        index_bend = self.calculate_finger_bend_by_angle(hand_data, *self.index_joints, hand_side=hand_side)
         # 对大拇指使用专门的计算方法
-        thumb_bend = self.calculate_thumb_bend_by_angle(hand_data)
-        thumb_rot = self.calculate_thumb_rotation(hand_data)
+        thumb_bend = self.calculate_thumb_bend_by_angle(hand_data, hand_side=hand_side)
+        thumb_rot = self.calculate_thumb_rotation(hand_data, hand_side=hand_side)
         
         # 打印弯曲程度，用于调试
         # logger.info(f"小拇指: {pinky_bend:.2f}, 无名指: {ring_bend:.2f}, 中指: {middle_bend:.2f}, "
@@ -269,10 +321,20 @@ class HandTeleopROS(EndEffectorBase):
         # 按照灵巧手控制顺序排列
         # hand_pos = [thumb_rot_value, thumb_bend_value, index_value, middle_value, ring_value,
         #             pinky_value]
-        hand_pos = self.map_finger_values_to_limits(
-            thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
-            self.position_limits_right
-        )
+        if hand_side == "right":
+            hand_pos = self.map_finger_values_to_limits(
+                thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
+                self.position_limits_right
+            )
+        elif hand_side == "left":
+            hand_pos = self.map_finger_values_to_limits(
+                thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
+                self.position_limits_left
+            )
+        # hand_pos = self.map_finger_values_to_limits(
+        #     thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
+        #     self.position_limits_right
+        # )
         
         
                     
@@ -350,7 +412,8 @@ class HandTeleopROS(EndEffectorBase):
         if hand_data is not None and "right_fingers" in hand_data:
             # 将手部数据映射到灵巧手控制值
             # process_start_time = time.time()
-            hand_pos = self.process_vp_data(hand_data)
+            # hand_pos = self.process_vp_data(hand_data)
+            self.latest_hand_pos_right = self.process_vp_data(hand_data, hand_side="right")
             # print(f"[hand_teleop] 处理手部数据耗时: {time.time() - process_start_time:.4f}秒")
             
             # 应用平滑过滤
@@ -360,18 +423,20 @@ class HandTeleopROS(EndEffectorBase):
             # self.robot_controller.set_hand_positions(hand_pos)
             
             # dh5_start_time = time.time()
+        if hand_data is not None and "left_fingers" in hand_data:
+            self.latest_hand_pos_left = self.process_vp_data(hand_data, hand_side="left")
 
-            try:
-                
-                dh5_req = DH5SetPositionRequest()
-                dh5_req.hand_type = 'right'
-                dh5_req.hand_mode = 'hand'
-                dh5_req.right_position_list = hand_pos
-                self.dh5_service(dh5_req)
-                
-            except rospy.ServiceException as e:
-                logger.error(f"调用灵巧手服务失败: {e}")
-            # logger.info(f"[hand_teleop] 调用灵巧手服务耗时: {time.time() - dh5_start_time:.4f}秒")
+        try: 
+            dh5_req = DH5SetPositionRequest()
+            dh5_req.hand_type = 'both'
+            dh5_req.hand_mode = 'hand'
+            dh5_req.right_position_list = self.latest_hand_pos_right
+            dh5_req.left_position_list = self.latest_hand_pos_left
+            self.dh5_service(dh5_req)
             
-            print(f"设置灵巧手位置: {hand_pos}")
+        except rospy.ServiceException as e:
+            logger.error(f"调用灵巧手服务失败: {e}")
+        # logger.info(f"[hand_teleop] 调用灵巧手服务耗时: {time.time() - dh5_start_time:.4f}秒")
+        
+        # print(f"设置灵巧手位置: {hand_pos}")
         # logger.info(f"[hand_teleop] 灵巧手位置更新耗时: {time.time() - update_start_time:.4f}秒")

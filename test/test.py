@@ -37,4 +37,4 @@ def euler_to_quaternion(euler_pose, rotation_order='XYZ', degrees=False):
         
         return quaternion_pose
 
-print(f"测试欧拉角到四元数的转换: {euler_to_quaternion([0.2018, -0.368, -0.0086, 3.2767, -0.1549, -0.656])}")
+print(f"测试欧拉角到四元数的转换: {euler_to_quaternion([0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818])}")

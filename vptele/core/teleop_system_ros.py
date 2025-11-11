@@ -101,7 +101,8 @@ class TeleopSystemROS:
     def start(self):
         """启动遥操控系统"""
         # 先启动机械臂遥控
-        self.arm_teleop.start()
+        # self.arm_teleop.start()
+        self.arm_teleop.multi_start()
         
         # 如果配置了末端执行器，启动对应的遥控
         if self.end_effector:
