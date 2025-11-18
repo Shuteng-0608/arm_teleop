@@ -253,6 +253,7 @@ catkin_install_python(PROGRAMS
   scripts/test_ik.py
   scripts/avp_test.py
   vptele/main_ros.py
+  vptele/main_mujoco.py
   scripts/movej_agent.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
