@@ -23,9 +23,9 @@ public:
             auto ofst_for_comb = std::make_shared<ArmKineOfst>(config_path);
             comb_solver = std::make_shared<ArmKineComb>((std_for_comb), (ofst_for_comb));
                 
-            ROS_INFO("Kinematics solvers initialized successfully");
+            ROS_INFO("[right_arm_teleop] Inverse Kinematics solvers initialized successfully");
         } catch (const std::exception& e) {
-            ROS_FATAL("Solver initialization failed: %s", e.what());
+            ROS_FATAL("[right_arm_teleop] Solver initialization failed: %s", e.what());
             throw;
         }
 
@@ -35,21 +35,21 @@ public:
 
     bool handleRequest(arm_teleop::ArmIK::Request& req, arm_teleop::ArmIK::Response& res) {
         // 转换初始关节角
-        ROS_INFO("Received IK request using method: %s", req.method.c_str());
-        ROS_INFO("Current arm angle: %f", req.current_arm_angle);
-        ROS_INFO("Initial joints: [%f, %f, %f, %f, %f, %f, %f]",
-                req.init_joints[0], req.init_joints[1], req.init_joints[2],
-                req.init_joints[3], req.init_joints[4], req.init_joints[5],
-                req.init_joints[6]);
-        ROS_INFO("Target pose position: [%f, %f, %f]", 
-                req.target_pose.position.x,
-                req.target_pose.position.y,
-                req.target_pose.position.z);
-        ROS_INFO("Target pose orientation: [%f, %f, %f, %f]", 
-                req.target_pose.orientation.w,
-                req.target_pose.orientation.x, 
-                req.target_pose.orientation.y,
-                req.target_pose.orientation.z);
+        // ROS_INFO("Received IK request using method: %s", req.method.c_str());
+        // ROS_INFO("Current arm angle: %f", req.current_arm_angle);
+        // ROS_INFO("Initial joints: [%f, %f, %f, %f, %f, %f, %f]",
+        //         req.init_joints[0], req.init_joints[1], req.init_joints[2],
+        //         req.init_joints[3], req.init_joints[4], req.init_joints[5],
+        //         req.init_joints[6]);
+        // ROS_INFO("Target pose position: [%f, %f, %f]", 
+        //         req.target_pose.position.x,
+        //         req.target_pose.position.y,
+        //         req.target_pose.position.z);
+        // ROS_INFO("Target pose orientation: [%f, %f, %f, %f]", 
+        //         req.target_pose.orientation.w,
+        //         req.target_pose.orientation.x, 
+        //         req.target_pose.orientation.y,
+        //         req.target_pose.orientation.z);
         double init_joints_array[7];
         for (int i = 0; i < 7; ++i) {
             init_joints_array[i] = req.init_joints[i];
@@ -67,14 +67,14 @@ public:
             req.target_pose.orientation.x,
             req.target_pose.orientation.y,
             req.target_pose.orientation.z);
-        ROS_INFO("Target quaternion: [w: %f, x: %f, y: %f, z: %f]", 
-                q.w(), q.x(), q.y(), q.z());
+        // ROS_INFO("Target quaternion: [w: %f, x: %f, y: %f, z: %f]", 
+        //         q.w(), q.x(), q.y(), q.z());
         Tee.block<3,3>(0,0) = q.normalized().toRotationMatrix();
-        ROS_INFO("Transformation Matrix Tee:");
-        for (int i = 0; i < 4; ++i) {
-            ROS_INFO("[%6.3f, %6.3f, %6.3f, %6.3f]", 
-                    Tee(i,0), Tee(i,1), Tee(i,2), Tee(i,3));
-        }
+        // ROS_INFO("Transformation Matrix Tee:");
+        // for (int i = 0; i < 4; ++i) {
+        //     ROS_INFO("[%6.3f, %6.3f, %6.3f, %6.3f]", 
+        //             Tee(i,0), Tee(i,1), Tee(i,2), Tee(i,3));
+        // }
 
         // 选择求解方法
         IKResult ik_res;
@@ -161,14 +161,14 @@ int main(int argc, char** argv) {
     // config_path = "~arm_teleop/config/kinematics_params.yaml";
     std::string config_path = ros::package::getPath("arm_teleop") + "/config/kinematics_params.yaml";
     // config_path = nh.param<std::string>("config_path", "config/arm_kinematics.yaml");
-    ROS_INFO("Using config file: %s", config_path.c_str());
+    ROS_INFO("[right_arm_teleop] Using config file: %s", config_path.c_str());
 
     try {
         ArmKinematicsServer server(nh, config_path);
-        ROS_INFO("[arm_teleop] RIGHT Arm IK Service ready");
+        ROS_INFO("[right_arm_teleop] Arm IK Service ready");
         ros::spin();
     } catch (const std::exception& e) {
-        ROS_FATAL("Service initialization failed: %s", e.what());
+        ROS_FATAL("[right_arm_teleop] Service initialization failed: %s", e.what());
         return 2;
     }
     

@@ -1,6 +1,7 @@
 import rospy
 from arm_teleop.srv import ArmIK, ArmIKRequest
 from arm_teleop.srv import MovejService, MovejServiceRequest
+from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
 from pangu_msgs.msg import ArmJoints, DualArmMovej
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose, Point, Quaternion
@@ -43,16 +44,24 @@ class ArmTeleopROS:
         
         
         # ================== Single Arm MoveJ SERVICE ==================
-        # rospy.wait_for_service('/aris_node/movej_srv')
-        # self.pq_movej_service = rospy.ServiceProxy('/aris_node/movej_srv', MovejService)
+        rospy.wait_for_service('/aris_node/movej_srv')
+        self.pq_movej_service = rospy.ServiceProxy('/aris_node/movej_srv', MovejService)
+        
 
 
-        # ================== [RIGHT HAND INIT] ==================
+        # ================== [RIGHT ARM INIT] ==================
         rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
         self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
         self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
         self.last_right_joint_angles = [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005]
         self.last_right_joint_angles = [round(angle, 4) for angle in self.last_right_joint_angles]
+        pq_request = MovejServiceRequest()
+        pq_request.arm_id = 1
+        pq_request.target_joints = self.last_right_joint_angles
+        pq_request.vel = 0.5
+        pq_request.acc = 5.0
+        pq_request.jerk = 10.0
+        pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
         self.current_arm_angle_right = 0.1
@@ -60,17 +69,36 @@ class ArmTeleopROS:
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
 
 
-        # ================== [LEFT HAND INIT] ===================
+        # ================== [LEFT ARM INIT] ===================
         rospy.wait_for_service('/arm_teleop/left_arm_ik_srv')
         self.left_ik_service = rospy.ServiceProxy('/arm_teleop/left_arm_ik_srv', ArmIK)
         self.initial_left_robot_pose = [0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
+        # self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
         self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
+        pq_request = MovejServiceRequest()
+        pq_request.arm_id = 0
+        pq_request.target_joints = self.last_left_joint_angles
+        pq_request.vel = 0.5
+        pq_request.acc = 5.0
+        pq_request.jerk = 10.0
+        pq_response = self.pq_movej_service.call(pq_request)
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
         self.current_arm_angle_left = 0.1
         logger.info("LEFT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[LEFT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_left_robot_pose]}")
+
+        # ==============
+        rospy.wait_for_service('/aris_node/start_teleop_srv')
+        self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
+        tele_req = StartDualTeleOPRequest()
+        tele_req.running_flag = True
+        tele_response = self.start_teleop_service.call(tele_req)
+        if tele_response.success:
+            logger.info("已通知底层控制节点启动双臂遥操作模式")
+        else:
+            logger.error("通知底层控制节点启动双臂遥操作模式失败")
         
         
 
@@ -117,7 +145,7 @@ class ArmTeleopROS:
         self.position_buffer_left = []
         
         # 添加关节平滑相关参数
-        self.joints_smoothing_factor = self.config.get('joints_smoothing_factor', 0.5)  # 关节平滑系数
+        self.joints_smoothing_factor = self.config.get('smoothing_factor', 0.5)  # 关节平滑系数
         rospy.loginfo(f"[RIGHT ARM] Last joint angles: {self.last_right_joint_angles}")
         self.last_smooth_joints_right = self.last_right_joint_angles.copy() if self.last_right_joint_angles is not None else None
         self.joints_buffer_right = []
@@ -231,9 +259,16 @@ class ArmTeleopROS:
             relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_left)
         # relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation)
         # rospy.loginfo(f"相对旋转矩阵: \n{relative_rotation}")
+        # transfrom_matrix = np.array([[0.0, 1.0, 0.0],
+        #                              [0.0, 0.0, 1.0],
+        #                              [1.0, 0.0, 0.0]])
+
+        # relative_rotation_in_arm = np.dot(transfrom_matrix, relative_rotation)
         
         # 转换为欧拉角
         euler_angles = rotation_matrix_to_euler(relative_rotation)
+
+
         
         # 应用旋转到机械臂目标姿态
         # 先计算新的角度值
@@ -248,18 +283,19 @@ class ArmTeleopROS:
         #     new_ry = self.initial_robot_pose[4] + euler_angles[0]  # ry
         # new_rz = self.initial_robot_pose[5] + euler_angles[2]  # rz
         if hand_side == 'left':
-            new_rx = self.initial_left_robot_pose[3] - euler_angles[1]
+            new_rx = self.initial_left_robot_pose[3] + euler_angles[1]
         else:
             new_rx = self.initial_right_robot_pose[3] + euler_angles[1]  # rx
         
         if hand_side == 'left':
-            new_ry = self.initial_left_robot_pose[4] - euler_angles[0]
+            new_ry = self.initial_left_robot_pose[4] - euler_angles[2]
         else:
-            new_ry = self.initial_right_robot_pose[4] + euler_angles[0]  # ry
+            new_ry = self.initial_right_robot_pose[4] - euler_angles[2]  # ry
+
         if hand_side == 'left':
-            new_rz = self.initial_left_robot_pose[5] + euler_angles[2]
+            new_rz = self.initial_left_robot_pose[5] - euler_angles[0]
         else:
-            new_rz = self.initial_right_robot_pose[5] - euler_angles[2]  # rz
+            new_rz = self.initial_right_robot_pose[5] - euler_angles[0]  # rz
         
         
         # 应用连续角度跟踪，防止角度跳变
@@ -323,7 +359,7 @@ class ArmTeleopROS:
         
         return quaternion_pose
 
-    def control_loop(self, arm_side="right", arm_id=1):
+    def control_loop(self, arm_side="left", arm_id=0):
         """控制循环，持续更新机械臂位置和姿态"""
         logger.info(f"开始[{arm_side}]机械臂控制循环")
         
@@ -334,6 +370,7 @@ class ArmTeleopROS:
         max_record_time = 0.0
         recorded_time = 0.0
         while self.running:
+            loop_start_time = time.time()
             try:
                 # 增加帧计数
                 frame_count += 1
@@ -402,7 +439,7 @@ class ArmTeleopROS:
                     if arm_side == 'right':
                         ik_request.method = 'feasible'  # 使用组合方法
                     elif arm_side == 'left':
-                        ik_request.method = 'comb'  # 使用组合方法
+                        ik_request.method = 'feasible'  # 使用组合方法
                     ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
                     ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
                     ik_request.offset_refer = 0.5
@@ -481,6 +518,8 @@ class ArmTeleopROS:
                         
                         if self.config.get('move', True):
                             rospy.loginfo(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
+                            logger.info(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
+
                             # self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
                             # pq_request = MovejServiceRequest()
                             # pq_request.arm_id = arm_id
@@ -500,7 +539,13 @@ class ArmTeleopROS:
                     
                 
                 # 等待一段时间再更新
-                time.sleep(self.update_frequency)
+                loop_cost_time = loop_start_time - time.time()
+                if loop_cost_time > 0.03:
+                    continue
+                else:
+                    diff_time = 0.03 - loop_cost_time
+                    time.sleep(diff_time)
+                # time.sleep(self.update_frequency)
                 
             except Exception as e:
                 logger.error(f"控制循环出错: {str(e)}", exc_info=True)  # 使用exc_info=True记录完整堆栈
@@ -508,7 +553,7 @@ class ArmTeleopROS:
 
     def publish_loop(self):
         """发布线程"""
-        rate = rospy.Rate(20)  # 20Hz发布频率
+        rate = rospy.Rate(30)  # 20Hz发布频率
         rospy.loginfo(f"以{rate} Hz频率发布双臂关节数据")
         
         while self.running and not rospy.is_shutdown():
@@ -531,7 +576,9 @@ class ArmTeleopROS:
                 dual_arm_msg.left_arm.arm_id = 0
                 
                 dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
+                # dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
                 dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
+                # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
                 
                 # 发布数据
                 self.dual_arm_publisher.publish(dual_arm_msg)
@@ -599,6 +646,7 @@ class ArmTeleopROS:
             return
             
         logger.info("停止机械臂遥操作控制...")
+        
         self.running = False
         if self.control_thread:
             self.control_thread.join(timeout=2)

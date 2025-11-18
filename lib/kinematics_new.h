@@ -273,10 +273,18 @@ class ArmLeftKine{
                 std::shared_ptr<ArmKineOfst> ofst_solver);
 
         //
-        IKResult cal_left_arm_IK(
-            const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
-            double current_joints_array[], 
-            double arm_angle
+        // IKResult cal_left_arm_IK(
+        //     const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
+        //     double current_joints_array[], 
+        //     double arm_angle
+        // );
+
+        IKResult cal_left_arm_feasible_IK(
+            const Matrix4d& target_pose, // 左臂末端在全局坐标系下的位姿
+            double current_joints_array[],
+            double current_arm_angle,
+            const std::vector<double>& arm_angle_deviation_list = {-0.5, -0.25, 0.0, 0.25, 0.5}, // 默认臂角偏差列表
+            double offset_ref = 3.0 // 默认最大关节跳变阈值
         );
 
         // 这里直接传入左臂的关节坐标（等效的串联关节坐标值，无须坐标变换），得到左臂末端在全局坐标系下的位姿

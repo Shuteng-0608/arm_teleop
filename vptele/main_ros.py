@@ -6,6 +6,7 @@ import yaml
 import os
 import sys
 from utils.logger import get_logger, setup_logger
+from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
 import time
 
 def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None, 
@@ -96,6 +97,8 @@ class TeleopROSNode:
         self.log_level = rospy.get_param('~log_level', None)
         self.process_name = rospy.get_param('~process_name', None)
         self.mode = rospy.get_param('~mode', 'full')
+        rospy.wait_for_service('/aris_node/start_teleop_srv')
+        self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
         
         # 轨迹相关参数
         self.command = rospy.get_param('~command', None)
@@ -150,7 +153,16 @@ class TeleopROSNode:
             self.logger.exception(f"系统运行过程中发生错误: {e}")
         finally:
             if self.system:
+                # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
+                # tele_req = StartDualTeleOPRequest()
+                # tele_req.running_flag = False
+                # tele_response = self.start_teleop_service.call(tele_req)
+                # if tele_response.success:
+                #     rospy.loginfo("已通知底层控制节点关闭双臂遥操作模式")
+                # else:
+                #     rospy.logerr("通知底层控制节点关闭双臂遥操作模式失败")
                 self.system.stop()
+
                 self.logger.info("系统已安全关闭")
 
 def main():

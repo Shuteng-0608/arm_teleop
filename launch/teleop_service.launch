@@ -1,0 +1,29 @@
+<launch>
+    <!-- 启动 LEFT Arm IK Service 节点 -->
+
+    <node 
+        pkg="arm_teleop" 
+        type="ik_service_left_node" 
+        name="ik_service_left_node" 
+        output="screen"
+    />
+
+    <!-- 启动 RIGHT Arm IK Service 节点 -->
+
+    <node 
+        pkg="arm_teleop" 
+        type="ik_service_right_node" 
+        name="ik_service_right_node" 
+        output="screen"
+    />
+
+    <!-- 启动 DH5 Teleop 节点 -->
+    
+    <node 
+        pkg="aiui" 
+        type="dh5_control_teleop.py"
+        name="dh5_service_node" 
+        output="screen"
+    />    
+    
+</launch>

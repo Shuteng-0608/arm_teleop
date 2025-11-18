@@ -99,6 +99,7 @@ add_service_files(
   FILES
   ArmIK.srv
   MovejService.srv
+  StartDualTeleOP.srv
 )
 
 ## Generate actions in the 'action' folder

@@ -221,25 +221,78 @@ void seperate_serial_joints_with_arm_angle(
 }
 
 
+// /**
+//  * @brief 计算两组关节角度的最大绝对偏差。
+//  * @param joints_sol IK计算出的关节解。
+//  * @param current_joints_array 当前的关节位置。
+//  * @return 最大的绝对偏差值。
+//  */
+// double calculate_max_joint_deviation(SerialJoints joints_sol, 
+//                                      const double current_joints_array[]) {
+//     double sol_array[7];
+//     serial_joints_to_double_array(joints_sol, sol_array);
+
+//     double max_dev = 0.0;
+//     for (int i = 0; i < 7; ++i) {
+//         double deviation = std::abs(sol_array[i] - current_joints_array[i]);
+//         if (deviation > max_dev) {
+//             max_dev = deviation;
+//         }
+//     }
+//     return max_dev;
+// }
+
+
+// /**
+//  * @brief 检查一个 IKResult 是否有效且不发生关节跳变。
+//  * @param result IK计算结果。
+//  * @param current_joints_array 当前的关节位置。
+//  * @param offset_ref 允许的最大关节跳变阈值。
+//  * @return true 如果解有效且跳变在限制内，否则 false。
+//  */
+// bool is_solution_acceptable(const IKResult& result, 
+//                             const double current_joints_array[], 
+//                             double offset_ref) {
+//     // 1. 检查 IK 解是否有效
+//     if (!result.is_valid) {
+//         return false;
+//     }
+
+//     // 2. 检查关节跳变 (最大绝对偏差)
+//     double max_deviation = calculate_max_joint_deviation(result.final_sol, current_joints_array);
+    
+//     // 3. 判断是否发生跳变
+//     if (max_deviation > offset_ref) {
+//         // 发生跳变
+//         return false;
+//     }
+
+//     // 符合所有条件
+//     return true;
+// }
+
+
+
 /**
  * @brief 计算两组关节角度的最大绝对偏差。
  * @param joints_sol IK计算出的关节解。
  * @param current_joints_array 当前的关节位置。
  * @return 最大的绝对偏差值。
  */
-double calculate_max_joint_deviation(SerialJoints joints_sol, 
-                                     const double current_joints_array[]) {
+
+// 计算两个关节位置之间的最大关节偏差（距离度量）
+double calculate_max_joint_deviation(SerialJoints joints_sol, const double joints2[]) {
+
     double sol_array[7];
     serial_joints_to_double_array(joints_sol, sol_array);
-
-    double max_dev = 0.0;
-    for (int i = 0; i < 7; ++i) {
-        double deviation = std::abs(sol_array[i] - current_joints_array[i]);
-        if (deviation > max_dev) {
-            max_dev = deviation;
+    double max_deviation = 0.0;
+    for (int i = 0; i < 7; ++i) { // 假设有7个关节
+        double deviation = std::abs(sol_array[i] - joints2[i]);
+        if (deviation > max_deviation) {
+            max_deviation = deviation;
         }
     }
-    return max_dev;
+    return max_deviation;
 }
 
 
