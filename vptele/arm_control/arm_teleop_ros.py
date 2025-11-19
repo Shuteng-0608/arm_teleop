@@ -53,6 +53,11 @@ class ArmTeleopROS:
         rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
         self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
         self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
+        self.init_right_rotation = R.from_euler("XYZ", 
+                                        [self.initial_right_robot_pose[3], 
+                                         self.initial_right_robot_pose[4], 
+                                         self.initial_right_robot_pose[5]], 
+                                        degrees=False)
         self.last_right_joint_angles = [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005]
         self.last_right_joint_angles = [round(angle, 4) for angle in self.last_right_joint_angles]
         pq_request = MovejServiceRequest()
@@ -73,6 +78,11 @@ class ArmTeleopROS:
         rospy.wait_for_service('/arm_teleop/left_arm_ik_srv')
         self.left_ik_service = rospy.ServiceProxy('/arm_teleop/left_arm_ik_srv', ArmIK)
         self.initial_left_robot_pose = [0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
+        self.init_left_rotation = R.from_euler("XYZ", 
+                                        [self.initial_left_robot_pose[3], 
+                                         self.initial_left_robot_pose[4], 
+                                         self.initial_left_robot_pose[5]], 
+                                        degrees=False)
         # self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
         self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
         pq_request = MovejServiceRequest()
@@ -269,18 +279,24 @@ class ArmTeleopROS:
                                      [0.0, 0.0, 1.0],
                                      [1.0, 0.0, 0.0]])
 
-        relative_rotation_in_arm = np.dot(transfrom_matrix, relative_rotation) @ transfrom_matrix.T
+        rotation_in_arm = np.dot(transfrom_matrix, relative_rotation) @ transfrom_matrix.T
+        if hand_side == 'right':
+            relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
+        else:
+            relative_rotation = R.from_matrix(rotation_in_arm @ self.init_left_rotation.as_matrix())
+        [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
+        
         
         # 转换为欧拉角
-        euler_angles = rotation_matrix_to_euler(relative_rotation_in_arm)
-        if hand_side == 'left':
-            new_rx = self.initial_left_robot_pose[3] + euler_angles[0]
-            new_ry = self.initial_left_robot_pose[4] - euler_angles[1]
-            new_rz = self.initial_left_robot_pose[5] - euler_angles[2]
-        else:
-            new_rx = self.initial_right_robot_pose[3] + euler_angles[0]
-            new_ry = self.initial_right_robot_pose[4] - euler_angles[1]
-            new_rz = self.initial_right_robot_pose[5] - euler_angles[2]
+        # euler_angles = rotation_matrix_to_euler(relative_rotation_in_arm)
+        # if hand_side == 'left':
+        #     new_rx = self.initial_left_robot_pose[3] + euler_angles[0]
+        #     new_ry = self.initial_left_robot_pose[4] - euler_angles[1]
+        #     new_rz = self.initial_left_robot_pose[5] - euler_angles[2]
+        # else:
+        #     new_rx = self.initial_right_robot_pose[3] + euler_angles[0]
+        #     new_ry = self.initial_right_robot_pose[4] - euler_angles[1]
+        #     new_rz = self.initial_right_robot_pose[5] - euler_angles[2]
 
         
         # 应用旋转到机械臂目标姿态

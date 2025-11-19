@@ -54,6 +54,11 @@ class ArmTeleopMujoco:
         rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
         self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
         self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
+        self.init_right_rotation = R.from_euler("XYZ", 
+                                        [self.initial_right_robot_pose[3], 
+                                         self.initial_right_robot_pose[4], 
+                                         self.initial_right_robot_pose[5]], 
+                                        degrees=False)
         self.last_right_joint_angles = [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005]
         self.last_right_joint_angles = [round(angle, 4) for angle in self.last_right_joint_angles]
         # pq_request = MovejServiceRequest()
@@ -158,7 +163,7 @@ class ArmTeleopMujoco:
         logger.info("遥操作初始化完成，等待校准手部位置...")
         # 校准手部位置
         self.calibrate_right_hand_position()
-        self.calibrate_left_hand_position()
+        # self.calibrate_left_hand_position()
         
     def calibrate_right_hand_position(self):
         """校准手部位置和姿态，记录初始位置作为参考点"""
@@ -174,10 +179,10 @@ class ArmTeleopMujoco:
                 # 记录右手腕初始位置和姿态
                 self.initial_hand_transform_right = hand_data[0]
                 self.initial_hand_position_right = self.initial_hand_transform_right[:3, 3]
-                # self.initial_hand_rotation_right = self.initial_hand_transform_right[:3, :3]
-                self.initial_hand_rotation_right = np.array([[0.0, 1.0, 0.0],
-                                                             [-1.0, 0.0, 0.0],
-                                                             [0.0, 0.0, 1.0]])
+                self.initial_hand_rotation_right = self.initial_hand_transform_right[:3, :3]
+                # self.initial_hand_rotation_right = np.array([[0.0, 1.0, 0.0],
+                #                                              [-1.0, 0.0, 0.0],
+                #                                              [0.0, 0.0, 1.0]])
                 logger.info(f"已校准手部位置: {self.initial_hand_position_right}")
                 # logger.info(f"已校准手部姿态: {self.initial_hand_rotation_right}")
                 logger.info(f"已校准手部姿态: {rotation_matrix_to_euler(self.initial_hand_rotation_right)}")
@@ -271,13 +276,29 @@ class ArmTeleopMujoco:
                                      [0.0, 0.0, 1.0],
                                      [1.0, 0.0, 0.0]])
 
-        relative_rotation_in_arm = np.dot(transfrom_matrix, relative_rotation) @ transfrom_matrix.T
+        rotation_in_arm = np.dot(transfrom_matrix, relative_rotation) @ transfrom_matrix.T
         
         # 转换为欧拉角
-        euler_angles = rotation_matrix_to_euler(relative_rotation_in_arm)
-        new_rx = self.initial_right_robot_pose[3] + euler_angles[0]
-        new_ry = self.initial_right_robot_pose[4] - euler_angles[1]
-        new_rz = self.initial_right_robot_pose[5] - euler_angles[2]
+        # euler_angles = rotation_matrix_to_euler(relative_rotation_in_arm)
+        # new_rx = self.initial_right_robot_pose[3] + euler_angles[0]
+        # new_ry = self.initial_right_robot_pose[4] - euler_angles[1]
+        # new_rz = self.initial_right_robot_pose[5] - euler_angles[2]
+
+        # init_rotation = R.from_euler("XYZ", 
+        #                         [self.initial_right_robot_pose[3], 
+        #                          self.initial_right_robot_pose[4], 
+        #                          self.initial_right_robot_pose[5]], 
+        #                         degrees=False)
+        # relative_rotation = R.from_matrix(rotation_in_arm @ init_rotation.as_matrix())
+        # [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
+        if hand_side == 'right':
+            relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
+        else:
+            relative_rotation = R.from_matrix(rotation_in_arm @ self.init_left_rotation.as_matrix())
+        [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
+        # new_rx = euler_angles[0]
+        # new_ry = euler_angles[1]
+        # new_rz = euler_angles[2]
         
         
         

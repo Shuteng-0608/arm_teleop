@@ -97,8 +97,8 @@ class TeleopROSNode:
         self.log_level = rospy.get_param('~log_level', None)
         self.process_name = rospy.get_param('~process_name', None)
         self.mode = rospy.get_param('~mode', 'full')
-        rospy.wait_for_service('/aris_node/start_teleop_srv')
-        self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
+        # rospy.wait_for_service('/aris_node/start_teleop_srv')
+        # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
         
         # 轨迹相关参数
         self.command = rospy.get_param('~command', None)
