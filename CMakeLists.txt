@@ -90,8 +90,8 @@ catkin_python_setup()
 ## Generate messages in the 'msg' folder
 add_message_files(
   FILES
-  DualArmJoints.msg
-  Joint7.msg
+  ArmJoints.msg
+  DualArmMovej.msg
 )
 
 ## Generate services in the 'srv' folder

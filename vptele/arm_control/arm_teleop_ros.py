@@ -2,7 +2,8 @@ import rospy
 from arm_teleop.srv import ArmIK, ArmIKRequest
 from arm_teleop.srv import MovejService, MovejServiceRequest
 from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
-from pangu_msgs.msg import ArmJoints, DualArmMovej
+# from pangu_msgs.msg import ArmJoints, DualArmMovej
+from arm_teleop.msg import ArmJoints, DualArmMovej
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose, Point, Quaternion
 import time
