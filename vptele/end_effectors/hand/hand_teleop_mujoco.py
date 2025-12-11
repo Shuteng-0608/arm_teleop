@@ -7,7 +7,7 @@ from aiui.srv import DH5SetPosition, DH5SetPositionRequest
 import time
 logger = get_logger()
 
-class HandTeleopROS(EndEffectorBase):
+class HandTeleopMujoco(EndEffectorBase):
     """灵巧手遥控模块"""
     
     def __init__(self, vp_streamer, robot_controller, config=None):
@@ -24,47 +24,31 @@ class HandTeleopROS(EndEffectorBase):
         # self.max_hand_range = self.config.get('max_hand_range', 1.57) # TODO RIGHT_HAND
         self.max_hand_range = 1.57
         # 手指位置限制范围 [弯曲, 伸直]，根据实际灵巧手调整
-        self.latest_hand_pos_right = [920, 1770, 1707, 1730, 1730, 980]
-        # self.position_limits_right = [
-        #     [30, 930],
-        #     [10, 1771],
-        #     [30, 1707],
-        #     [30, 1731],
-        #     [30, 1731],
-        #     [30, 981],
-        # ]
+        self.latest_hand_pos_right = [930, 1771, 1707, 1731, 1731, 981]
         self.position_limits_right = [
-            [30, 920],
-            [10, 1770],
+            [30, 930],
+            [10, 1771],
             [30, 1707],
-            [30, 1730],
-            [30, 1730],
-            [30, 980],
+            [30, 1731],
+            [30, 1731],
+            [30, 981],
         ]
-        self.latest_hand_pos_left = [851, 1683, 1699, 1681, 1683, 867]
-        # self.position_limits_left = [
-        #     [30, 966],
-        #     [30, 1725],
-        #     [30, 1686],
-        #     [30, 1725],
-        #     [30, 1732],
-        #     [30, 838],
-        # ]
-        self.position_limits_left = [ 
-            [30, 851],
-            [10, 1683],
-            [30, 1699],
-            [30, 1681],
-            [10, 1683],
-            [30, 867],
+        self.latest_hand_pos_left = [966, 1725, 1686, 1725, 1732, 838]
+        self.position_limits_left = [
+            [0, 966],
+            [0, 1725],
+            [0, 1686],
+            [0, 1725],
+            [0, 1732],
+            [0, 838],
         ]
         self.smoothing_factor = self.config.get('smoothing_factor', 0.6)
         self.last_hand_pos = [0, 0, 0, 0, 0, 0]
         if not rospy.core.is_initialized():
             rospy.init_node('hand_teleop', anonymous=True)
         
-        rospy.wait_for_service('/dh5/set_all_position')
-        self.dh5_service = rospy.ServiceProxy('/dh5/set_all_position', DH5SetPosition)
+        # rospy.wait_for_service('/dh5/set_all_position')
+        # self.dh5_service = rospy.ServiceProxy('/dh5/set_all_position', DH5SetPosition)
         self.initialize()
         
     def initialize(self):
@@ -270,22 +254,12 @@ class HandTeleopROS(EndEffectorBase):
         
         # X轴：从拇指根部指向小指根部的方向（横向）
         # 这里用食指根部近似代替小指根部，垂直于Z轴
-        # 根据左右手调整横向轴方向
-        # x_temp = index_base - thumb_base
-        if hand_side == "right":
-            x_temp = index_base - thumb_base  # 右手：从拇指指向食指
-        else:
-            x_temp = thumb_base - index_base  # 左手：从食指指向拇指（镜像对称）
-
+        x_temp = index_base - thumb_base
         x_axis = x_temp - np.dot(x_temp, z_axis) * z_axis  # 确保垂直于Z轴
         x_axis = x_axis / np.linalg.norm(x_axis)
         
         # Y轴：垂直于X和Z轴（手掌法向量）
-        # y_axis = np.cross(z_axis, x_axis)
-        if hand_side == "right":
-            y_axis = np.cross(z_axis, x_axis)  # 右手坐标系
-        else:
-            y_axis = np.cross(x_axis, z_axis)  # 左手坐标系（镜像）
+        y_axis = np.cross(z_axis, x_axis)
         y_axis = y_axis / np.linalg.norm(y_axis)
         
         # 计算大拇指向量
@@ -298,16 +272,10 @@ class HandTeleopROS(EndEffectorBase):
         
         # 将投影映射到0-1范围
         # 通常大拇指内收时Y轴投影会从负值（完全伸开）变为正值（夹爪状态）
-        if hand_side == "right":
-            # 右手：负值表示伸展，正值表示内收
-            rotation = (thumb_y_proj + 0.7) / 1.4
-        else:
-            # 左手：符号可能相反，需要测试调整
-            rotation = (-thumb_y_proj + 0.7) / 1.4  # 尝试取反
-        # rotation = (thumb_y_proj + 0.7) / 1.4
+        rotation = (thumb_y_proj + 0.7) / 1.4
         
         # 限制在0-1范围内
-        rotation = max(0.0, min(1.0, rotation))
+        rotation = max(-0.6, min(0.0, rotation))
         
         return rotation
         
@@ -343,33 +311,31 @@ class HandTeleopROS(EndEffectorBase):
         
         # 转换为灵巧手控制值范围 (0-65535)
         # RIGHT_HAND
-        # pinky_value = pinky_bend * self.max_hand_range
-        # ring_value = ring_bend * self.max_hand_range
-        # middle_value = middle_bend * self.max_hand_range
-        # index_value = index_bend * self.max_hand_range
-        # thumb_bend_value = thumb_bend
-        # thumb_rot_value = thumb_rot * (1.57)
+        pinky_value = pinky_bend * self.max_hand_range
+        ring_value = ring_bend * self.max_hand_range
+        middle_value = middle_bend * self.max_hand_range
+        index_value = index_bend * self.max_hand_range
+        thumb_bend_value = thumb_bend
+        thumb_rot_value = thumb_rot * (1.57)
         
         # 按照灵巧手控制顺序排列
-        # hand_pos = [thumb_rot_value, thumb_bend_value, index_value, middle_value, ring_value,
-        #             pinky_value]
-        if hand_side == "right":
-            hand_pos = self.map_finger_values_to_limits(
-                thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
-                self.position_limits_right
-            )
-        elif hand_side == "left":
-            hand_pos = self.map_finger_values_to_limits(
-                thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
-                self.position_limits_left
-            )
+        hand_pos = [thumb_rot_value, thumb_bend_value, index_value, middle_value, ring_value,
+                    pinky_value]
+        # if hand_side == "right":
+        #     hand_pos = self.map_finger_values_to_limits(
+        #         thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
+        #         self.position_limits_right
+        #     )
+        # elif hand_side == "left":
+        #     hand_pos = self.map_finger_values_to_limits(
+        #         thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
+        #         self.position_limits_left
+        #     )
         # hand_pos = self.map_finger_values_to_limits(
         #     thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
         #     self.position_limits_right
         # )
-        
-        
-                    
+              
         return hand_pos
     
     def map_finger_values_to_limits(self, thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot, position_limits):
@@ -452,23 +418,22 @@ class HandTeleopROS(EndEffectorBase):
             # smooth_hand_pos = self.smooth_hand_position(hand_pos)
             
             # 控制灵巧手
-            # self.robot_controller.set_hand_positions(hand_pos)
+            # self.robot_controller.set_hand_positions(self.latest_hand_pos_right)
             
             # dh5_start_time = time.time()
-        if hand_data is not None and "left_fingers" in hand_data:
-            self.latest_hand_pos_left = self.process_vp_data(hand_data, hand_side="left")
-        rospy.sleep(0.1)
+        # if hand_data is not None and "left_fingers" in hand_data:
+        #     self.latest_hand_pos_left = self.process_vp_data(hand_data, hand_side="left")
 
-        try: 
-            dh5_req = DH5SetPositionRequest()
-            dh5_req.hand_type = 'both'
-            dh5_req.hand_mode = 'hand'
-            dh5_req.right_position_list = self.latest_hand_pos_right
-            dh5_req.left_position_list = self.latest_hand_pos_left
-            self.dh5_service(dh5_req)
+        # try: 
+        #     dh5_req = DH5SetPositionRequest()
+        #     dh5_req.hand_type = 'both'
+        #     dh5_req.hand_mode = 'hand'
+        #     dh5_req.right_position_list = self.latest_hand_pos_right
+        #     dh5_req.left_position_list = self.latest_hand_pos_left
+        #     self.dh5_service(dh5_req)
             
-        except rospy.ServiceException as e:
-            logger.error(f"调用灵巧手服务失败: {e}")
+        # except rospy.ServiceException as e:
+        #     logger.error(f"调用灵巧手服务失败: {e}")
         # logger.info(f"[hand_teleop] 调用灵巧手服务耗时: {time.time() - dh5_start_time:.4f}秒")
         
         # print(f"设置灵巧手位置: {hand_pos}")

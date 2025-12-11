@@ -55,7 +55,7 @@ KineConfig::KineConfig(const std::string& filepath) {
                 joint_limits.push_back({min_val, max_val});
             }
         }
-        // std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
+        std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
 
     } catch (const YAML::BadFile& e) {
         std::cerr << "Error: Could not open config file: " << filepath << ". " << e.what() << std::endl;
@@ -1094,163 +1094,78 @@ IKResult ArmKineComb::calculateIK(
  * @param offset_ref 允许的最大关节跳变阈值。
  * @return 最佳的IKResult。如果所有尝试都失败，返回一个 is_valid=false 的结果。
  */
-// IKResult ArmKineComb::cal_IK_feasible_armAngle(
-//     const Matrix4d& target_pose,
-//     double current_joints_array[],
-//     double current_arm_angle,
-//     const std::vector<double>& arm_angle_deviation_list , // 默认臂角偏差列表
-//     double offset_ref  // 默认最大关节跳变阈值
-// ) {
-//     IKResult feasible_res;
-//     feasible_res.is_valid = false;
-//     int cnt=0;
-
-    
-//     // --- 步骤 1: 尝试初始的 current_arm_angle ---
-    
-//     double initial_arm_angle = current_arm_angle;
-    
-//     IKResult initial_result = ArmKineComb::calculateIK(
-//         target_pose,
-//         current_joints_array,
-//         initial_arm_angle, // 初始臂角
-//         std::nullopt
-//     );
-
-//     // 检查偏差解是否有效，以及检查偏差距离
-//     if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
-//         // 初始臂角计算成功且解符合要求，直接返回
-//         // std::cout << "Optimal IK solution found with initial Arm Angle: " << current_arm_angle << std::endl;
-//         return initial_result;
-//     }
-    
-//     // --- 步骤 2: 遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation ---
-    
-//     // 检查偏差列表是否为空
-//     if (arm_angle_deviation_list.empty()) {
-//         std::cerr << "Warning: Initial arm angle failed and deviation list is empty." << std::endl;
-//         return IKResult{}; // 返回一个无效结果
-//     }
-
-//     // 遍历臂角偏差列表
-//     for (double deviation : arm_angle_deviation_list) {
-//         cnt ++;
-//         // 跳过偏差为0的情况，因为已经在步骤1中计算过了
-//         if (std::abs(deviation) < 1e-6) { // 使用一个小的阈值判断是否接近0
-//             continue; 
-//         }
-        
-//         // 计算新的臂角
-//         double new_arm_angle = current_arm_angle + deviation;
-
-//         // 调用原始的 IK 计算函数
-//         IKResult result = calculateIK(
-//             target_pose,
-//             current_joints_array,
-//             new_arm_angle, // 使用计算出的新臂角
-//             std::nullopt
-//         );
-
-//         // 检查 IK 解是否有效且符合跳变要求
-//         if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
-//             // 找到一个符合所有条件的解，立即返回
-//             // std::cout << "Optimal IK solution found with deviated Arm Angle: " << new_arm_angle 
-//             //           << " (Deviation: " << deviation << ")" << std::endl;
-//             std::cout << "寻找次数： cnt = " << cnt << std::endl;
-//             result.arm_angle = new_arm_angle; // 记录使用的臂角
-//             return result;
-//         }
-//     }
-
-//     // 如果遍历完所有臂角都没有找到符合条件的解
-//     std::cerr << "Warning: No valid IK solution found within deviation limit for any arm angle attempt." << std::endl;
-//     return feasible_res; // 返回一个 is_valid=false 的结果
-// }
-
-
-
 IKResult ArmKineComb::cal_IK_feasible_armAngle(
     const Matrix4d& target_pose,
     double current_joints_array[],
     double current_arm_angle,
-    const std::vector<double>& arm_angle_deviation_list, // 默认臂角偏差列表
+    const std::vector<double>& arm_angle_deviation_list , // 默认臂角偏差列表
     double offset_ref  // 默认最大关节跳变阈值
 ) {
-    std::vector<IKResult> feasible_solutions; // 存储所有满足跳变要求的解
-    int cnt = 0;
+    IKResult feasible_res;
+    feasible_res.is_valid = false;
+    int cnt=0;
 
+    
     // --- 步骤 1: 尝试初始的 current_arm_angle ---
+    
     double initial_arm_angle = current_arm_angle;
+    
     IKResult initial_result = ArmKineComb::calculateIK(
         target_pose,
         current_joints_array,
-        initial_arm_angle,
+        initial_arm_angle, // 初始臂角
         std::nullopt
     );
 
+    // 检查偏差解是否有效，以及检查偏差距离
     if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
-        initial_result.arm_angle = initial_arm_angle;
-        feasible_solutions.push_back(initial_result);
+        // 初始臂角计算成功且解符合要求，直接返回
+        // std::cout << "Optimal IK solution found with initial Arm Angle: " << current_arm_angle << std::endl;
+        return initial_result;
     }
-
+    
     // --- 步骤 2: 遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation ---
-    if (!arm_angle_deviation_list.empty()) {
-        for (double deviation : arm_angle_deviation_list) {
-            cnt++;
-            
-            // 跳过偏差为0的情况，因为已经在步骤1中计算过了
-            if (std::abs(deviation) < 1e-6) {
-                continue;
-            }
-            
-            double new_arm_angle = current_arm_angle + deviation;
-            IKResult result = calculateIK(
-                target_pose,
-                current_joints_array,
-                new_arm_angle,
-                std::nullopt
-            );
-
-            if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
-                result.arm_angle = new_arm_angle;
-                feasible_solutions.push_back(result);
-            }
-        }
-    }
-
-    std::cout << "寻找次数：cnt = " << cnt << std::endl;
-    std::cout << "找到满足跳变要求的解数量：" << feasible_solutions.size() << std::endl;
-
-    // --- 步骤 3: 从所有可行解中选择距离最近的一个 ---
-    if (feasible_solutions.empty()) {
-        std::cerr << "Warning: No valid IK solution found within deviation limit for any arm angle attempt." << std::endl;
+    
+    // 检查偏差列表是否为空
+    if (arm_angle_deviation_list.empty()) {
+        std::cerr << "Warning: Initial arm angle failed and deviation list is empty." << std::endl;
         return IKResult{}; // 返回一个无效结果
     }
 
-    // 如果只有一个解，直接返回
-    if (feasible_solutions.size() == 1) {
-        return feasible_solutions[0];
-    }
-
-    // 多个解的情况，选择距离最近的一个
-    IKResult best_solution;
-    double min_distance = std::numeric_limits<double>::max();
-
-    for (const auto& solution : feasible_solutions) {
-        double distance = calculate_max_joint_deviation(solution.final_sol, current_joints_array);
-        
-        if (distance < min_distance) {
-            min_distance = distance;
-            best_solution = solution;
+    // 遍历臂角偏差列表
+    for (double deviation : arm_angle_deviation_list) {
+        cnt ++;
+        // 跳过偏差为0的情况，因为已经在步骤1中计算过了
+        if (std::abs(deviation) < 1e-6) { // 使用一个小的阈值判断是否接近0
+            continue; 
         }
         
-        // std::cout << "臂角 " << solution.arm_angle << " 的距离: " << distance << std::endl;
+        // 计算新的臂角
+        double new_arm_angle = current_arm_angle + deviation;
+
+        // 调用原始的 IK 计算函数
+        IKResult result = calculateIK(
+            target_pose,
+            current_joints_array,
+            new_arm_angle, // 使用计算出的新臂角
+            std::nullopt
+        );
+
+        // 检查 IK 解是否有效且符合跳变要求
+        if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
+            // 找到一个符合所有条件的解，立即返回
+            // std::cout << "Optimal IK solution found with deviated Arm Angle: " << new_arm_angle 
+            //           << " (Deviation: " << deviation << ")" << std::endl;
+            std::cout << "寻找次数： cnt = " << cnt << std::endl;
+            result.arm_angle = new_arm_angle; // 记录使用的臂角
+            return result;
+        }
     }
 
-    // std::cout << "选择臂角 " << best_solution.arm_angle << " 的解，最小距离: " << min_distance << std::endl;
-    return best_solution;
+    // 如果遍历完所有臂角都没有找到符合条件的解
+    std::cerr << "Warning: No valid IK solution found within deviation limit for any arm angle attempt." << std::endl;
+    return feasible_res; // 返回一个 is_valid=false 的结果
 }
-
 
 
 
@@ -1299,7 +1214,7 @@ WristConfig::WristConfig(const std::string& filepath) {
         d_az = config["wrist_joint_params"]["d_az"].as<double>();
 
 
-        // std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
+        std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
 
     } catch (const YAML::BadFile& e) {
         std::cerr << "Error: Could not open config file: " << filepath << ". " << e.what() << std::endl;
@@ -1504,94 +1419,5 @@ std::pair<double, double> WristKinematicsSolver::CalculateWristIK(double theta6,
 
 }
 
-
-// 常量实现
-const Eigen::Matrix4d ArmLeftKine::M_mirror = 
-(Eigen::Matrix4d() << 
-    1.0, 0.0, 0.0, 0.0,    
-    0.0, 1.0, 0.0, 0.0,    
-    0.0, 0.0,-1.0, 0.0,    
-    0.0, 0.0, 0.0, 1.0 
-).finished();
-
-const Eigen::Matrix4d ArmLeftKine::T_GR = 
-(Eigen::Matrix4d() << 
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, ArmLeftKine::length_LR / 2.0, // 可以访问类内其他常量
-    0.0, 0.0, 0.0, 1.0
-).finished();
-
-const Eigen::Matrix4d ArmLeftKine::T_RG = 
-(Eigen::Matrix4d() << 
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, -ArmLeftKine::length_LR / 2.0,
-    0.0, 0.0, 0.0, 1.0
-).finished();
-
-// const Vector7d ArmLeftKine::sign_vector = {
-//     -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0
-// };
-const Vector7d ArmLeftKine::sign_vector = (Vector7d() << 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0).finished();
-
-const double ArmLeftKine::length_LR = 0.21;
-
-// 实现 ArmLeftKine 的构造函数
-ArmLeftKine::ArmLeftKine(std::shared_ptr<ArmKineStd> std_solver,
-                         std::shared_ptr<ArmKineOfst> ofst_solver)
-    // 成员初始化列表：
-    // 使用 std::move 将传入的指针移动给 right_arm 成员
-    : right_arm(std_solver, ofst_solver) 
-{
-    // 构造函数体为空，或者执行任何额外的左臂初始化工作
-}
-
-
-
-IKResult ArmLeftKine::cal_left_arm_feasible_IK(
-            const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
-            double current_joints_array[], 
-            double arm_angle,
-            const std::vector<double>& arm_angle_deviation_list,
-            double offset_ref){
-    
-    Matrix4d TeeL_G = target_pose; // 左臂末端在全局坐标系下的位姿
-    Matrix4d TeeRMir_R = T_RG * M_mirror * TeeL_G * M_mirror; // 左臂末端镜像到右边之后在右臂坐标系下的表示，因此可以直接用IK
-
-    // IKResult result_R = right_arm.calculateIK(
-    //     TeeRMir_R, 
-    //     current_joints_array, 
-    //     arm_angle // 传入arm_angle
-    //     // theta7 传入 std::nullopt，因为 ArmKineOfst 默认是空
-    // );
-
-    IKResult result_R = right_arm.cal_IK_feasible_armAngle(
-        TeeRMir_R,
-        current_joints_array,
-        arm_angle, // current_arm_angle,
-        arm_angle_deviation_list, //const std::vector<double>& arm_angle_deviation_list, // 默认臂角偏差列表
-        offset_ref //double offset_ref  // 默认最大关节跳变阈值
-    );
-
-
-
-
-    return result_R;
-}
-
-FKResult ArmLeftKine::calculateFK(const Vector7d& theta){
-
-    FKResult res_L;
-    Vector7d q_L = theta;
-    Vector7d q_R = sign_vector.cwiseProduct(q_L); //q_L 经过sign_vector变换后要直接能计算出等效的Arm_right才可以
-    FKResult res_R = right_arm.calculateFK(q_R);
-    res_L = res_R;
-    Matrix4d TeeL_G;
-    TeeL_G = M_mirror * (T_GR * res_R.T_08) * M_mirror;
-    res_L.T_08 = TeeL_G;
-
-    return res_L;
-}
 
  

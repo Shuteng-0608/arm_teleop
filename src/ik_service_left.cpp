@@ -5,12 +5,15 @@
 #include "tools.h"
 #include <ros/package.h>
 
+// using Vector7d = Eigen::Matrix<double, 7, 1>;
+
 class ArmKinematicsServer {
 private:
     ros::ServiceServer service_;
     std::shared_ptr<ArmKineStd> std_solver;
     std::shared_ptr<ArmKineOfst> ofst_solver;
     std::shared_ptr<ArmKineComb> comb_solver;
+    std::shared_ptr<ArmLeftKine> left_arm_solver;
 
 public:
     ArmKinematicsServer(ros::NodeHandle& nh, const std::string& config_path) {
@@ -22,15 +25,16 @@ public:
             auto std_for_comb = std::make_shared<ArmKineStd>(config_path);
             auto ofst_for_comb = std::make_shared<ArmKineOfst>(config_path);
             comb_solver = std::make_shared<ArmKineComb>((std_for_comb), (ofst_for_comb));
+            left_arm_solver = std::make_shared<ArmLeftKine>(std_solver, ofst_solver);
                 
-            ROS_INFO("[right_arm_teleop] Inverse Kinematics solvers initialized successfully");
+            ROS_INFO("[left_arm_teleop] Arm Inverse Kinematics solvers initialized successfully");
         } catch (const std::exception& e) {
-            ROS_FATAL("[right_arm_teleop] Solver initialization failed: %s", e.what());
+            ROS_FATAL("[left_arm_teleop] Solver initialization failed: %s", e.what());
             throw;
         }
 
         // 注册服务
-        service_ = nh.advertiseService("/arm_teleop/right_arm_ik_srv", &ArmKinematicsServer::handleRequest, this);
+        service_ = nh.advertiseService("/arm_teleop/left_arm_ik_srv", &ArmKinematicsServer::handleRequest, this);
     }
 
     bool handleRequest(arm_teleop::ArmIK::Request& req, arm_teleop::ArmIK::Response& res) {
@@ -52,7 +56,10 @@ public:
         //         req.target_pose.orientation.z);
         double init_joints_array[7];
         for (int i = 0; i < 7; ++i) {
-            init_joints_array[i] = req.init_joints[i];
+            if (i == 1) {
+                init_joints_array[i] = req.init_joints[i] * (-1); // 第二个关节取反
+            } else
+                init_joints_array[i] = req.init_joints[i];
         }
 
         // 转换目标位姿为Eigen矩阵
@@ -76,6 +83,15 @@ public:
         //             Tee(i,0), Tee(i,1), Tee(i,2), Tee(i,3));
         // }
 
+        // Mirror
+        // Eigen::Matrix4d TeeL_G;
+        // TeeL_G = ArmLeftKine::M_mirror * (ArmLeftKine::T_GR * Tee) * ArmLeftKine::M_mirror;
+        // ROS_INFO("Transformation Matrix Tee:");
+        // for (int i = 0; i < 4; ++i) {
+        //     ROS_INFO("[%6.3f, %6.3f, %6.3f, %6.3f]", 
+        //             TeeL_G(i,0), TeeL_G(i,1), TeeL_G(i,2), TeeL_G(i,3));
+        // }
+        // IKResult res_L = left_arm_solver.cal_left_arm_IK(TeeL_G,init_joints_array,0.1);
         // 选择求解方法
         IKResult ik_res;
         
@@ -86,28 +102,54 @@ public:
             } else if (req.method == "ofst") {
                 ik_res = ofst_solver->calculateIK(Tee, init_joints_array, std::nullopt, 0.14);
             } else if (req.method == "comb") {
-                ik_res = comb_solver->calculateIK(Tee, init_joints_array, 0.1, std::nullopt);
+                // ik_res = comb_solver->calculateIK(Tee, init_joints_array, 0.1, std::nullopt);
+                // ik_res = left_arm_solver->cal_left_arm_IK(Tee,init_joints_array,0.1);
+                // ik_res = comb_solver->cal_left_arm_feasible_IK(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
             } else if (req.method == "feasible") {
-                ik_res = comb_solver->cal_IK_feasible_armAngle(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
+                ik_res = left_arm_solver->cal_left_arm_feasible_IK(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
             } else {
                 throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, feasible");
             }
         } catch (const std::exception& e) {
             res.success = false;
-            res.message = "IK calculation failed: " + std::string(e.what());
+            res.message = "LEFT IK calculation failed: " + std::string(e.what());
             return true;
         }
 
         // 处理结果
         if (ik_res.is_valid) {
+            // ROS_INFO("Init IK solution:");
+            // print_serial_joints(ik_res.final_sol);
+            // for (int i = 0; i < 7; ++i) {
+            //     ROS_INFO("  Joint %d: %f", i+1, ik_res.final_sol[i]);
+            // }
+            // ik_res.final_sol = apply_sign_vector(ik_res.final_sol, ArmLeftKine::sign_vector);
+            
+            // for (int i = 0; i < 7; ++i) {
+            //     ROS_INFO("  Joint %d: %f", i+1, ik_res.final_sol[i]);
+            // }
+
+
             // 返回关节角度
             res.solution[0] = std::get<0>(ik_res.final_sol);
-            res.solution[1] = std::get<1>(ik_res.final_sol);
+            res.solution[1] = std::get<1>(ik_res.final_sol) * (-1);
             res.solution[2] = std::get<2>(ik_res.final_sol);
             res.solution[3] = std::get<3>(ik_res.final_sol);
             res.solution[4] = std::get<4>(ik_res.final_sol);
             res.solution[5] = std::get<5>(ik_res.final_sol);
             res.solution[6] = std::get<6>(ik_res.final_sol);
+            // Vector7d temp_sol;
+            // for (int i = 0; i < 7; ++i) {
+            //     temp_sol(i) = res.solution[i];  
+            //     ROS_INFO("Init solution Joint %d: %f", i+1, res.solution[i]);
+            // }
+            // temp_sol = ArmLeftKine::sign_vector.cwiseProduct(temp_sol);
+            // ROS_INFO("IK solution convert:");
+            // for (int i = 0; i < 7; ++i) {
+            //     ROS_INFO("  Joint %d: %f", i+1, temp_sol(i));
+            // }
+            // print_serial_joints(temp_sol);
+
             res.new_arm_angle = ik_res.arm_angle;
             
             // 验证结果
@@ -153,7 +195,7 @@ public:
 };
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "right_arm_kinematics_server");
+    ros::init(argc, argv, "left_arm_kinematics_server");
     ros::NodeHandle nh;
     
     // 获取配置文件路径
@@ -161,14 +203,14 @@ int main(int argc, char** argv) {
     // config_path = "~arm_teleop/config/kinematics_params.yaml";
     std::string config_path = ros::package::getPath("arm_teleop") + "/config/kinematics_params.yaml";
     // config_path = nh.param<std::string>("config_path", "config/arm_kinematics.yaml");
-    ROS_INFO("[right_arm_teleop] Using config file: %s", config_path.c_str());
+    ROS_INFO("[left_arm_teleop] Using config file: %s", config_path.c_str());
 
     try {
         ArmKinematicsServer server(nh, config_path);
-        ROS_INFO("[right_arm_teleop] Arm IK Service ready");
+        ROS_INFO("[left_arm_teleop] Arm IK Service ready");
         ros::spin();
     } catch (const std::exception& e) {
-        ROS_FATAL("[right_arm_teleop] Service initialization failed: %s", e.what());
+        ROS_FATAL("[left_arm_teleop] Service initialization failed: %s", e.what());
         return 2;
     }
     

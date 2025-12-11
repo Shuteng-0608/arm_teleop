@@ -77,9 +77,9 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
     logger.info(f"末端执行器: {config.get('end_effector', 'none')}")
     
     # 创建并初始化遥操控系统
-    from core.teleop_system_ros import TeleopSystemROS
+    from core.teleop_system_mujoco import TeleopSystemMujoco
 
-    system = TeleopSystemROS(config)
+    system = TeleopSystemMujoco(config)
     system.initialize(mode=mode)
     logger.info(f"系统初始化完成 (模式: {mode})")
     
@@ -153,14 +153,6 @@ class TeleopROSNode:
             self.logger.exception(f"系统运行过程中发生错误: {e}")
         finally:
             if self.system:
-                # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
-                # tele_req = StartDualTeleOPRequest()
-                # tele_req.running_flag = False
-                # tele_response = self.start_teleop_service.call(tele_req)
-                # if tele_response.success:
-                #     rospy.loginfo("已通知底层控制节点关闭双臂遥操作模式")
-                # else:
-                #     rospy.logerr("通知底层控制节点关闭双臂遥操作模式失败")
                 self.system.stop()
 
                 self.logger.info("系统已安全关闭")

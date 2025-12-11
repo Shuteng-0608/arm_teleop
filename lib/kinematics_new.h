@@ -160,10 +160,10 @@ class ArmKineOfst : public ArmKineBase{
 
 class ArmKineComb{
     public:
-        ArmKineComb(std::unique_ptr<ArmKineStd> std_solver,
-                    std::unique_ptr<ArmKineOfst> ofst_solver)
-            :   std_solver_(std::move(std_solver)),
-                ofst_solver_(std::move(ofst_solver)){}
+        ArmKineComb(std::shared_ptr<ArmKineStd> std_solver,
+                    std::shared_ptr<ArmKineOfst> ofst_solver)
+            :   std_solver_(std_solver),
+                ofst_solver_(ofst_solver){}
 
         IKResult calculateIK(
             const Matrix4d& target_pose, 
@@ -184,8 +184,8 @@ class ArmKineComb{
         FKResult calculateFK(const Vector7d& theta);
 
     private:
-        std::unique_ptr<ArmKineStd> std_solver_;
-        std::unique_ptr<ArmKineOfst> ofst_solver_;
+        std::shared_ptr<ArmKineStd> std_solver_;
+        std::shared_ptr<ArmKineOfst> ofst_solver_;
 
 };
 
@@ -255,6 +255,56 @@ private:
 
 };
 
+/*
+这里采用镜像法求解左臂运动学。
+建立全局坐标系，和右臂坐标系朝向一致，原点位于躯干中心
+左右臂关于全局坐标系的xoy平面对称，z相反
+这里需要注意，
+反解计算过程中，target_pose 是左臂末端在全局坐标系下的位姿
+正解过程中，算出的也是左臂末端在全局坐标系下的位姿
+因为没有建立左手坐标系
+
+*/
+
+// 左臂运动学计算
+class ArmLeftKine{
+    public:
+        ArmLeftKine(std::shared_ptr<ArmKineStd> std_solver,
+                std::shared_ptr<ArmKineOfst> ofst_solver);
+
+        //
+        // IKResult cal_left_arm_IK(
+        //     const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
+        //     double current_joints_array[], 
+        //     double arm_angle
+        // );
+
+        IKResult cal_left_arm_feasible_IK(
+            const Matrix4d& target_pose, // 左臂末端在全局坐标系下的位姿
+            double current_joints_array[],
+            double current_arm_angle,
+            const std::vector<double>& arm_angle_deviation_list = {-0.5, -0.25, 0.0, 0.25, 0.5}, // 默认臂角偏差列表
+            double offset_ref = 3.0 // 默认最大关节跳变阈值
+        );
+
+        // 这里直接传入左臂的关节坐标（等效的串联关节坐标值，无须坐标变换），得到左臂末端在全局坐标系下的位姿
+        FKResult calculateFK(const Vector7d& theta); //左臂末端在全局坐标系下的位姿
+
+        static const double length_LR; // 定义左右臂的坐标系之间的距离
+        static const Eigen::Matrix4d M_mirror;
+        static const Eigen::Matrix4d T_GR;
+        static const Eigen::Matrix4d T_RG;
+
+        static const Vector7d sign_vector; // 定义符号向量
+
+    private:
+
+        ArmKineComb right_arm;
+
+
+
+
+};
 
 
 

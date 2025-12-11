@@ -2,7 +2,7 @@ import time
 from utils.logger import get_logger
 logger = get_logger()
 
-class TeleopSystemROS:
+class TeleopSystemMujoco:
     """遥操控系统主类，协调所有模块工作"""
     
     def __init__(self, config):
@@ -48,8 +48,8 @@ class TeleopSystemROS:
         # 初始化机械臂遥控
         logger.info("正在初始化机械臂遥控模块...")
 
-        from arm_control.arm_teleop_ros import ArmTeleopROS
-        self.arm_teleop = ArmTeleopROS(
+        from arm_control.arm_teleop_mujoco import ArmTeleopMujoco
+        self.arm_teleop = ArmTeleopMujoco(
             self.vp_streamer,
             self.robot_controller,
             self.config.get('arm_config', {})
@@ -78,19 +78,23 @@ class TeleopSystemROS:
                 "joint_little_1", "joint_little_2"
             ]
         }
-        # from arm_control.robot_controller_mujoco import RobotControllerMuJoCo
-        # self.robot_controller = RobotControllerMuJoCo(
-        #     model_path=self.config.get('mujoco_model_path', '/home/pangu/pangu/src/arm_teleop/model/right_arm_stable.xml'),
-        #     config = sim_config
-        # )
+        logger.info("初始化Mujoco......")
+        try:
+            from arm_control.robot_controller_mujoco import RobotControllerMuJoCo
+            self.robot_controller = RobotControllerMuJoCo(
+                model_path = '/home/pangu/pangu/src/arm_teleop/model/right_arm_stable.xml',
+                config = sim_config
+            )
+        except ImportError:
+            logger.error("错误: 无法导入Mujoco模块，请确保它已正确安装")
     
     
     def _initialize_end_effector(self):
         """初始化末端执行器"""
         
         logger.info("正在初始化灵巧手末端执行器...")
-        from end_effectors.hand.hand_teleop_ros import HandTeleopROS
-        self.end_effector = HandTeleopROS(
+        from end_effectors.hand.hand_teleop_mujoco import HandTeleopMujoco
+        self.end_effector = HandTeleopMujoco(
             self.vp_streamer,
             self.robot_controller,
             self.config.get('hand_config', {})
@@ -101,8 +105,8 @@ class TeleopSystemROS:
     def start(self):
         """启动遥操控系统"""
         # 先启动机械臂遥控
-        # self.arm_teleop.start()
-        self.arm_teleop.multi_start()
+        self.arm_teleop.start()
+        # self.arm_teleop.multi_start()
         
         # 如果配置了末端执行器，启动对应的遥控
         if self.end_effector:
