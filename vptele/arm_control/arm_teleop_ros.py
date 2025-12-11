@@ -34,8 +34,8 @@ class ArmTeleopROS:
             rospy.init_node('arm_teleop', anonymous=True)
         
         # ================= DUAL ARM DATA PUBLISHER ==================
-        self.dual_arm_publisher = rospy.Publisher('/arm_teleop/dual_arm_movej', DualArmMovej, queue_size=10)
-        self.publish_rate = rospy.Rate(10)  # 10 Hz
+        self.dual_arm_publisher = rospy.Publisher('/arm_teleop/dual_arm_movej', DualArmMovej, queue_size=100)
+        self.publish_rate = rospy.Rate(30)  # 30 Hz
         self.publisher_thread = None
 
         self.data_lock = threading.RLock()

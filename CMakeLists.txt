@@ -30,12 +30,15 @@ find_package(catkin REQUIRED COMPONENTS
   roslib
   sensor_msgs
   trajectory_msgs
+  # yaml-cpp
 )
 
 # --- 查找依赖包 ---
 find_package(Eigen3 CONFIG REQUIRED) # 推荐使用 CONFIG 模式，更现代且可靠
 find_package(Ceres CONFIG REQUIRED COMPONENTS SuiteSparse)
 find_package(yaml-cpp CONFIG REQUIRED)
+# pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
+# find_package(yaml-cpp REQUIRED)
 
 
 
@@ -177,7 +180,6 @@ target_include_directories(arm_kinematics_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/lib  # 头文件目录
   ${catkin_INCLUDE_DIRS}
   Eigen3::Eigen
-  # ${YAML_CPP_LIBRARIES} 
   ${YAML_CPP_INCLUDE_DIR}
   # Ceres 的传递依赖，如 glog, gflags, pthread，在 CONFIG 模式下通常由 Ceres::Ceres 自动处理
   # 如果遇到链接错误，再取消注释下面的行
@@ -188,8 +190,10 @@ target_include_directories(arm_kinematics_core PUBLIC
 )
 
 target_link_libraries(arm_kinematics_core
-  PUBLIC ${catkin_LIBRARIES}
-  PUBLIC yaml-cpp
+  ${catkin_LIBRARIES}
+  # yaml-cpp
+  yaml-cpp
+  # ${YAML_CPP_LIBRARIES}
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a  # 正确链接静态库
 )
 
@@ -218,6 +222,7 @@ add_executable(ik_service_left_node src/ik_service_left.cpp)
 ## Specify libraries to link a library or executable target against
 target_link_libraries(ik_service_right_node
   ${catkin_LIBRARIES}
+  # yaml-cpp
   yaml-cpp
   # ${YAML_CPP_LIBRARIES}
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
@@ -229,6 +234,7 @@ target_link_libraries(ik_service_right_node
 include_directories(/usr/include)
 target_link_libraries(ik_service_left_node
   ${catkin_LIBRARIES}
+  # yaml-cpp
   yaml-cpp
   # ${YAML_CPP_LIBRARIES}
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
