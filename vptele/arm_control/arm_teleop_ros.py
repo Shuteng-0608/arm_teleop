@@ -148,10 +148,10 @@ class ArmTeleopROS:
         self.scaling_factor = 1.0 # 手部运动到机械臂运动的缩放因子
 
         # ============ OneEuroFilter ============
-        self.pose_filter_right = PoseFilter7D(min_cutoff=1.0, beta=0)
-        t_now = time.time()
-        self.joints_filter_right = OneEuroFilter(t_now, np.array(self.last_right_joint_angles), min_cutoff=1.0, beta=0)
-        self.last_smooth_joints_right = self.last_right_joint_angles.copy()
+        self.pose_filter_right = PoseFilter7D(min_cutoff=0.08, beta=0.5)
+        # t_now = time.time()
+        # self.joints_filter_right = OneEuroFilter(t_now, np.array(self.last_right_joint_angles), min_cutoff=1.2, beta=0)
+        # self.last_smooth_joints_right = self.last_right_joint_angles.copy()
         
         # 平滑过滤参数
         self.smoothing_factor = self.config.get('smoothing_factor', 0.5)  # 值越大，平滑效果越强(0-1)
@@ -164,9 +164,9 @@ class ArmTeleopROS:
         
         # 添加关节平滑相关参数
         self.joints_smoothing_factor = self.config.get('smoothing_factor', 0.5)  # 关节平滑系数
-        # rospy.loginfo(f"[RIGHT ARM] Last joint angles: {self.last_right_joint_angles}")
-        # self.last_smooth_joints_right = self.last_right_joint_angles.copy() if self.last_right_joint_angles is not None else None
-        # self.joints_buffer_right = []
+        rospy.loginfo(f"[RIGHT ARM] Last joint angles: {self.last_right_joint_angles}")
+        self.last_smooth_joints_right = self.last_right_joint_angles.copy() if self.last_right_joint_angles is not None else None
+        self.joints_buffer_right = []
         rospy.loginfo(f"[LEFT ARM] Last joint angles: {self.last_left_joint_angles}")
         self.last_smooth_joints_left = self.last_left_joint_angles.copy() if self.last_left_joint_angles is not None else None
         self.joints_buffer_left = []
@@ -526,20 +526,20 @@ class ArmTeleopROS:
                         # 对计算的关节角度进行平滑处理
                         if arm_side == 'right':
                             # 对[关节角度]进行 1Euro 滤波
-                            if self.last_smooth_joints_right is not None:
-                                smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
-                                self.last_smooth_joints_right = list(smooth_joints).copy()
                             # if self.last_smooth_joints_right is not None:
-                            #     smooth_joint_angles, self.joints_buffer_right = smooth_values(
-                            #         joint_angles,
-                            #         self.last_smooth_joints_right,
-                            #         self.joints_buffer_right,
-                            #         self.joints_smoothing_factor
-                            #     )
-                            #     self.last_smooth_joints_right = smooth_joint_angles.copy()
-                            # else:
-                            #     smooth_joint_angles = joint_angles
-                            #     self.last_smooth_joints_right = joint_angles.copy()
+                            #     smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
+                            #     self.last_smooth_joints_right = list(smooth_joints).copy()
+                            if self.last_smooth_joints_right is not None:
+                                smooth_joint_angles, self.joints_buffer_right = smooth_values(
+                                    joint_angles,
+                                    self.last_smooth_joints_right,
+                                    self.joints_buffer_right,
+                                    self.joints_smoothing_factor
+                                )
+                                self.last_smooth_joints_right = smooth_joint_angles.copy()
+                            else:
+                                smooth_joint_angles = joint_angles
+                                self.last_smooth_joints_right = joint_angles.copy()
                         elif arm_side == 'left':
                             if self.last_smooth_joints_left is not None:
                                 smooth_joint_angles, self.joints_buffer_left = smooth_values(
