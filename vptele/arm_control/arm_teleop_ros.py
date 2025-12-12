@@ -287,7 +287,7 @@ class ArmTeleopROS:
             relative_rotation = R.from_matrix(rotation_in_arm @ self.init_left_rotation.as_matrix())
         [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
         
-        
+        [qw,qx,qy,qz] = relative_rotation.as_quat()
         # 转换为欧拉角
         # euler_angles = rotation_matrix_to_euler(relative_rotation_in_arm)
         # if hand_side == 'left':
@@ -327,6 +327,10 @@ class ArmTeleopROS:
         target_position[3] = new_rx
         target_position[4] = new_ry
         target_position[5] = new_rz
+        # target_position[3] = qw
+        # target_position[4] = qx
+        # target_position[5] = qy
+        # target_position[6] = qz
         # target_position[3] = self.initial_robot_pose[3]
         # target_position[4] = self.initial_robot_pose[4]
         # target_position[5] = self.initial_robot_pose[5]
@@ -418,6 +422,7 @@ class ArmTeleopROS:
                     logger.info(f'{arm_side}目标位置: {[round(x, 4) for x in target_pose]}')
                     
                     # 应用平滑过滤到位置
+                    # 四元数平滑
                     if arm_side == 'right':
                         smooth_target, self.position_buffer_right = smooth_values(
                             target_pose, 

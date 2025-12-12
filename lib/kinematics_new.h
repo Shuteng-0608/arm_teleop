@@ -21,10 +21,23 @@ using Vector4d = Eigen::Vector4d;
 
 using SerialJoints = std::tuple<double,double,double,double,double,double,double>;
 using SerialJointsWithPhi = std::tuple<double,double,double,double,double,double,double,double>;
+using SerialJointsWithPlane = std::tuple<double,double,double,double,double,double,double,Vector3d>;
+using SerialJointsWithIndex = std::tuple<double,double,double,double,double,double,double,int>;
+using SerialJointsWithPhiAndPlane = std::tuple<double,double,double,double,double,double,double,double,Vector3d>;
+
 using JointsArray = std::array<double, 7>;
 extern const SerialJoints SerialZeros;
 const double pi = M_PI;
 const double EPSILON = std::numeric_limits<double>::epsilon() * 1e2; // 适当放大以应对累积误差
+
+
+
+// 此部分新加的内容用于参考向量法的反解计算
+extern const Vector3d vec_ref;
+extern const bool SELECT_SINGLE_SOL_LOG; 
+extern const int SELECT_STD_ID;// 选择的解的索引，从0开始;
+extern const int SELECT_OFST_ID;// 选择的解的索引，从0开始;
+
 
 
 
@@ -33,6 +46,9 @@ const double EPSILON = std::numeric_limits<double>::epsilon() * 1e2; // 适当�
 struct KineConfig {
     // DH Parameters
     double d_bs, d_se, d_ew, a_wf, a_se, a_ee;
+
+    // 新增的参数
+    double a_ew; // Elbow to Wrist x-offset
     
     // Conversion Drive Parameters
     double l_bx, l_by, l_ofsx, l_ofsy, beta40_radians;
@@ -56,6 +72,7 @@ struct KineConfig {
 
 
 // 通用7DOF 手臂反解结果结构体
+// 在IKReuslt中的arm_angle 是指虚拟机械臂的arm_angle
 struct IKResult {
     SerialJoints final_sol;     // 7个关节角度 (rad)
     bool is_valid;             // 解的有效性标志
@@ -63,6 +80,12 @@ struct IKResult {
     double theta7;
     double arm_angle;
     int error_code;
+    Vector3d n_ref;
+    std::vector<double> log_phis;
+    std::vector<std::tuple<Matrix3d, Matrix3d, Matrix3d, double, double, double, double>> log_ofst_phi_params;
+    Vector3d vec_sw;
+
+
 
     IKResult() :
         final_sol(SerialZeros),
@@ -70,17 +93,42 @@ struct IKResult {
         all_solutions(8,SerialZeros),
         theta7(0.0),
         arm_angle(0.0),
-        error_code (-1)
+        error_code (-1),
+        n_ref(0,0,0),
+        log_phis({0.0, 0.0, 0.0, 0.0}),
+        log_ofst_phi_params(),
+        vec_sw(0,0,0)
         {}
 };
 
 // 通用7 DOF 手臂 正运动学计算结果结构体
 struct FKResult {
     Matrix4d T_08;       // 末端执行器位姿
+    Vector3d n_arm_act;
+    Vector3d n_arm_vir;
+    Vector3d P_0_elbow_act;
+    Vector3d P_0_shoulder_act;
+    Vector3d P_0_wrist_act;
+    Matrix4d T_04; 
+    Matrix4d T_03; 
+    Vector3d vec_SW;
+    double arm_angle_vec_ref;
+
+
 
     // 默认构造函数初始化矩阵
     FKResult() : 
-        T_08(Matrix4d::Identity())
+        T_08(Matrix4d::Identity()),
+        n_arm_act(0,0,0),
+        n_arm_vir(0,0,0),
+        P_0_elbow_act(0,0,0),
+        P_0_shoulder_act(0,0,0),
+        P_0_wrist_act(0,0,0),
+        T_04(Matrix4d::Identity()),
+        T_03(Matrix4d::Identity()),
+        vec_SW(0,0,0),
+        arm_angle_vec_ref(0.0)
+
     {}
 };
 
@@ -99,6 +147,18 @@ class ArmKineBase{
         ) = 0; // "= 0" 表示这是一个纯虚函数
 
         virtual FKResult calculateFK(const Vector7d& theta);
+
+        // 声明一个虚函数，用于修改 DH 参数
+        /*
+            set_a_wf 函数说明：
+            在创造对象的时候，已经初始化参数了，按照config内容进行初始化
+            然后在最开始set_a_wf 相当于修改的是params_.a_wf，会对正反解都产生影响，是正确的作用
+        */
+        virtual void set_a_wf(double new_a_wf) {
+            // 默认实现，可以直接修改基类的 protected 成员
+            params_.a_wf = new_a_wf;
+        }
+
     protected:
         // 受保护的成员变量，派生类可以直接访问
         KineConfig params_; // 配置参数
@@ -120,6 +180,13 @@ class ArmKineStd : public ArmKineBase{
             std::optional<double> theta7 = std::nullopt  // std 下这个传入空
         ) override; // 'override' 关键字是 C++11 的特性，用于明确表示覆盖基类虚函数
 
+        IKResult calculateIK_vec_ref(
+            const Matrix4d& target_pose, 
+            double current_joints_array[], 
+            std::optional<double> arm_angle = std::nullopt, 
+            std::optional<double> theta7 = std::nullopt  // std 下这个传入空
+        );  // 'override' 关键字是 C++11 的特性，用于明确表示覆盖基类虚函数
+
         // 覆盖并实现基类中的纯虚函数
         // FKResult calculateFK(const Vector7d& theta);
 
@@ -127,6 +194,7 @@ class ArmKineStd : public ArmKineBase{
 
         double get_A5_d_param() const override {
             return params_.d_ew + params_.a_wf; // ArmKineStd 的特定逻辑
+            // 腕关节认为是在第七关节那里，把机械臂的小臂长补足到带偏置的地方
         }
         double get_A7_a_param() const override {
             return 0.0; // ArmKineStd 的特定逻辑
@@ -144,6 +212,13 @@ class ArmKineOfst : public ArmKineBase{
             std::optional<double> arm_angle = std::nullopt, // ofst 下这个传入空
             std::optional<double> theta7 = std::nullopt
         ) override; // 'override' 关键字是 C++11 的特性，用于明确表示覆盖基类虚函数
+
+        IKResult calculateIK_vec_ref(
+            const Matrix4d& target_pose,
+            double current_joints_array[],
+            std::optional<double> arm_angle = std::nullopt, // ofst 下这个传入空
+            std::optional<double> theta7 = std::nullopt
+        ); // 'override' 关键字是 C++11 的特性，用于明确表示覆盖基类虚函数
 
         // 覆盖并实现基类中的纯虚函数
         // FKResult calculateFK(const Vector7d& theta);
@@ -172,8 +247,15 @@ class ArmKineComb{
             std::optional<double> theta7 = std::nullopt  // std 下这个传入空
         );
 
+        IKResult calculateIK_vec_ref(
+            const Matrix4d& target_pose, 
+            double current_joints_array[], 
+            std::optional<double> arm_angle = std::nullopt, 
+            std::optional<double> theta7 = std::nullopt 
+        );
+
         // 从参数列表中寻找可用的臂角
-        IKResult cal_IK_feasible_armAngle(
+        IKResult cal_IK_feasible_armAngle_vec_ref(
             const Matrix4d& target_pose,
             double current_joints_array[],
             double current_arm_angle,
@@ -255,6 +337,7 @@ private:
 
 };
 
+
 /*
 这里采用镜像法求解左臂运动学。
 建立全局坐标系，和右臂坐标系朝向一致，原点位于躯干中心
@@ -273,18 +356,10 @@ class ArmLeftKine{
                 std::shared_ptr<ArmKineOfst> ofst_solver);
 
         //
-        // IKResult cal_left_arm_IK(
-        //     const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
-        //     double current_joints_array[], 
-        //     double arm_angle
-        // );
-
-        IKResult cal_left_arm_feasible_IK(
-            const Matrix4d& target_pose, // 左臂末端在全局坐标系下的位姿
-            double current_joints_array[],
-            double current_arm_angle,
-            const std::vector<double>& arm_angle_deviation_list = {-0.5, -0.25, 0.0, 0.25, 0.5}, // 默认臂角偏差列表
-            double offset_ref = 3.0 // 默认最大关节跳变阈值
+        IKResult cal_left_arm_IK(
+            const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
+            double current_joints_array[], 
+            double arm_angle
         );
 
         // 这里直接传入左臂的关节坐标（等效的串联关节坐标值，无须坐标变换），得到左臂末端在全局坐标系下的位姿

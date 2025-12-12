@@ -11,6 +11,7 @@ private:
     std::shared_ptr<ArmKineStd> std_solver;
     std::shared_ptr<ArmKineOfst> ofst_solver;
     std::shared_ptr<ArmKineComb> comb_solver;
+    
 
 public:
     ArmKinematicsServer(ros::NodeHandle& nh, const std::string& config_path) {
@@ -78,7 +79,12 @@ public:
 
         // 选择求解方法
         IKResult ik_res;
-        
+        // IKResult ik_res_comb = comb_solver.calculateIK_vec_ref(
+        //     T_ee_target, 
+        //     init_joints_array, 
+        //     target_arm_angle,
+        //     std::nullopt  // 不指定theta7，让求解器自动求解
+        // );
         try {
             ROS_INFO("Calculating IK...");
             if (req.method == "std") {
@@ -87,10 +93,10 @@ public:
                 ik_res = ofst_solver->calculateIK(Tee, init_joints_array, std::nullopt, 0.14);
             } else if (req.method == "comb") {
                 ik_res = comb_solver->calculateIK(Tee, init_joints_array, 0.1, std::nullopt);
-            } else if (req.method == "feasible") {
-                ik_res = comb_solver->cal_IK_feasible_armAngle(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
+            } else if (req.method == "vec") {
+                ik_res = comb_solver->calculateIK_vec_ref(Tee, init_joints_array, 0.1, std::nullopt);
             } else {
-                throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, feasible");
+                throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, vec");
             }
         } catch (const std::exception& e) {
             res.success = false;

@@ -174,6 +174,8 @@ add_library(arm_kinematics_core STATIC
   src/kinematics_new.cpp
   src/kinematics_cal_tools.cpp
   src/tools.cpp
+  src/kinematics_vec_ref.cpp
+  src/kinematics_left_arm.cpp
 )
 
 target_include_directories(arm_kinematics_core PUBLIC
@@ -207,7 +209,7 @@ target_link_libraries(arm_kinematics_core
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(ik_service_right_node src/ik_service.cpp)
-add_executable(ik_service_left_node src/ik_service_left.cpp)
+# add_executable(ik_service_left_node src/ik_service_left.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -232,17 +234,17 @@ target_link_libraries(ik_service_right_node
 
 )
 include_directories(/usr/include)
-target_link_libraries(ik_service_left_node
-  ${catkin_LIBRARIES}
-  # yaml-cpp
-  yaml-cpp
-  # ${YAML_CPP_LIBRARIES}
-  # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
+# target_link_libraries(ik_service_left_node
+#   ${catkin_LIBRARIES}
+#   # yaml-cpp
+#   yaml-cpp
+#   # ${YAML_CPP_LIBRARIES}
+#   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
   
-  arm_kinematics_core
-  /usr/lib/libceres.so
+#   arm_kinematics_core
+#   /usr/lib/libceres.so
 
-)
+# )
 
 
 #############

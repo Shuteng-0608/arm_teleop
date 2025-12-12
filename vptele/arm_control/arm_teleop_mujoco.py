@@ -442,12 +442,12 @@ class ArmTeleopMujoco:
                     start_time = time.time()
                     ik_request = ArmIKRequest()
                     if arm_side == 'right':
-                        ik_request.method = 'feasible'  # 使用组合方法
+                        ik_request.method = 'vec'  # 使用组合方法
                     elif arm_side == 'left':
                         ik_request.method = 'feasible'  # 使用组合方法
-                    ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
-                    ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
-                    ik_request.offset_refer = 0.5
+                    # ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
+                    # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+                    # ik_request.offset_refer = 0.5
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target]}")
                     smooth_target_in_quat = self.euler_to_quaternion(smooth_target)
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
