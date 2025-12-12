@@ -7,6 +7,7 @@ from utils.math_utils import rotation_matrix_to_euler
 from utils.logger import get_logger
 from utils.filters import OneEuroFilter, PoseFilter7D
 from scipy.spatial.transform import Rotation as R
+from arm_angle.msg import ArmAngle
 logger = get_logger()
 
 class ArmTeleopMujoco:
@@ -26,6 +27,10 @@ class ArmTeleopMujoco:
 
         if not rospy.core.is_initialized():
             rospy.init_node('arm_teleop', anonymous=True)
+        
+        self.current_arm_angle_right = 0.1
+        self.arm_angle_subscriber = rospy.Subscriber('/arm_angle/info', ArmAngle, self.arm_angle_callback, queue_size=10)
+        
 
 
 
@@ -68,6 +73,10 @@ class ArmTeleopMujoco:
         logger.info("遥操作初始化完成，等待校准手部位置...")
         # 校准手部位置
         self.calibrate_right_hand_position()
+    
+    def arm_angle_callback(self, msg: ArmAngle):
+        """接收机械臂当前臂角的回调函数"""
+        self.current_arm_angle_right = msg.right_arm_angle
         
     def calibrate_right_hand_position(self):
         """校准手部位置和姿态，记录初始位置作为参考点"""
@@ -228,10 +237,11 @@ class ArmTeleopMujoco:
                     # 使用逆运动学计算关节角度
                     start_time = time.time()
                     ik_request = ArmIKRequest()
-                    ik_request.method = 'feasible'  # 使用组合方法
-                    ik_request.current_arm_angle = self.current_arm_angle_right
-                    ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
-                    ik_request.offset_refer = 0.5
+                    ik_request.method = 'comb'  # 使用组合方法
+                    ik_request.current_arm_angle = self.current_arm_angle_right * np.pi / 180.0  # 传入当前臂角，转换为0~1范围
+                    logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
+                    # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+                    # ik_request.offset_refer = 0.5
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
                     ik_request.target_pose.position.y = smooth_target_in_quat[1]
@@ -252,8 +262,9 @@ class ArmTeleopMujoco:
                     if success:
                         # 更新最后使用的关节角度
                         
-                        self.current_arm_angle_right = response.new_arm_angle
+                        # self.current_arm_angle_right = response.new_arm_angle
                         self.last_right_joint_angles = [round(angle, 4) for angle in joint_angles]
+                        logger.info(f"[{arm_side}] 目标位姿逆解成功，新的臂角: {self.current_arm_angle_right}")
                         rospy.loginfo(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
                         rospy.loginfo(f"[{arm_side}] 逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")
                         logger.info(f"[{arm_side}] 逆解成功")
@@ -298,6 +309,7 @@ class ArmTeleopMujoco:
         self.control_thread = Thread(target=self.control_loop, name="ArmTeleopThread")
         self.control_thread.daemon = True
         self.control_thread.start()
+
 
 
 

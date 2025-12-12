@@ -86,7 +86,7 @@ public:
             } else if (req.method == "ofst") {
                 ik_res = ofst_solver->calculateIK(Tee, init_joints_array, std::nullopt, 0.14);
             } else if (req.method == "comb") {
-                ik_res = comb_solver->calculateIK(Tee, init_joints_array, 0.1, std::nullopt);
+                ik_res = comb_solver->calculateIK(Tee, init_joints_array, req.current_arm_angle, std::nullopt);
             } else if (req.method == "feasible") {
                 ik_res = comb_solver->cal_IK_feasible_armAngle(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
             } else {
