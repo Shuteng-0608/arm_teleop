@@ -9,8 +9,9 @@ from geometry_msgs.msg import Pose, Point, Quaternion
 import time
 import numpy as np
 from threading import Thread
-from utils.math_utils import rotation_matrix_to_euler, smooth_values, clip_to_safe_range, track_continuous_angle
+from utils.math_utils import rotation_matrix_to_euler, smooth_values
 from utils.logger import get_logger
+from utils.filters import OneEuroFilter, PoseFilter7D
 from scipy.spatial.transform import Rotation as R
 import threading
 logger = get_logger()
@@ -145,21 +146,27 @@ class ArmTeleopROS:
         self.control_thread_right = None # right arm control thread
         self.control_thread_left = None # left arm control thread
         self.scaling_factor = 1.0 # 手部运动到机械臂运动的缩放因子
+
+        # ============ OneEuroFilter ============
+        self.pose_filter_right = PoseFilter7D(min_cutoff=1.0, beta=0)
+        t_now = time.time()
+        self.joints_filter_right = OneEuroFilter(t_now, np.array(self.last_right_joint_angles), min_cutoff=1.0, beta=0)
+        self.last_smooth_joints_right = self.last_right_joint_angles.copy()
         
         # 平滑过滤参数
         self.smoothing_factor = self.config.get('smoothing_factor', 0.5)  # 值越大，平滑效果越强(0-1)
-        rospy.loginfo(f"[RIGHT ARM]初始位姿: {self.initial_right_robot_pose}")
-        self.last_target_pose_right = self.initial_right_robot_pose.copy()
-        self.position_buffer_right = []
+        # rospy.loginfo(f"[RIGHT ARM]初始位姿: {self.initial_right_robot_pose}")
+        # self.last_target_pose_right = self.initial_right_robot_pose.copy()
+        # self.position_buffer_right = []
         rospy.loginfo(f"[LEFT ARM]初始位姿: {self.initial_left_robot_pose}")
         self.last_target_pose_left = self.initial_left_robot_pose.copy()
         self.position_buffer_left = []
         
         # 添加关节平滑相关参数
         self.joints_smoothing_factor = self.config.get('smoothing_factor', 0.5)  # 关节平滑系数
-        rospy.loginfo(f"[RIGHT ARM] Last joint angles: {self.last_right_joint_angles}")
-        self.last_smooth_joints_right = self.last_right_joint_angles.copy() if self.last_right_joint_angles is not None else None
-        self.joints_buffer_right = []
+        # rospy.loginfo(f"[RIGHT ARM] Last joint angles: {self.last_right_joint_angles}")
+        # self.last_smooth_joints_right = self.last_right_joint_angles.copy() if self.last_right_joint_angles is not None else None
+        # self.joints_buffer_right = []
         rospy.loginfo(f"[LEFT ARM] Last joint angles: {self.last_left_joint_angles}")
         self.last_smooth_joints_left = self.last_left_joint_angles.copy() if self.last_left_joint_angles is not None else None
         self.joints_buffer_left = []
@@ -419,14 +426,19 @@ class ArmTeleopROS:
                     
                     # 应用平滑过滤到位置
                     if arm_side == 'right':
-                        smooth_target, self.position_buffer_right = smooth_values(
-                            target_pose, 
-                            self.last_target_pose_right, 
-                            self.position_buffer_right, 
-                            self.smoothing_factor
-                        )
-                        smooth_target = [round(angle, 4) for angle in smooth_target]
-                        self.last_target_pose_right = smooth_target.copy()
+                        # 对[姿态]进行 1Euro 滤波
+                        target_pose_in_quat = self.euler_to_quaternion(target_pose) # 转为四元数形式 [x, y, z, qw, qx, qy, qz]
+                        current_timestamp = time.time()
+                        smooth_target_in_quat = self.pose_filter_right.process(target_pose_in_quat, current_timestamp)
+                        self.last_target_pose_right = target_pose.copy()
+                        # smooth_target, self.position_buffer_right = smooth_values(
+                        #     target_pose, 
+                        #     self.last_target_pose_right, 
+                        #     self.position_buffer_right, 
+                        #     self.smoothing_factor
+                        # )
+                        # smooth_target = [round(angle, 4) for angle in smooth_target]
+                        # self.last_target_pose_right = smooth_target.copy()
                     elif arm_side == 'left':
                         smooth_target, self.position_buffer_left = smooth_values(
                             target_pose, 
@@ -463,8 +475,11 @@ class ArmTeleopROS:
                     ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
                     ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
                     ik_request.offset_refer = 0.5
-                    rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target]}")
-                    smooth_target_in_quat = self.euler_to_quaternion(smooth_target)
+                    if arm_side == 'left':
+                        rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target]}")
+                        smooth_target_in_quat = self.euler_to_quaternion(smooth_target)
+                    elif arm_side == 'right':
+                        rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
                     ik_request.target_pose.position.y = smooth_target_in_quat[1]
                     ik_request.target_pose.position.z = smooth_target_in_quat[2]
@@ -510,17 +525,21 @@ class ArmTeleopROS:
                         
                         # 对计算的关节角度进行平滑处理
                         if arm_side == 'right':
+                            # 对[关节角度]进行 1Euro 滤波
                             if self.last_smooth_joints_right is not None:
-                                smooth_joint_angles, self.joints_buffer_right = smooth_values(
-                                    joint_angles,
-                                    self.last_smooth_joints_right,
-                                    self.joints_buffer_right,
-                                    self.joints_smoothing_factor
-                                )
-                                self.last_smooth_joints_right = smooth_joint_angles.copy()
-                            else:
-                                smooth_joint_angles = joint_angles
-                                self.last_smooth_joints_right = joint_angles.copy()
+                                smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
+                                self.last_smooth_joints_right = list(smooth_joints).copy()
+                            # if self.last_smooth_joints_right is not None:
+                            #     smooth_joint_angles, self.joints_buffer_right = smooth_values(
+                            #         joint_angles,
+                            #         self.last_smooth_joints_right,
+                            #         self.joints_buffer_right,
+                            #         self.joints_smoothing_factor
+                            #     )
+                            #     self.last_smooth_joints_right = smooth_joint_angles.copy()
+                            # else:
+                            #     smooth_joint_angles = joint_angles
+                            #     self.last_smooth_joints_right = joint_angles.copy()
                         elif arm_side == 'left':
                             if self.last_smooth_joints_left is not None:
                                 smooth_joint_angles, self.joints_buffer_left = smooth_values(
@@ -540,20 +559,6 @@ class ArmTeleopROS:
                             rospy.loginfo(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
                             logger.info(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
 
-                            # self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
-                            # pq_request = MovejServiceRequest()
-                            # pq_request.arm_id = arm_id
-                            # pq_request.target_joints = smooth_joint_angles
-                            # pq_request.vel = 0.5
-                            # pq_request.acc = 5.0
-                            # pq_request.jerk = 10.0
-                            # pq_response = self.pq_movej_service.call(pq_request)
-                            
-                            # if pq_response.response:
-                            #     rospy.loginfo("机械臂移动命令已发送")
-                            # with self.data_lock:
-                            #     self.current_data.right_arm = right_data
-                            
                     else:
                         rospy.logwarn(f"[{arm_side}] 逆解失败，无法控制到位置: {smooth_target}")
                     
