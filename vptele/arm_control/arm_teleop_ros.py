@@ -69,7 +69,8 @@ class ArmTeleopROS:
         pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        self.current_arm_angle_right = 0.1
+        # self.current_arm_angle_right = 0.1
+        self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
 
@@ -180,8 +181,8 @@ class ArmTeleopROS:
         self.calibrate_right_hand_position()
         self.calibrate_left_hand_position()
 
-        self.lastest_head_z_rotation = 0.0
-        self.calibrate_head_position()
+        # self.lastest_head_z_rotation = 0.0
+        # self.calibrate_head_position()
     
     def calibrate_head_position(self):
         """校准头部位置，记录初始位置作为参考点"""
@@ -482,8 +483,14 @@ class ArmTeleopROS:
                         ik_request.method = 'feasible'  # 使用组合方法
                     elif arm_side == 'left':
                         ik_request.method = 'feasible'  # 使用组合方法
-                    ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
-                    ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+                    # ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
+                    # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+                    offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    ik_request.current_arm_angle = 0
+                    # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
+                    offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
+                    offset_list = offset_list1 + offset_list2
+                    ik_request.offset_list = offset_list
                     ik_request.offset_refer = 0.5
 
                     # if arm_side == 'left':
@@ -592,15 +599,15 @@ class ArmTeleopROS:
                 # 创建双臂消息
                 # rospy.loginfo(f"头部绕Z轴旋转角度: {self.get_head_z_rotation()}")
                 dual_arm_msg = DualArmMovej()
-                head_z_rotation = self.get_head_z_rotation()
-                rospy.loginfo(f"头部绕Z轴旋转角度: {head_z_rotation}")
-                if abs(head_z_rotation) > 0.1:
-                    rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
-                    self.lastest_head_z_rotation = head_z_rotation
-                    dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
-                else:
-                    rospy.loginfo(f"保持头部绕Z轴旋转角度不变: {self.lastest_head_z_rotation}")
-                    dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
+                # head_z_rotation = self.get_head_z_rotation()
+                # rospy.loginfo(f"头部绕Z轴旋转角度: {head_z_rotation}")
+                # if abs(head_z_rotation) > 0.1:
+                #     rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
+                #     self.lastest_head_z_rotation = head_z_rotation
+                #     dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
+                # else:
+                #     rospy.loginfo(f"保持头部绕Z轴旋转角度不变: {self.lastest_head_z_rotation}")
+                #     dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 
                 
                 # 设置header
@@ -614,10 +621,12 @@ class ArmTeleopROS:
                 dual_arm_msg.right_arm.arm_id = 1
                 dual_arm_msg.left_arm.arm_id = 0
                 
-                dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
-                # dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
-                dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
-                # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
+                # dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
+                dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
+                # dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
+                
+                # dual_arm_msg.left_arm.arm_joints = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
+                dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
                 
                 # 发布数据
                 self.dual_arm_publisher.publish(dual_arm_msg)
@@ -625,8 +634,8 @@ class ArmTeleopROS:
                     
             except Exception as e:
                 rospy.logerr("Publish error: %s", str(e))
-            # rate.sleep()
-            rospy.sleep(1)
+            rate.sleep()
+            # rospy.sleep(1)
     
     
     def start(self):

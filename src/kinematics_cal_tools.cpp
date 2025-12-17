@@ -523,6 +523,12 @@ double calculate_max_joint_deviation(SerialJoints joints_sol,
     double max_dev = 0.0;
     for (int i = 0; i < 7; ++i) {
         double deviation = std::abs(sol_array[i] - current_joints_array[i]);
+        if (i == 4){
+            deviation *=0.1;
+        }
+        else if (i == 1){
+            deviation *=1.2;
+        }
         if (deviation > max_dev) {
             max_dev = deviation;
         }

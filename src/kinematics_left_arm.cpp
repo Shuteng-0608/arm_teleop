@@ -96,7 +96,7 @@ IKResult ArmLeftKine::cal_left_arm_feasible_IK_vec_ref(
     IKResult result_R = right_arm.cal_IK_feasible_armAngle_vec_ref(
         TeeRMir_R,
         current_joints_array,
-        arm_angle, // current_arm_angle,
+        -arm_angle, // current_arm_angle,
         arm_angle_deviation_list, //const std::vector<double>& arm_angle_deviation_list, // 默认臂角偏差列表
         offset_ref //double offset_ref  // 默认最大关节跳变阈值
     );

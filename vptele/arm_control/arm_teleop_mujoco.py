@@ -28,7 +28,7 @@ class ArmTeleopMujoco:
         if not rospy.core.is_initialized():
             rospy.init_node('arm_teleop', anonymous=True)
         
-        self.current_arm_angle_right = 0.1
+        # self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         self.arm_angle_subscriber = rospy.Subscriber('/arm_angle/info', ArmAngle, self.arm_angle_callback, queue_size=10)
         
 
@@ -48,7 +48,7 @@ class ArmTeleopMujoco:
         self.last_right_joint_angles = [round(angle, 4) for angle in self.last_right_joint_angles]
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        self.current_arm_angle_right = 0.1
+        self.current_arm_angle_right = 0.0
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
         
@@ -302,11 +302,21 @@ class ArmTeleopMujoco:
                     # 使用逆运动学计算关节角度
                     start_time = time.time()
                     ik_request = ArmIKRequest()
-                    ik_request.method = 'comb'  # 使用组合方法
-                    ik_request.current_arm_angle = self.current_arm_angle_right * np.pi / 180.0  # 传入当前臂角，转换为0~1范围
-                    logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
-                    # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
-                    # ik_request.offset_refer = 0.5
+                    ik_request.method = 'feasible'  # 使用组合方法
+                    # ik_request.method = 'comb'  # 使用组合方法
+                    # ik_request.current_arm_angle = self.current_arm_angle_right
+                    
+
+                    offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    ik_request.current_arm_angle = 0
+                    # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
+                    offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
+                    offset_list = offset_list1 + offset_list2
+                    ik_request.offset_list = offset_list
+                    # ik_request.offset_list_2 = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+
+                    # ik_request.offset_list = [0, 0.025, -0.025, 0.05, -0.05, 0.075, -0.075, 0.1, -0.1, 0.125, -0.125, 0.15, -0.15, 0.2, -0.2]
+                    ik_request.offset_refer = 0.5
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
                     ik_request.target_pose.position.y = smooth_target_in_quat[1]
@@ -327,7 +337,7 @@ class ArmTeleopMujoco:
                     if success:
                         # 更新最后使用的关节角度
                         
-                        # self.current_arm_angle_right = response.new_arm_angle
+                        self.current_arm_angle_right = response.new_arm_angle
                         self.last_right_joint_angles = [round(angle, 4) for angle in joint_angles]
                         logger.info(f"[{arm_side}] 目标位姿逆解成功，新的臂角: {self.current_arm_angle_right}")
                         rospy.loginfo(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
@@ -371,12 +381,12 @@ class ArmTeleopMujoco:
                 else:
                     rospy.loginfo(f"保持头部绕Z轴旋转角度不变: {self.lastest_head_z_rotation}")
                     # dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
-                # if loop_cost_time > 0.01:
-                #     continue
-                # else:
-                #     diff_time = 0.01 - loop_cost_time
-                #     time.sleep(diff_time)
-                time.sleep(1)
+                if loop_cost_time > 0.01:
+                    continue
+                else:
+                    diff_time = 0.01 - loop_cost_time
+                    time.sleep(diff_time)
+                # time.sleep(1)
                 
             except Exception as e:
                 logger.error(f"控制循环出错: {str(e)}", exc_info=True)  # 使用exc_info=True记录完整堆栈
