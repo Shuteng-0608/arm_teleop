@@ -7,6 +7,9 @@
 
 const SerialJoints SerialZeros = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
+//======打印按钮=========//
+constexpr bool ENABLE_LOG = true; 
+
 
 
 // KinematicsConfig 构造函数的实现
@@ -21,6 +24,8 @@ KineConfig::KineConfig(const std::string& filepath) {
         a_wf = config["dh_parameters"]["a_wf"].as<double>();
         a_se = config["dh_parameters"]["a_se"].as<double>();
         a_ee = config["dh_parameters"]["a_ee"].as<double>();
+        // 新增的参数
+        a_ew = config["dh_parameters"]["a_ew"].as<double>();
 
         // Conversion Drive Parameters
         l_bx = config["Conversion_drive_params"]["l_bx"].as<double>();
@@ -55,7 +60,7 @@ KineConfig::KineConfig(const std::string& filepath) {
                 joint_limits.push_back({min_val, max_val});
             }
         }
-        // std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
+        std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
 
     } catch (const YAML::BadFile& e) {
         std::cerr << "Error: Could not open config file: " << filepath << ". " << e.what() << std::endl;
@@ -93,17 +98,107 @@ FKResult ArmKineBase::calculateFK(const Vector7d& theta) {
     const double& t6 = theta[5];
     const double& t7 = theta[6];
 
+
     // 链式变换矩阵计算 (现在通用了)
     const Matrix4d A1 = modified_DH_transform(t1 + M_PI_2, params_.d_bs, 0.0, 0.0);
     const Matrix4d A2 = modified_DH_transform(t2 - M_PI_2, 0.0, 0.0, M_PI_2);
     const Matrix4d A3 = modified_DH_transform(t3 + M_PI_2, params_.d_se, 0.0, M_PI_2);
     const Matrix4d A4 = modified_DH_transform(t4, 0.0, params_.a_se, -M_PI_2);
-    const Matrix4d A5 = modified_DH_transform(t5, d_ew_val, 0.0, M_PI_2); // 使用差异参数
+    const Matrix4d A5 = modified_DH_transform(t5, d_ew_val, params_.a_ew, M_PI_2); // 使用差异参数, 新增了肘腕关节的偏执
     const Matrix4d A6 = modified_DH_transform(t6 + M_PI_2, 0.0, 0.0, M_PI_2);
     const Matrix4d A7 = modified_DH_transform(t7, 0.0, a_wf_val, M_PI_2); // 使用差异参数
     const Matrix4d A8 = modified_DH_transform(0.0, 0.0, params_.a_ee, 0.0);
+    
+    // std::cout << "d_ew_val = " << d_ew_val << std::endl;
+    // std::cout << "a_wf_val = " << a_wf_val << std::endl;
+
 
     result.T_08 = A1 * A2 * A3 * A4 * A5 * A6 * A7 * A8;
+    const Matrix4d T_03 = A1 * A2 * A3;
+    const Matrix4d T_04 = T_03 * A4;
+    const Matrix4d T_06 = T_04 * A5 * A6 ; // 虚拟机械臂的臂平面， W1
+    const Matrix4d T_07 = T_06 * A7;  // 真实机械臂的臂平面， W2
+
+    Vector4d P_0_S(0, 0, params_.d_bs, 1);
+    Vector3d vec_0_sw2 = T_07.block<3,1>(0,3) - P_0_S.head<3>();
+    // 实际臂平面的参考平面法向量
+    Vector3d vec_0_se = T_04.block<3,1>(0,3)- P_0_S.head<3>();
+    Vector3d n_arm_act = vec_0_sw2.cross(vec_0_se); // 真实手臂平面的法向量；
+    // std::cout << " vec_0_se : " ; 
+    // print_vector(vec_0_se);
+
+    // 虚拟臂平面的参考平面法向量
+    Vector3d vec_0_sw1 = T_06.block<3,1>(0,3) - P_0_S.head<3>();
+    Vector3d n_arm_vir = vec_0_sw1.cross(vec_0_se); // 真实手臂平面的法向量；
+
+
+    // 这一部分用于参考向量法的反解计算
+    Vector3d n_ref_plane_vec_mtd = vec_0_sw2.cross(vec_ref);
+    n_ref_plane_vec_mtd.normalize();
+    Vector3d n_arm_plane_vec_mtd = vec_0_sw2.cross(vec_0_se);
+    n_arm_plane_vec_mtd.normalize();
+    // double arm_angle_vec_mtd = cal_vec_angle(n_arm_plane_vec_mtd,n_ref_plane_vec_mtd);
+    // double arm_angle_vec_mtd = cal_vec_angle(n_ref_plane_vec_mtd,n_arm_plane_vec_mtd)- pi;
+    double arm_angle_vec_mtd = cal_signed_angle(n_ref_plane_vec_mtd,-n_arm_plane_vec_mtd, vec_0_sw2);
+
+    // std::cout << "test info in FK:" << std::endl;
+    // std::cout << "arm_angle_vec_mtd " << arm_angle_vec_mtd << std::endl;
+    // std::cout << "n_ref_plane_vec_mtd " << n_ref_plane_vec_mtd << std::endl;
+    // std::cout << "n_arm_plane_vec_mtd " << n_arm_plane_vec_mtd << std::endl;
+
+    // const double angle_ESEv = atan2(params_.a_se, params_.d_se);
+    const double len_vec_SE = vec_0_se.norm();
+    const double len_vec_0_sw = vec_0_sw2.norm();
+    const double len_vec_ew = sqrt(pow(d_ew_val,2) + pow(params_.a_ew,2));
+    const double angle_SEW = acos(
+        std::clamp((pow(len_vec_SE,2) + pow(len_vec_ew,2) - pow(len_vec_0_sw,2)) / 
+                (2*len_vec_SE*len_vec_ew), -1.0, 1.0)
+    );
+    const double angle_ESEv = atan2(params_.a_se, params_.d_se);
+    const double gamma2 = atan2(len_vec_ew, -params_.a_ew);
+    const double gamma3 = gamma2 - 0.5*pi;
+    // double theta4 = angle_ESEv + 3.0/2.0*pi - angle_SEW - gamma2;
+    double theta4 = angle_SEW-0.5*pi+ angle_ESEv-gamma2;    
+
+
+    // double theta4 = angle_ESEv + pi - angle_SEW;
+
+    // const double angle_ESW = std::acos(
+    //     std::clamp(
+    //     (std::pow(len_vec_SE, 2) + std::pow(len_vec_0_sw, 2) - std::pow(d_ew_val, 2)) / 
+    //     (2 * len_vec_SE * len_vec_0_sw),-1.0, 1.0)
+    //     );
+    // const double angle_EvSW = angle_ESW + angle_ESEv;
+    // std::cout << "angle_ESW " << angle_ESW << std::endl;
+    // std::cout << "angle_ESEv " << angle_ESEv << std::endl;
+    // std::cout << "len_vec_0_sw " << len_vec_0_sw << std::endl;
+    // std::cout << "len_vec_SE " << len_vec_SE << std::endl;
+    // std::cout << "len_vec_ew " << len_vec_ew << std::endl;
+    // std::cout << "angle_SEW " << angle_SEW << std::endl;
+    // std::cout << "angle_ESEv " << angle_ESEv << std::endl;
+    // std::cout << "theta4 from FK calc = " << theta4 << std::endl;
+    // std::cout << "gamma2 from FK calc = " << gamma2 << std::endl;
+    // std::cout << "d_ew_val from FK calc = " << d_ew_val << std::endl;
+    // std::cout << "gamma3 from FK calc = " << gamma3 << std::endl;
+
+
+    // std::cout << "T_07 from FK calc = " << std::endl;
+    // print_matrix(T_07);
+    
+
+    // 真实手臂的肘关节位置
+    result.P_0_wrist_act = T_07.block<3,1>(0,3);
+    result.P_0_shoulder_act = P_0_S.head<3>();
+    result.P_0_elbow_act = T_04.block<3,1>(0,3);
+    result.n_arm_act = n_arm_act;
+    result.n_arm_vir = n_arm_vir;
+    result.T_04 = T_04;
+    result.T_03 = T_03;
+    result.vec_SW = vec_0_sw2;
+    result.arm_angle_vec_ref = arm_angle_vec_mtd;
+    // result.angle_EvSW = angle_EvSW;
+
+
     return result;
 }
 
@@ -176,8 +271,7 @@ IKResult ArmKineStd::calculateIK(
     Eigen::IOFormat fmt_p(Eigen::StreamPrecision, 0, ", ", "\n", "[", "]");
     Eigen::IOFormat fmt_t(4, 0, ", ", "\n", "|", "|");
 
-    //======打印按钮=========//
-    constexpr bool ENABLE_LOG = false; 
+
 
     // Step 1: 计算机械臂末端位姿,从末端法兰，到第七关节
     Matrix3d R_08 = target_pose.block<3,3>(0,0);
@@ -191,7 +285,9 @@ IKResult ArmKineStd::calculateIK(
     T_07.block<3,1>(0,3) = P_0_wa.head<3>();
 
     // TODO 为了匹配实际构型，修改d_ew_new, 以关节7 作为腕关节
-    const double d_ew_new = params_.d_ew +params_.a_wf;
+    const double d_ew_new = this->get_A5_d_param();
+    if (ENABLE_LOG) std::cout << "d_ew_new in IK Std = " << d_ew_new << std::endl;
+    // const double d_ew_new = params_.d_ew +params_.a_wf;
 
     // Step 2: 计算theta4， 只考虑theta4_up
     const double len_vec_SE = sqrt(pow(params_.d_se,2) + pow(params_.a_se,2));
@@ -216,6 +312,9 @@ IKResult ArmKineStd::calculateIK(
     //判断臂长
     const double max_arm_lengeth = len_vec_SE + d_ew_new; //虚拟机械臂的最大臂长，常数不会变
     double current_arm_length = len_vec_0_sw; //虚拟机械臂的肩腕关节向量的模长
+
+    if (ENABLE_LOG) std::cout << "current_arm_length : " << current_arm_length << 
+                                 ", max_arm_lengeth : " << max_arm_lengeth << std::endl; 
     if (current_arm_length>=max_arm_lengeth ){
         std::cout << " >>>>>  IK Std 超出了工作空间 <<<<<" << std::endl;
         result.error_code = 10;
@@ -270,7 +369,8 @@ IKResult ArmKineStd::calculateIK(
         std::cout << "只记录了1个theta2_orig,因此少一次方" << std::endl;
     }
 
-    std::vector<SerialJoints> possible_serial_joints;
+    std::vector<SerialJointsWithPlane> possible_serial_joints_and_refplane;
+    
     // step 3.2 :遍历 theta2_orig 的每种情况， 求theta1_orig，并检查是否合理
     std::vector<std::tuple<double,double>> possible_theta_12_orig; // 存储theta1_orig, theta2_orig
     for (auto current_theta2_orig_temp : possible_theta2_orig_values) { //一次循环
@@ -326,7 +426,8 @@ IKResult ArmKineStd::calculateIK(
     // TODO 分支点1， theta2_orig 多解带来的分支 （可能可以消除掉）
     // step 4 : 基于theta1_orig  theta2_orig 和 original theta3 = 0，计算前三个过节的实际值，计算经过臂角作用后的R_03
 
-    std::vector<std::tuple<double, double, double>> possible_theta_123;
+    std::vector<std::tuple<double, double, double, Vector3d>> possible_theta_123_and_refplane;
+    Vector3d n_ref;
 
     for (auto current_theta_12_orig : possible_theta_12_orig){ // 一次循环
 
@@ -338,6 +439,14 @@ IKResult ArmKineStd::calculateIK(
 
         Matrix4d T_03_orig_calc = A1_orig_transform * A2_orig_transform * A3_orig_transform;
         Matrix3d R_03_orig_calc = T_03_orig_calc.block<3, 3>(0, 0);
+
+
+        // step 4.0 计算参考平面法向量
+        Matrix4d T_04_orig_calc = T_03_orig_calc * A4_orig_transform;
+        Vector3d vec_0_se_orig = T_04_orig_calc.block<3,1>(0,3)- P_0_S.head<3>();
+        n_ref = vec_0_sw.cross(vec_0_se_orig); // 参考平面的法向量；
+
+
 
         // step 4.1 :计算真实 arm_angle 上的旋转矩阵
         const Vector3d vec_0_sw_hat = vec_0_sw.normalized();
@@ -386,18 +495,19 @@ IKResult ArmKineStd::calculateIK(
                 theta1 = std::atan2(R_03_final(0, 2)/cos_theta2, -R_03_final(1, 2)/cos_theta2);
                 theta3 = std::atan2(R_03_final(2, 0)/cos_theta2, R_03_final(2, 1)/cos_theta2);
             }
-            possible_theta_123.push_back({theta1, theta2_choice, theta3});   
+            possible_theta_123_and_refplane.push_back({theta1, theta2_choice, theta3, n_ref});   
         } //二次循环结束
     }// 一次循环结束
 
     // 至此， （单次循环中）至多产生了4组解 possible_theta_123,由theta2 的多解带来          
     // 遍历最终 possible_theta_123 的每种情况,
 
-    for (const auto current_theta_123 : possible_theta_123) { //一次循环
+    for (const auto current_theta_123 : possible_theta_123_and_refplane) { //一次循环
         // 检查最终 theta2 的约束 (theta2 < 0)
         double current_theta1 = std::get<0>(current_theta_123);
         double current_theta2 = std::get<1>(current_theta_123);
         double current_theta3 = std::get<2>(current_theta_123);
+        const auto current_ref_plane = std::get<3>(current_theta_123);
 
 
         // --- Part 4: 求解 theta5, theta6, theta7 ---
@@ -410,6 +520,8 @@ IKResult ArmKineStd::calculateIK(
                                 modified_DH_transform(theta4, 0, params_.a_se, -M_PI / 2.0); // 重新使用 fixed_theta4_param
         const Matrix4d T_47 = T_04.inverse() * T_07;
         const Matrix3d R_47 = T_47.block<3,3>(0,0);
+
+
 
         // 先求theta6
         double sin_theta6 = -R_47(1, 2);
@@ -445,18 +557,29 @@ IKResult ArmKineStd::calculateIK(
                 theta7 = std::atan2(R_47(1, 1)/cos_theta6, -R_47(1, 0)/cos_theta6);
             }
             possible_theta_567.push_back({theta5,current_theta6,theta7});
-            possible_serial_joints.push_back({current_theta1,current_theta2,current_theta3,
-                                                        theta4,theta5,current_theta6,theta7});
+            possible_serial_joints_and_refplane.push_back({current_theta1,current_theta2,current_theta3,
+                                                        theta4,theta5,current_theta6,theta7, current_ref_plane});
 
         } // 二次循环结束
     } //一次循环结束
 
+    std::vector<SerialJoints> possible_serial_joints;
+    std::vector<Vector3d> possible_n_ref;
+    // separate_vec_serial_joints_with_plane(possible_serial_joints_and_refplane, 
+    //                                         possible_serial_joints, 
+    //                                         possible_n_ref);
+    separate_vector_single(possible_serial_joints_and_refplane, 
+                                            possible_serial_joints, 
+                                            possible_n_ref);
+
+
 
     if (ENABLE_LOG == true){
-    std::cout << "possible_serial_joints size is : " <<
-                     possible_serial_joints.size() << std::endl;
+    std::cout << "possible_serial_joints_and_refplane size is : " <<
+                     possible_serial_joints_and_refplane.size() << std::endl;
 
     std::cout << ">>>>>>>>> all possible solutions <<<<<<<<<<<<<" << std::endl;
+    // auto 
     print_vec_of_tuples(possible_serial_joints);
     }
 
@@ -470,7 +593,14 @@ IKResult ArmKineStd::calculateIK(
     // 用于存储符合条件的解的向量
     std::vector<SerialJoints> checked_serial_joints;
 
-    for (const auto& solution_tuple : possible_serial_joints) {
+
+    // 存储合法之后的解的在possible_serial_joints之中的索引
+    std::vector<size_t> valid_solution_indices;
+
+
+    for (size_t i = 0; i < possible_serial_joints.size(); ++i){
+        const auto& solution_tuple = possible_serial_joints[i];
+
         // 1. 将 SerialJoints 转换为 Vector7d，因为 validate_solution 接受 Vector7d
         Vector7d solution_vector = serial_joints_to_vec7d(solution_tuple);
 
@@ -484,34 +614,52 @@ IKResult ArmKineStd::calculateIK(
         if (is_valid) {
             // 4. 如果符合条件，加入到 checked_serial_joints
             checked_serial_joints.push_back(solution_tuple);
+            valid_solution_indices.push_back(i);
 
         } else {
-            if (ENABLE_LOG == true){
-                // 打印违规详情，仅用于调试
-                for (int violation_idx : std::get<2>(validation_result)) {
-                    std::cout << violation_idx << " ";
-                }
-                std::cout << "\n";
-            }
+            // 打印违规详情，仅用于调试
+            // for (int violation_idx : std::get<2>(validation_result)) {
+            //     std::cout << violation_idx << " ";
+            // }
+            // std::cout << "\n";
         }
     }
 
+
+    // std::cout << "Valid indices: ";
+    // for (size_t index : valid_solution_indices) {
+    //     std::cout << index << " ";
+    // }
+    // std::cout << std::endl;
 
     if (checked_serial_joints.empty()) {
         std::cout << ">>> IK Std 计算未找到任何满足条件的解。<<<" << std::endl;
     }
 
-    std::optional<SerialJoints> closest_solution =
-        select_closest_ik_solution(checked_serial_joints, current_joints_tuple);
 
-    if (closest_solution.has_value()) {
+
+    // std::optional<SerialJoints> closest_solution =
+    //     select_closest_ik_solution(checked_serial_joints, current_joints_tuple);
+
+    std::optional<SerialJointsWithIndex> closest_solution_with_index =
+        select_closest_ik_solution_with_index(checked_serial_joints, current_joints_tuple);
+
+    if (closest_solution_with_index.has_value()) {
             // std::cout << "\n --- 找到最近的 IK 解 ---\n";
             // printSerialJointsManual(*closest_solution);
             // std::cout << "-------------------------------------------\n";
+            
+            SerialJoints closest_solution = extract_serialjoints_from_tuple(closest_solution_with_index.value());
+            // 存储最近的解的在 checked_serial_joints 之中的索引
+            const auto index_in_clos_sol = std::get<7>(closest_solution_with_index.value());
+            int n_ref_index = valid_solution_indices[index_in_clos_sol];
+            const auto clos_sol_n_ref = possible_n_ref[n_ref_index];
+
 
             result.is_valid = true;
-            result.final_sol = closest_solution.value(); // 正确赋值
+            result.final_sol = closest_solution; // 正确赋值
             result.theta7 = std::get<6>(result.final_sol);
+            result.n_ref = clos_sol_n_ref;
     } else {
             std::cout << "\nIK Std : 未找到最近的 IK 解（可能在选择过程中发生内部错误）。\n";
             result.is_valid = false;
@@ -555,6 +703,18 @@ IKResult ArmKineStd::calculateIK(
 
 
     std::cout << ">>>>>>>>>>>> print completed <<<<<<<<<<<<" << std::endl;
+    }   
+
+    // 临时修改区域
+    if (SELECT_SINGLE_SOL_LOG == true){
+        std::optional<SerialJoints> selected_solution = 
+            select_sol_from_possible(SELECT_STD_ID, possible_serial_joints);
+        if (selected_solution.has_value()){
+            std::cout << "\n >>>>> 选择了第 " << SELECT_STD_ID << " 个解  <<<<< \n";
+        } else {
+            std::cout << "\n >>>>> 选择解失败，索引超出范围  <<<<< \n";
+        }
+        result.final_sol = selected_solution.value();
     }
 
     return result;
@@ -573,11 +733,12 @@ IKResult ArmKineOfst::calculateIK(
 ){
     IKResult result;
     result.is_valid =false;
-    constexpr bool ENABLE_LOG = false; 
 
-    // 如果取消偏置需要进行的参数设置(两个修改)
-    const double a_wf_new = 0 ;
-    const double d_ew_new = params_.d_ew + params_.a_wf;
+    // (两个修改)
+    //  ********        修改1        ***********
+    // 下面进行的参数设置 为 取消偏置， 注释情况下 就是正常带偏置 
+    // const double a_wf_new = 0 ;
+    // const double d_ew_new = params_.d_ew + params_.a_wf;
 
     if (!theta7.has_value()) // 检查是否没有值 (即为 std::nullopt)
     {
@@ -747,8 +908,9 @@ IKResult ArmKineOfst::calculateIK(
     TODO 分支点1， theta2_orig 多解带来的分支
     step 4 : 基于theta1_orig  theta2_orig 和 original theta3 = 0，计算前三个过节的实际值，计算经过臂角作用后的R_03
     */
-    std::vector<std::tuple<double, double, double, double>> possible_theta_123_and_phis; // theta1,theta2,theta3,phi
-    std::vector<SerialJointsWithPhi> possible_serial_joints_and_phis;
+    std::vector<std::tuple<double, double, double, double, Vector3d>> possible_theta_123_and_phis_and_refplane; // theta1,theta2,theta3,phi
+    std::vector<SerialJointsWithPhiAndPlane> possible_serial_joints_and_phis_and_refplane;
+    Vector3d n_ref;
 
     for (auto current_theta_12_orig : possible_theta_12_orig){ // 一次循环
         std::vector<double> possible_phis;
@@ -761,6 +923,11 @@ IKResult ArmKineOfst::calculateIK(
 
         Matrix4d T_03_orig_calc = A1_orig_transform * A2_orig_transform * A3_orig_transform;
         Matrix3d R_03_orig_calc = T_03_orig_calc.block<3, 3>(0, 0);
+
+        // 计算参考平面的法向量
+        Matrix4d T_04_orig_calc = T_03_orig_calc * A4_orig_transform;
+        Vector3d vec_0_se_orig = T_04_orig_calc.block<3,1>(0,3)- P_0_S.head<3>();
+        n_ref = vec_0_sw.cross(vec_0_se_orig);
 
         // step 4.1 : 计算phi角
         // TODO 解分支2 ： phi 多解 （可能可以消掉）
@@ -825,8 +992,8 @@ IKResult ArmKineOfst::calculateIK(
         // step 4.2 : 计算arm_angle 上的旋转矩阵
 
         for (const auto& current_phi : possible_phis){// 二次循环
-            double arm_angle = current_phi;
-            const Matrix3d R_03_final = As * std::sin(arm_angle) + Bs * std::cos(arm_angle) + Cs;
+            double angle_phi = current_phi;
+            const Matrix3d R_03_final = As * std::sin(angle_phi) + Bs * std::cos(angle_phi) + Cs;
 
             // step 4.3 从 R_03_final 计算 theta1, theta2, theta3
             double sin_theta2 = -R_03_final(2, 2);
@@ -874,23 +1041,24 @@ IKResult ArmKineOfst::calculateIK(
                     theta1 = std::atan2(R_03_final(0, 2)/cos_theta2, -R_03_final(1, 2)/cos_theta2);
                     theta3 = std::atan2(R_03_final(2, 0)/cos_theta2, R_03_final(2, 1)/cos_theta2);
                 }
-                possible_theta_123_and_phis.push_back({theta1, theta2_choice, theta3, current_phi});  
+                possible_theta_123_and_phis_and_refplane.push_back({theta1, theta2_choice, theta3, current_phi,n_ref});  
                 // temp_phis_sequence.push_back(current_phi);
             } //三次循环结束
         }//二次循环结束
     } // 一次循环结束，到此 possible_theta_123，temp_phis_sequence应该存放了8组解
-    // std::cout << "possible_theta_123_and_phis size is : " << possible_theta_123_and_phis.size() << std::endl;
-    // printVectorOfTuples(possible_theta_123_and_phis);
+    // std::cout << "possible_theta_123_and_phis_and_refplane size is : " << possible_theta_123_and_phis_and_refplane.size() << std::endl;
+    // printVectorOfTuples(possible_theta_123_and_phis_and_refplane);
 
     // std::vector<double> all_phis_sequence;
-    // 遍历最终 possible_theta_123_and_phis 的每种情况
+    // 遍历最终 possible_theta_123_and_phis_and_refplane 的每种情况
 
-    for (const auto current_theta_123_and_phi : possible_theta_123_and_phis) { //一次循环
+    for (const auto current_theta_123_and_phi_and_refplane : possible_theta_123_and_phis_and_refplane) { //一次循环
         // 检查最终 theta2 的约束 (theta2 < 0)
-        double current_theta1 = std::get<0>(current_theta_123_and_phi);
-        double current_theta2 = std::get<1>(current_theta_123_and_phi);
-        double current_theta3 = std::get<2>(current_theta_123_and_phi);
-        double current_phi = std::get<3>(current_theta_123_and_phi);
+        double current_theta1 = std::get<0>(current_theta_123_and_phi_and_refplane);
+        double current_theta2 = std::get<1>(current_theta_123_and_phi_and_refplane);
+        double current_theta3 = std::get<2>(current_theta_123_and_phi_and_refplane);
+        double current_phi = std::get<3>(current_theta_123_and_phi_and_refplane);
+        Vector3d current_n_ref = std::get<4>(current_theta_123_and_phi_and_refplane);
 
 
         // --- Part 4: 求解 theta5, theta6, theta7 ---
@@ -957,8 +1125,8 @@ IKResult ArmKineOfst::calculateIK(
                 double current_theta6 = std::get<1>(current_theta_567_and_phi);
                 possible_serial_joints.push_back({current_theta1,current_theta2,current_theta3,
                                                         theta4,current_theta5,current_theta6,current_theta7});
-                possible_serial_joints_and_phis.push_back({current_theta1,current_theta2,current_theta3,
-                                                        theta4,current_theta5,current_theta6,current_theta7, current_phi});
+                possible_serial_joints_and_phis_and_refplane.push_back({current_theta1,current_theta2,current_theta3,
+                                                        theta4,current_theta5,current_theta6,current_theta7, current_phi, current_n_ref});
 
             }
             else {
@@ -973,7 +1141,7 @@ IKResult ArmKineOfst::calculateIK(
         std::cout << "possible_serial_joints size is : " <<
                      possible_serial_joints.size() << std::endl;
         std::cout << ">>>>>>>>> all possible solutions <<<<<<<<<<<<<" << std::endl;
-        print_vec_of_tuples(possible_serial_joints_and_phis);
+        print_vec_of_tuples(possible_serial_joints_and_phis_and_refplane);
     }
 
     result.all_solutions = possible_serial_joints;
@@ -981,18 +1149,19 @@ IKResult ArmKineOfst::calculateIK(
     //进行筛选
     // 用于存储符合条件的解的向量
     std::vector<SerialJoints> checked_serial_joints;
-    std::vector<std::tuple<double,double,double,double,double,double,double,double>> checked_serial_joints_with_phi;
-    for (const auto& solution_tuple : possible_serial_joints_and_phis){
-        solWithPhi sol_temp_with_phi;
-        seperate_serial_joints_with_arm_angle(sol_temp_with_phi,solution_tuple);
-        SerialJoints serial_tuple = sol_temp_with_phi.sol;
-        double current_phi = sol_temp_with_phi.arm_angle;
+    std::vector<SerialJointsWithPhiAndPlane> checked_serial_joints_with_phi_and_plane;
+    for (const auto& solution_tuple : possible_serial_joints_and_phis_and_refplane){
+        solWithPhiAndPlane sol_temp_with_phi_and_refplane;
+        seperate_serial_joints_with_arm_angle_and_plane(sol_temp_with_phi_and_refplane,solution_tuple);
+        SerialJoints serial_tuple = sol_temp_with_phi_and_refplane.sol;
+        double current_phi = sol_temp_with_phi_and_refplane.arm_angle;
+        Vector3d current_refplane = sol_temp_with_phi_and_refplane.plane;
         Vector7d solution_vector = serial_joints_to_vec7d(serial_tuple);
         auto validation_result = validate_solution(solution_vector, params_.joint_limits);
         bool is_valid = std::get<0>(validation_result);
         if (is_valid) {
             // 4. 如果符合条件，加入到 checked_serial_joints
-            checked_serial_joints_with_phi.push_back(solution_tuple);
+            checked_serial_joints_with_phi_and_plane.push_back(solution_tuple);
         } else {
             // std::cout << " 不符合条件，已过滤。违规关节索引：";
             // 打印违规详情，仅用于调试
@@ -1006,7 +1175,7 @@ IKResult ArmKineOfst::calculateIK(
 
 
 
-    if (checked_serial_joints_with_phi.empty()) {
+    if (checked_serial_joints_with_phi_and_plane.empty()) {
         result.error_code = 9;
         return result;
         std::cout << " IK 计算未找到任何满足条件的解。" << std::endl;
@@ -1014,25 +1183,39 @@ IKResult ArmKineOfst::calculateIK(
 
     SerialJoints current_joints_serial; 
     double_array_to_serial_joints(current_joints_array,current_joints_serial);
-    std::optional<std::tuple<double, double, double, double, double, double, double, double>> 
-        closest_solution_with_phi =
-            select_closest_ik_solution_with_phi(checked_serial_joints_with_phi, current_joints_serial);
+    std::optional<SerialJointsWithPhiAndPlane> 
+        closest_solution_with_phi_and_plane =
+            select_closest_ik_solution_with_phi_and_plane(checked_serial_joints_with_phi_and_plane, current_joints_serial);
 
     if (result.error_code != -1) {result.is_valid = false;}
 
-    if (closest_solution_with_phi.has_value()) {
+    if (closest_solution_with_phi_and_plane.has_value()) {
 
 
             result.is_valid = true;
-            solWithPhi temp_result; 
-            seperate_serial_joints_with_arm_angle(temp_result,closest_solution_with_phi.value());
+            solWithPhiAndPlane temp_result; 
+            seperate_serial_joints_with_arm_angle_and_plane(temp_result,closest_solution_with_phi_and_plane.value());
             result.final_sol = temp_result.sol;
             result.arm_angle = temp_result.arm_angle;
+            result.n_ref = temp_result.plane;
                
             
     } else {
             std::cout << "\n未找到最近的 IK 解（可能在选择过程中发生内部错误）。\n";
             result.is_valid = false;
+    }
+
+
+    // 临时修改区域
+    if (SELECT_SINGLE_SOL_LOG == true){
+        std::optional<SerialJoints> selected_solution = 
+            select_sol_from_possible(SELECT_OFST_ID, possible_serial_joints);
+        if (selected_solution.has_value()){
+            std::cout << "\n >>>>> 选择了第 " << SELECT_OFST_ID << " 个解  <<<<< \n";
+        } else {
+            std::cout << "\n >>>>> 选择解失败，索引超出范围  <<<<< \n";
+        }
+        result.final_sol = selected_solution.value();
     }
 
     return result;
@@ -1082,178 +1265,6 @@ IKResult ArmKineComb::calculateIK(
     return combined_result;
 }
 
-/**
- * @brief 计算最佳臂角以找到一个有效的、且关节跳变最小的IK解。
- * * 逻辑：
- * 1. 尝试使用 current_arm_angle 进行计算。
- * 2. 如果失败，遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation。
- * * @param target_pose 目标位姿。
- * @param current_joints_array 当前关节角度数组 (JOINT_COUNT个)。
- * @param current_arm_angle 初始尝试的臂角值。
- * @param arm_angle_deviation_list 臂角的偏差值列表 (Delta Arm Angle)，默认值: [-0.5, -0.25, 0, 0.25, 0.5]。
- * @param offset_ref 允许的最大关节跳变阈值。
- * @return 最佳的IKResult。如果所有尝试都失败，返回一个 is_valid=false 的结果。
- */
-// IKResult ArmKineComb::cal_IK_feasible_armAngle(
-//     const Matrix4d& target_pose,
-//     double current_joints_array[],
-//     double current_arm_angle,
-//     const std::vector<double>& arm_angle_deviation_list , // 默认臂角偏差列表
-//     double offset_ref  // 默认最大关节跳变阈值
-// ) {
-//     IKResult feasible_res;
-//     feasible_res.is_valid = false;
-//     int cnt=0;
-
-    
-//     // --- 步骤 1: 尝试初始的 current_arm_angle ---
-    
-//     double initial_arm_angle = current_arm_angle;
-    
-//     IKResult initial_result = ArmKineComb::calculateIK(
-//         target_pose,
-//         current_joints_array,
-//         initial_arm_angle, // 初始臂角
-//         std::nullopt
-//     );
-
-//     // 检查偏差解是否有效，以及检查偏差距离
-//     if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
-//         // 初始臂角计算成功且解符合要求，直接返回
-//         // std::cout << "Optimal IK solution found with initial Arm Angle: " << current_arm_angle << std::endl;
-//         return initial_result;
-//     }
-    
-//     // --- 步骤 2: 遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation ---
-    
-//     // 检查偏差列表是否为空
-//     if (arm_angle_deviation_list.empty()) {
-//         std::cerr << "Warning: Initial arm angle failed and deviation list is empty." << std::endl;
-//         return IKResult{}; // 返回一个无效结果
-//     }
-
-//     // 遍历臂角偏差列表
-//     for (double deviation : arm_angle_deviation_list) {
-//         cnt ++;
-//         // 跳过偏差为0的情况，因为已经在步骤1中计算过了
-//         if (std::abs(deviation) < 1e-6) { // 使用一个小的阈值判断是否接近0
-//             continue; 
-//         }
-        
-//         // 计算新的臂角
-//         double new_arm_angle = current_arm_angle + deviation;
-
-//         // 调用原始的 IK 计算函数
-//         IKResult result = calculateIK(
-//             target_pose,
-//             current_joints_array,
-//             new_arm_angle, // 使用计算出的新臂角
-//             std::nullopt
-//         );
-
-//         // 检查 IK 解是否有效且符合跳变要求
-//         if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
-//             // 找到一个符合所有条件的解，立即返回
-//             // std::cout << "Optimal IK solution found with deviated Arm Angle: " << new_arm_angle 
-//             //           << " (Deviation: " << deviation << ")" << std::endl;
-//             std::cout << "寻找次数： cnt = " << cnt << std::endl;
-//             result.arm_angle = new_arm_angle; // 记录使用的臂角
-//             return result;
-//         }
-//     }
-
-//     // 如果遍历完所有臂角都没有找到符合条件的解
-//     std::cerr << "Warning: No valid IK solution found within deviation limit for any arm angle attempt." << std::endl;
-//     return feasible_res; // 返回一个 is_valid=false 的结果
-// }
-
-
-
-IKResult ArmKineComb::cal_IK_feasible_armAngle(
-    const Matrix4d& target_pose,
-    double current_joints_array[],
-    double current_arm_angle,
-    const std::vector<double>& arm_angle_deviation_list, // 默认臂角偏差列表
-    double offset_ref  // 默认最大关节跳变阈值
-) {
-    std::vector<IKResult> feasible_solutions; // 存储所有满足跳变要求的解
-    int cnt = 0;
-
-    // --- 步骤 1: 尝试初始的 current_arm_angle ---
-    double initial_arm_angle = current_arm_angle;
-    IKResult initial_result = ArmKineComb::calculateIK(
-        target_pose,
-        current_joints_array,
-        initial_arm_angle,
-        std::nullopt
-    );
-
-    if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
-        initial_result.arm_angle = initial_arm_angle;
-        feasible_solutions.push_back(initial_result);
-    }
-
-    // --- 步骤 2: 遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation ---
-    if (!arm_angle_deviation_list.empty()) {
-        for (double deviation : arm_angle_deviation_list) {
-            cnt++;
-            
-            // 跳过偏差为0的情况，因为已经在步骤1中计算过了
-            if (std::abs(deviation) < 1e-6) {
-                continue;
-            }
-            
-            double new_arm_angle = current_arm_angle + deviation;
-            IKResult result = calculateIK(
-                target_pose,
-                current_joints_array,
-                new_arm_angle,
-                std::nullopt
-            );
-
-            if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
-                result.arm_angle = new_arm_angle;
-                feasible_solutions.push_back(result);
-            }
-        }
-    }
-
-    std::cout << "寻找次数：cnt = " << cnt << std::endl;
-    std::cout << "找到满足跳变要求的解数量：" << feasible_solutions.size() << std::endl;
-
-    // --- 步骤 3: 从所有可行解中选择距离最近的一个 ---
-    if (feasible_solutions.empty()) {
-        std::cerr << "Warning: No valid IK solution found within deviation limit for any arm angle attempt." << std::endl;
-        return IKResult{}; // 返回一个无效结果
-    }
-
-    // 如果只有一个解，直接返回
-    if (feasible_solutions.size() == 1) {
-        return feasible_solutions[0];
-    }
-
-    // 多个解的情况，选择距离最近的一个
-    IKResult best_solution;
-    double min_distance = std::numeric_limits<double>::max();
-
-    for (const auto& solution : feasible_solutions) {
-        double distance = calculate_max_joint_deviation(solution.final_sol, current_joints_array);
-        
-        if (distance < min_distance) {
-            min_distance = distance;
-            best_solution = solution;
-        }
-        
-        // std::cout << "臂角 " << solution.arm_angle << " 的距离: " << distance << std::endl;
-    }
-
-    // std::cout << "选择臂角 " << best_solution.arm_angle << " 的解，最小距离: " << min_distance << std::endl;
-    return best_solution;
-}
-
-
-
-
 // --- ArmKine FK 的实现 (沿用 ArmKineOfst 的正解) ---
 FKResult ArmKineComb::calculateFK(const Vector7d& theta) {
     FKResult result;
@@ -1299,7 +1310,7 @@ WristConfig::WristConfig(const std::string& filepath) {
         d_az = config["wrist_joint_params"]["d_az"].as<double>();
 
 
-        // std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
+        std::cout << "Configuration loaded successfully from: " << filepath << std::endl;
 
     } catch (const YAML::BadFile& e) {
         std::cerr << "Error: Could not open config file: " << filepath << ". " << e.what() << std::endl;
@@ -1504,94 +1515,5 @@ std::pair<double, double> WristKinematicsSolver::CalculateWristIK(double theta6,
 
 }
 
-
-// 常量实现
-const Eigen::Matrix4d ArmLeftKine::M_mirror = 
-(Eigen::Matrix4d() << 
-    1.0, 0.0, 0.0, 0.0,    
-    0.0, 1.0, 0.0, 0.0,    
-    0.0, 0.0,-1.0, 0.0,    
-    0.0, 0.0, 0.0, 1.0 
-).finished();
-
-const Eigen::Matrix4d ArmLeftKine::T_GR = 
-(Eigen::Matrix4d() << 
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, ArmLeftKine::length_LR / 2.0, // 可以访问类内其他常量
-    0.0, 0.0, 0.0, 1.0
-).finished();
-
-const Eigen::Matrix4d ArmLeftKine::T_RG = 
-(Eigen::Matrix4d() << 
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, -ArmLeftKine::length_LR / 2.0,
-    0.0, 0.0, 0.0, 1.0
-).finished();
-
-// const Vector7d ArmLeftKine::sign_vector = {
-//     -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0
-// };
-const Vector7d ArmLeftKine::sign_vector = (Vector7d() << 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0).finished();
-
-const double ArmLeftKine::length_LR = 0.21;
-
-// 实现 ArmLeftKine 的构造函数
-ArmLeftKine::ArmLeftKine(std::shared_ptr<ArmKineStd> std_solver,
-                         std::shared_ptr<ArmKineOfst> ofst_solver)
-    // 成员初始化列表：
-    // 使用 std::move 将传入的指针移动给 right_arm 成员
-    : right_arm(std_solver, ofst_solver) 
-{
-    // 构造函数体为空，或者执行任何额外的左臂初始化工作
-}
-
-
-
-IKResult ArmLeftKine::cal_left_arm_feasible_IK(
-            const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
-            double current_joints_array[], 
-            double arm_angle,
-            const std::vector<double>& arm_angle_deviation_list,
-            double offset_ref){
-    
-    Matrix4d TeeL_G = target_pose; // 左臂末端在全局坐标系下的位姿
-    Matrix4d TeeRMir_R = T_RG * M_mirror * TeeL_G * M_mirror; // 左臂末端镜像到右边之后在右臂坐标系下的表示，因此可以直接用IK
-
-    // IKResult result_R = right_arm.calculateIK(
-    //     TeeRMir_R, 
-    //     current_joints_array, 
-    //     arm_angle // 传入arm_angle
-    //     // theta7 传入 std::nullopt，因为 ArmKineOfst 默认是空
-    // );
-
-    IKResult result_R = right_arm.cal_IK_feasible_armAngle(
-        TeeRMir_R,
-        current_joints_array,
-        arm_angle, // current_arm_angle,
-        arm_angle_deviation_list, //const std::vector<double>& arm_angle_deviation_list, // 默认臂角偏差列表
-        offset_ref //double offset_ref  // 默认最大关节跳变阈值
-    );
-
-
-
-
-    return result_R;
-}
-
-FKResult ArmLeftKine::calculateFK(const Vector7d& theta){
-
-    FKResult res_L;
-    Vector7d q_L = theta;
-    Vector7d q_R = sign_vector.cwiseProduct(q_L); //q_L 经过sign_vector变换后要直接能计算出等效的Arm_right才可以
-    FKResult res_R = right_arm.calculateFK(q_R);
-    res_L = res_R;
-    Matrix4d TeeL_G;
-    TeeL_G = M_mirror * (T_GR * res_R.T_08) * M_mirror;
-    res_L.T_08 = TeeL_G;
-
-    return res_L;
-}
 
  

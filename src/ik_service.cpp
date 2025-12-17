@@ -88,7 +88,7 @@ public:
             } else if (req.method == "comb") {
                 ik_res = comb_solver->calculateIK(Tee, init_joints_array, req.current_arm_angle, std::nullopt);
             } else if (req.method == "feasible") {
-                ik_res = comb_solver->cal_IK_feasible_armAngle(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
+                ik_res = comb_solver->cal_IK_feasible_armAngle_vec_ref(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
             } else {
                 throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, feasible");
             }

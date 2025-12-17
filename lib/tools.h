@@ -146,69 +146,9 @@ void serial_joints_to_double_array(const SerialJoints& joints_tuple, double* out
 
 void double_array_to_serial_joints(const double* current_joints_array, SerialJoints& current_joints_tuple);
 
+double cal_vec_angle(const Eigen::Vector3d& vec1, const Eigen::Vector3d& vec2); //计算两个向量夹角,传入向量无需单位化
 
-/**
- * @brief 将一个 4x4 齐次变换矩阵分解为平移向量和旋转四元数。
- * * @param homogeneous_matrix 4x4 齐次变换矩阵。
- * @param position 输出的 3x1 平移向量 (x, y, z)。
- * @param orientation 输出的旋转四元数 (w, x, y, z)。
- * * 注意: Eigen 四元数的存储顺序通常为 (w, x, y, z)。
- */
-template <typename Scalar>
-void decompose_homogeneous_matrix_to_quaternion(
-    const Eigen::Matrix<Scalar, 4, 4>& homogeneous_matrix,
-    Eigen::Matrix<Scalar, 3, 1>& position,
-    Eigen::Quaternion<Scalar>& orientation)
-{
-    // 1. 提取平移向量 (Position/Translation)
-    // 平移向量位于齐次矩阵的第 4 列的前 3 个元素。
-    // 使用 Eigen::block<Rows, Cols>(start_row, start_col)
-    position = homogeneous_matrix.template block<3, 1>(0, 3);
-
-    // 2. 提取旋转矩阵 (Rotation Matrix)
-    // 旋转矩阵位于齐次矩阵的左上角 3x3 区域。
-    Eigen::Matrix<Scalar, 3, 3> rotation_matrix = 
-        homogeneous_matrix.template block<3, 3>(0, 0);
-
-    // 3. 将旋转矩阵转换为四元数 (Rotation Matrix to Quaternion)
-    // Eigen 提供了直接从 3x3 矩阵构造四元数的功能。
-    orientation = Eigen::Quaternion<Scalar>(rotation_matrix);
-
-    // 确保四元数被归一化 (可选，但推荐)
-    orientation.normalize();
-}
-
-
-/**
- * @brief 将平移向量和旋转四元数组合成一个 4x4 齐次变换矩阵。
- * * @tparam Scalar 使用的数据类型，如 double 或 float。
- * @param position 3x1 平移向量 (x, y, z)。
- * @param orientation 旋转四元数 (w, q1, q2, q3)。
- * @return Eigen::Matrix<Scalar, 4, 4> 4x4 齐次变换矩阵。
- */
-template <typename Scalar>
-Eigen::Matrix<Scalar, 4, 4> combine_pq_to_homogeneous_matrix(
-    const Eigen::Matrix<Scalar, 3, 1>& position,
-    const Eigen::Quaternion<Scalar>& orientation)
-{
-    // 1. 初始化 4x4 齐次矩阵为单位矩阵
-    Eigen::Matrix<Scalar, 4, 4> M = Eigen::Matrix<Scalar, 4, 4>::Identity();
-
-    // 2. 将四元数转换为 3x3 旋转矩阵
-    // Eigen 的 .toRotationMatrix() 方法将四元数转换成旋转矩阵。
-    Eigen::Matrix<Scalar, 3, 3> R = orientation.normalized().toRotationMatrix();
-    
-    // 3. 将 3x3 旋转矩阵放入 4x4 齐次矩阵的左上角 (M.block<3, 3>(0, 0))
-    M.template block<3, 3>(0, 0) = R;
-    
-    // 4. 将平移向量放入 4x4 齐次矩阵的右侧列 (M.block<3, 1>(0, 3))
-    // 注意：这里是按列主序存放，即第 4 列的前 3 个元素
-    M.template block<3, 1>(0, 3) = position;
-
-    return M;
-}
-
-
+double cal_signed_angle(const Vector3d& n1, const Vector3d& n2, const Vector3d& l1); //计算有向角, n1,n2为待测角的两个法向量，l1为参考轴向量
 
 
 

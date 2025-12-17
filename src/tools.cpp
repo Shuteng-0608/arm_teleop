@@ -257,4 +257,105 @@ void double_array_to_serial_joints(const double* current_joints_array, SerialJoi
     std::get<6>(current_joints_tuple) = current_joints_array[6];
 }
 
+//计算两个向量夹角,传入向量无需单位化
+double cal_vec_angle(const Eigen::Vector3d& vec1, const Eigen::Vector3d& vec2){
+    // Check if either vector is a zero vector to avoid division by zero.
+    double norm1 = vec1.norm();
+    double norm2 = vec2.norm();
 
+    if (norm1 < std::numeric_limits<double>::epsilon() || norm2 < std::numeric_limits<double>::epsilon()) {
+        std::cerr << "Warning: One or both vectors are zero vectors. Angle is undefined." << std::endl;
+        return 0.0; // Return 0 or handle as an error.
+    }
+
+    // Calculate the dot product.
+    double dot_product = vec1.dot(vec2);
+
+    // Calculate the cosine of the angle.
+    double cos_theta = dot_product / (norm1 * norm2);
+
+    // Clamp the value to the valid range [-1, 1] to prevent a domain error
+    // with std::acos due to floating-point inaccuracies.
+    if (cos_theta > 1.0) {
+        cos_theta = 1.0;
+    } else if (cos_theta < -1.0) {
+        cos_theta = -1.0;
+    }
+
+    // Calculate the angle in radians.
+    double angle_rad = std::acos(cos_theta);
+
+    // Convert the angle to degrees.
+    // double angle_deg = angle_rad * 180.0 / M_PI;
+
+    return angle_rad;
+} 
+
+
+
+/**
+ * @brief 计算 n1 到 n2 绕轴 axis (l1) 的有向夹角 (弧度)。
+ * * 步骤包括：轴归一化，向量投影，投影向量归一化，atan2计算。
+ * 鲁棒性：检查输入零向量和输入向量与轴平行的情况。
+ * * @param n1 起始向量 (Vector3d)
+ * @param n2 终点向量 (Vector3d)
+ * @param l1 旋转轴 (Vector3d)
+ * @return double 角度 (弧度), 范围 (-PI, PI]
+ * @throws std::runtime_error 如果输入向量或轴为零向量，或 n1/n2 平行于 l1。
+ */
+double cal_signed_angle(const Vector3d& n1, const Vector3d& n2, const Vector3d& l1) {
+    // 定义一个小的阈值 epsilon 用于浮点数比较
+    const double EPSILON = 1e-9;
+    
+    // --- 鲁棒性检查 1: 零向量输入 ---
+    if (n1.norm() < EPSILON) {
+        throw std::runtime_error("Error: Starting vector n1 is a zero vector.");
+    }
+    if (n2.norm() < EPSILON) {
+        throw std::runtime_error("Error: Ending vector n2 is a zero vector.");
+    }
+    if (l1.norm() < EPSILON) {
+        throw std::runtime_error("Error: Rotation axis l1 is a zero vector.");
+    }
+
+    // 1. 轴归一化 (Normalize Axis)
+    Vector3d axis_norm = l1.normalized();
+
+    // 2. 计算垂直分量 (投影)
+    // 从 n1/n2 中减去它们在轴上的分量，得到垂直于 l1 的投影向量 (p1, p2)。
+    // 公式: p = v - (v . axis) * axis
+    
+    // n1 投影
+    double n1_dot_axis = n1.dot(axis_norm);
+    Vector3d p1 = n1 - n1_dot_axis * axis_norm; // 垂直于l1的分量
+    
+    // n2 投影
+    double n2_dot_axis = n2.dot(axis_norm);
+    Vector3d p2 = n2 - n2_dot_axis * axis_norm; // 垂直于l1的分量
+
+    // --- 鲁棒性检查 2: 向量平行于轴 ---
+    // 如果投影后的向量模长接近 0，说明原始向量几乎平行于旋转轴。
+    // 在这种情况下，旋转角度在几何上是未定义的。
+    if (p1.norm() < EPSILON) {
+        throw std::runtime_error("Error: Vector n1 is parallel (or anti-parallel) to the axis l1.");
+    }
+    if (p2.norm() < EPSILON) {
+        throw std::runtime_error("Error: Vector n2 is parallel (or anti-parallel) to the axis l1.");
+    }
+
+    // 3. 归一化投影向量
+    // 确保 atan2 的输入 x 和 y 都是单位向量的点积和叉积，以提高数值稳定性。
+    Vector3d u_p1 = p1.normalized();
+    Vector3d u_p2 = p2.normalized();
+
+    // 4. 计算 atan2 的分量
+    // x (Cosine part): 使用归一化投影向量的点积 -> cos(theta)
+    double x = u_p1.dot(u_p2);
+
+    // y (Sine part): 使用归一化投影向量的叉积与轴的点积 -> sin(theta)
+    // (u_p1 x u_p2) 结果是一个垂直于旋转平面的向量，点乘 axis_norm 提取出带符号的 sin(theta)。
+    double y = u_p1.cross(u_p2).dot(axis_norm);
+
+    // 5. 返回带符号角度
+    return std::atan2(y, x);
+}

@@ -173,6 +173,8 @@ include_directories(
 add_library(arm_kinematics_core STATIC
   src/kinematics_new.cpp
   src/kinematics_cal_tools.cpp
+  src/kinematics_left_arm.cpp
+  src/kinematics_vec_ref.cpp
   src/tools.cpp
 )
 
