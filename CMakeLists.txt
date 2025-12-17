@@ -261,6 +261,7 @@ catkin_install_python(PROGRAMS
   vptele/main_ros.py
   vptele/main_mujoco.py
   scripts/movej_agent.py
+  test/record_play.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

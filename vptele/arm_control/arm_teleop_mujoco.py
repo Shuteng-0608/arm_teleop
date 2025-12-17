@@ -3,7 +3,7 @@ from arm_teleop.srv import ArmIK, ArmIKRequest
 import time
 import numpy as np
 from threading import Thread
-from utils.math_utils import rotation_matrix_to_euler
+from utils.math_utils import rotation_matrix_to_euler, smooth_values
 from utils.logger import get_logger
 from utils.filters import OneEuroFilter, PoseFilter7D
 from scipy.spatial.transform import Rotation as R
@@ -68,11 +68,76 @@ class ArmTeleopMujoco:
         self.joints_filter_right = OneEuroFilter(t_now, np.array(self.last_right_joint_angles), min_cutoff=0.1, beta=0.1)
         self.last_smooth_joints_right = self.last_right_joint_angles
 
+        # 添加关节平滑相关参数
+        self.joints_smoothing_factor = self.config.get('smoothing_factor', 0.5)  # 关节平滑系数
+        rospy.loginfo(f"[RIGHT ARM] Last joint angles: {self.last_right_joint_angles}")
+        self.last_smooth_joints_right = self.last_right_joint_angles.copy() if self.last_right_joint_angles is not None else None
+        self.joints_buffer_right = []
+
         
         self.teleop_active = True  # 默认激活遥操作
         logger.info("遥操作初始化完成，等待校准手部位置...")
         # 校准手部位置
         self.calibrate_right_hand_position()
+
+        self.lastest_head_z_rotation = 0.0
+        self.calibrate_head_position()
+    
+    def calibrate_head_position(self):
+        """校准头部位置，记录初始位置作为参考点"""
+        # 等待获取有效的头部数据
+        max_attempts = 10
+        attempts = 0
+        
+        logger.info("开始校准头部位置...")
+        
+        while attempts < max_attempts:
+            head_data = self.vp_streamer.get_head_data()
+            if head_data is not None:
+                # 记录头部初始位置
+                self.initial_head_transform = head_data[0]
+                self.initial_head_position = self.initial_head_transform[:3, 3]
+                self.initial_head_rotation = self.initial_head_transform[:3, :3]
+                self.init_head_rotation_in_euler = rotation_matrix_to_euler(self.initial_head_rotation)
+                # self.init_head_pos = head_data
+                logger.info(f"已校准头部位置: {self.initial_head_position}")
+                logger.info(f"已校准头部姿态: {rotation_matrix_to_euler(self.initial_head_rotation)}")
+                return
+            
+            time.sleep(0.5)
+            attempts += 1
+            logger.info(f"等待头部数据... {attempts}/{max_attempts}")
+            
+        logger.info("警告: 无法获取头部位置进行校准！使用默认值。")
+        self.initial_head_position = np.array([0, 0, 0])
+        self.initial_head_rotation = np.eye(3)  # 单位矩阵作为默认旋转
+    
+    def get_head_z_rotation(self):
+        """
+        获取头部相对于初始位置绕Z轴的旋转角度 (弧度)
+        返回:
+            z_angle: 绕Z轴的旋转角度 (弧度)
+        """
+        # 获取当前头部数据
+        head_data = self.vp_streamer.get_head_data()
+        if head_data is None:
+            return 0.0
+            
+        # 获取当前头部旋转矩阵
+        current_transform = head_data[0]
+        current_rotation = current_transform[:3, :3]
+        
+        # 计算相对旋转 R_rel = R_curr * R_init^-1
+        # 这样得到的是相对于初始姿态的旋转矩阵
+        relative_rotation = current_rotation @ np.linalg.inv(self.initial_head_rotation)
+        
+        # 转换为欧拉角
+        # 使用 'xyz' (extrinsic) 顺序，这样 Z 轴旋转是相对于固定坐标系的
+        r = R.from_matrix(relative_rotation)
+        euler = r.as_euler('xyz', degrees=False)
+        rospy.loginfo(f"头部相对旋转欧拉角: {[round(angle, 4) for angle in euler]}")
+        
+        return euler[2]
     
     def arm_angle_callback(self, msg: ArmAngle):
         """接收机械臂当前臂角的回调函数"""
@@ -269,17 +334,27 @@ class ArmTeleopMujoco:
                         rospy.loginfo(f"[{arm_side}] 逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")
                         logger.info(f"[{arm_side}] 逆解成功")
                         
-
+                        if self.last_smooth_joints_right is not None:
+                            smooth_joint_angles, self.joints_buffer_right = smooth_values(
+                                joint_angles,
+                                self.last_smooth_joints_right,
+                                self.joints_buffer_right,
+                                self.joints_smoothing_factor
+                            )
+                            self.last_smooth_joints_right = smooth_joint_angles.copy()
+                        else:
+                            smooth_joint_angles = joint_angles
+                            self.last_smooth_joints_right = joint_angles.copy()
 
                         # 对[关节角度]进行 1Euro 滤波
-                        smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
-                        self.last_smooth_joints_right = list(smooth_joints).copy()
+                        # smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
+                        # self.last_smooth_joints_right = list(smooth_joints).copy()
                             
                         if self.config.get('move', True):
-                            rospy.loginfo(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joints]}")
-                            logger.info(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joints]}")
+                            rospy.loginfo(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
+                            logger.info(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
 
-                            self.robot_controller.set_arm_positions(smooth_joints + [0.0])
+                            self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
                             
                     else:
                         rospy.logwarn(f"[{arm_side}] 逆解失败，无法控制到位置: {joint_angles}")
@@ -287,11 +362,21 @@ class ArmTeleopMujoco:
                 
                 # 等待一段时间再更新
                 loop_cost_time = loop_start_time - time.time()
-                if loop_cost_time > 0.01:
-                    continue
+                head_z_rotation = self.get_head_z_rotation()
+                rospy.loginfo(f"头部绕Z轴旋转角度: {head_z_rotation}")
+                if abs(head_z_rotation) > 0.1:
+                    rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
+                    self.lastest_head_z_rotation = head_z_rotation
+                    # dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 else:
-                    diff_time = 0.01 - loop_cost_time
-                    time.sleep(diff_time)
+                    rospy.loginfo(f"保持头部绕Z轴旋转角度不变: {self.lastest_head_z_rotation}")
+                    # dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
+                # if loop_cost_time > 0.01:
+                #     continue
+                # else:
+                #     diff_time = 0.01 - loop_cost_time
+                #     time.sleep(diff_time)
+                time.sleep(1)
                 
             except Exception as e:
                 logger.error(f"控制循环出错: {str(e)}", exc_info=True)  # 使用exc_info=True记录完整堆栈

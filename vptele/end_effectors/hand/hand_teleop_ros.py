@@ -1,6 +1,5 @@
 import numpy as np
 from end_effectors.end_effector_base import EndEffectorBase
-# from end_effectors.hand.hand_controller_mujoco import HandControllerMujoco
 from utils.logger import get_logger
 import rospy
 from aiui.srv import DH5SetPosition, DH5SetPositionRequest
@@ -25,14 +24,6 @@ class HandTeleopROS(EndEffectorBase):
         self.max_hand_range = 1.57
         # 手指位置限制范围 [弯曲, 伸直]，根据实际灵巧手调整
         self.latest_hand_pos_right = [920, 1770, 1707, 1730, 1730, 980]
-        # self.position_limits_right = [
-        #     [30, 930],
-        #     [10, 1771],
-        #     [30, 1707],
-        #     [30, 1731],
-        #     [30, 1731],
-        #     [30, 981],
-        # ]
         self.position_limits_right = [
             [30, 920],
             [10, 1770],
@@ -42,14 +33,6 @@ class HandTeleopROS(EndEffectorBase):
             [30, 980],
         ]
         self.latest_hand_pos_left = [851, 1683, 1699, 1681, 1683, 867]
-        # self.position_limits_left = [
-        #     [30, 966],
-        #     [30, 1725],
-        #     [30, 1686],
-        #     [30, 1725],
-        #     [30, 1732],
-        #     [30, 838],
-        # ]
         self.position_limits_left = [ 
             [30, 851],
             [10, 1683],
@@ -336,23 +319,8 @@ class HandTeleopROS(EndEffectorBase):
         # 对大拇指使用专门的计算方法
         thumb_bend = self.calculate_thumb_bend_by_angle(hand_data, hand_side=hand_side)
         thumb_rot = self.calculate_thumb_rotation(hand_data, hand_side=hand_side)
-        
-        # 打印弯曲程度，用于调试
-        # logger.info(f"小拇指: {pinky_bend:.2f}, 无名指: {ring_bend:.2f}, 中指: {middle_bend:.2f}, "
-            #   f"食指: {index_bend:.2f}, 大拇指弯曲: {thumb_bend:.2f}, 大拇指旋转: {thumb_rot:.2f}")
-        
-        # 转换为灵巧手控制值范围 (0-65535)
-        # RIGHT_HAND
-        # pinky_value = pinky_bend * self.max_hand_range
-        # ring_value = ring_bend * self.max_hand_range
-        # middle_value = middle_bend * self.max_hand_range
-        # index_value = index_bend * self.max_hand_range
-        # thumb_bend_value = thumb_bend
-        # thumb_rot_value = thumb_rot * (1.57)
-        
-        # 按照灵巧手控制顺序排列
-        # hand_pos = [thumb_rot_value, thumb_bend_value, index_value, middle_value, ring_value,
-        #             pinky_value]
+
+        # 将弯曲程度映射到灵巧手位置限制范围
         if hand_side == "right":
             hand_pos = self.map_finger_values_to_limits(
                 thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
@@ -363,10 +331,6 @@ class HandTeleopROS(EndEffectorBase):
                 thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
                 self.position_limits_left
             )
-        # hand_pos = self.map_finger_values_to_limits(
-        #     thumb_bend, index_bend, middle_bend, ring_bend, pinky_bend, thumb_rot,
-        #     self.position_limits_right
-        # )
         
         
                     
@@ -384,12 +348,6 @@ class HandTeleopROS(EndEffectorBase):
             映射后的整数值列表
         """
         # 计算各手指的映射值
-        # thumb_bend_value = thumb_bend * position_limits[0][1] + (1 - thumb_bend) * position_limits[0][0]
-        # index_value = index_bend * position_limits[1][1] + (1 - index_bend) * position_limits[1][0]
-        # middle_value = middle_bend * position_limits[2][1] + (1 - middle_bend) * position_limits[2][0]
-        # ring_value = ring_bend * position_limits[3][1] + (1 - ring_bend) * position_limits[3][0]
-        # pinky_value = pinky_bend * position_limits[4][1] + (1 - pinky_bend) * position_limits[4][0]
-        # thumb_rot_value = thumb_rot * position_limits[5][1] + (1 - thumb_rot) * position_limits[5][0]
         thumb_bend_value = (1 - thumb_bend) * position_limits[0][1] + thumb_bend * position_limits[0][0]
         index_value = (1 - index_bend) * position_limits[1][1] + index_bend * position_limits[1][0]
         middle_value = (1 - middle_bend) * position_limits[2][1] + middle_bend * position_limits[2][0]
@@ -436,40 +394,26 @@ class HandTeleopROS(EndEffectorBase):
     def update(self):
         """更新灵巧手状态"""
         # 获取最新的手部数据
-        # update_start_time = time.time()
-        # data_get_start_time = time.time()
         hand_data = self.vp_streamer.latest
-        # print(f"[hand_teleop] 获取手部数据耗时: {time.time() - data_get_start_time:.4f}秒")
         
         if hand_data is not None and "right_fingers" in hand_data:
             # 将手部数据映射到灵巧手控制值
-            # process_start_time = time.time()
-            # hand_pos = self.process_vp_data(hand_data)
             self.latest_hand_pos_right = self.process_vp_data(hand_data, hand_side="right")
-            # print(f"[hand_teleop] 处理手部数据耗时: {time.time() - process_start_time:.4f}秒")
-            
             # 应用平滑过滤
-            # smooth_hand_pos = self.smooth_hand_position(hand_pos)
-            
-            # 控制灵巧手
-            # self.robot_controller.set_hand_positions(hand_pos)
-            
-            # dh5_start_time = time.time()
+            smooth_hand_pos_right = self.smooth_hand_position(self.latest_hand_pos_right)
         if hand_data is not None and "left_fingers" in hand_data:
             self.latest_hand_pos_left = self.process_vp_data(hand_data, hand_side="left")
+            smooth_hand_pos_left = self.smooth_hand_position(self.latest_hand_pos_left)
+
         rospy.sleep(0.1)
 
         try: 
             dh5_req = DH5SetPositionRequest()
             dh5_req.hand_type = 'both'
             dh5_req.hand_mode = 'hand'
-            dh5_req.right_position_list = self.latest_hand_pos_right
-            dh5_req.left_position_list = self.latest_hand_pos_left
+            dh5_req.right_position_list = smooth_hand_pos_right
+            dh5_req.left_position_list = smooth_hand_pos_left
             self.dh5_service(dh5_req)
             
         except rospy.ServiceException as e:
             logger.error(f"调用灵巧手服务失败: {e}")
-        # logger.info(f"[hand_teleop] 调用灵巧手服务耗时: {time.time() - dh5_start_time:.4f}秒")
-        
-        # print(f"设置灵巧手位置: {hand_pos}")
-        # logger.info(f"[hand_teleop] 灵巧手位置更新耗时: {time.time() - update_start_time:.4f}秒")

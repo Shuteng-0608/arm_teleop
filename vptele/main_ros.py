@@ -8,6 +8,9 @@ import sys
 from utils.logger import get_logger, setup_logger
 from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
 import time
+import termios
+import tty
+import select
 
 def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None, 
                       log_level=None, process_name=None, mode="full"):
@@ -97,6 +100,7 @@ class TeleopROSNode:
         self.log_level = rospy.get_param('~log_level', None)
         self.process_name = rospy.get_param('~process_name', None)
         self.mode = rospy.get_param('~mode', 'full')
+
         # rospy.wait_for_service('/aris_node/start_teleop_srv')
         # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
         
@@ -133,8 +137,84 @@ class TeleopROSNode:
             if self.logger:
                 self.logger.error(f"遥操控系统启动失败: {e}")
             raise
-    
- 
+    '''
+    # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
+    # tele_req = StartDualTeleOPRequest()
+    # tele_req.running_flag = False
+    # tele_response = self.start_teleop_service.call(tele_req)
+    # if tele_response.success:
+    #     rospy.loginfo("已通知底层控制节点关闭双臂遥操作模式")
+    # else:
+    #     rospy.logerr("通知底层控制节点关闭双臂遥操作模式失败")
+    '''
+    # def _handle_normal_operation(self):
+    #     """处理正常运行模式"""
+        
+    #     # [1] 保存终端设置
+    #     self.original_terminal_settings = termios.tcgetattr(sys.stdin)
+
+    #     # [2] 初始化服务代理 (建议放在循环外，提前准备好)
+    #     # 注意：这里假设你已经导入了 StartDualTeleOP 和 StartDualTeleOPRequest
+    #     self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
+
+    #     def is_key_pressed(target_key='q'):
+    #         """内部辅助函数：非阻塞检测按键"""
+    #         try:
+    #             tty.setraw(sys.stdin.fileno())
+    #             rlist, _, _ = select.select([sys.stdin], [], [], 0)
+    #             if rlist:
+    #                 key = sys.stdin.read(1)
+    #                 return key == target_key
+    #             return False
+    #         finally:
+    #             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.original_terminal_settings)
+
+    #     try:
+    #         self.system.start()
+    #         self.logger.info("系统已启动，按 'q' 键停止并通知底层...")
+            
+    #         rate = rospy.Rate(10)
+    #         while not rospy.is_shutdown():
+                
+    #             # [3] 检测按键
+    #             if is_key_pressed('q'):
+    #                 self.logger.info("\n检测到停止指令 (q)...")
+                    
+    #                 # --- 插入你的服务调用逻辑 ---
+    #                 try:
+    #                     self.logger.info("正在调用服务通知底层关闭遥操作...")
+    #                     tele_req = StartDualTeleOPRequest()
+    #                     tele_req.running_flag = False
+                        
+    #                     # 调用服务
+    #                     tele_response = self.start_teleop_service.call(tele_req)
+                        
+    #                     if tele_response.success:
+    #                         self.logger.info("成功：已通知底层控制节点关闭双臂遥操作模式")
+    #                     else:
+    #                         self.logger.error("失败：底层控制节点返回关闭失败")
+                            
+    #                 except rospy.ServiceException as e:
+    #                     self.logger.error(f"服务调用异常 (Service可能是断开的): {e}")
+    #                 except Exception as e:
+    #                     self.logger.error(f"发生未知错误: {e}")
+                    
+    #                 # --- 调用完成后跳出循环 ---
+    #                 break 
+                
+    #             rate.sleep()
+                
+    #     except rospy.ROSInterruptException:
+    #         self.logger.info("\n接收到ROS终止信号...")
+    #     except Exception as e:
+    #         self.logger.exception(f"系统运行过程中发生错误: {e}")
+    #     finally:
+    #         # [4] 恢复终端并关闭本地系统
+    #         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.original_terminal_settings)
+            
+    #         if self.system:
+    #             self.system.stop()
+    #             self.logger.info("系统已安全关闭")
     
     def _handle_normal_operation(self):
         """处理正常运行模式"""
@@ -153,16 +233,7 @@ class TeleopROSNode:
             self.logger.exception(f"系统运行过程中发生错误: {e}")
         finally:
             if self.system:
-                # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
-                # tele_req = StartDualTeleOPRequest()
-                # tele_req.running_flag = False
-                # tele_response = self.start_teleop_service.call(tele_req)
-                # if tele_response.success:
-                #     rospy.loginfo("已通知底层控制节点关闭双臂遥操作模式")
-                # else:
-                #     rospy.logerr("通知底层控制节点关闭双臂遥操作模式失败")
                 self.system.stop()
-
                 self.logger.info("系统已安全关闭")
 
 def main():

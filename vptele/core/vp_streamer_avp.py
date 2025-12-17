@@ -78,17 +78,38 @@ class VPStreamer:
             return data[key]
         return None
     
+    def get_head_data(self):
+        """
+        获取头部位置数据
+        
+        返回:
+            dict: 头部位置数据，如果不可用则返回None
+        """
+        data = self.latest
+        if data is None:
+            return None
+            
+        key = "head"
+        if key in data:
+            return data[key]
+        return None
+    
 if __name__ == "__main__":
     # 测试VPStreamer类
-    streamer = VPStreamer("10.16.104.165",False)
+    streamer = VPStreamer("192.168.8.145",False)
     # streamer = VPStreamer("10.32.205.7",False)
     time.sleep(1)
     while True:
-        hand_data = streamer.get_hand_position("right")
-        if hand_data is not None:
-            print(f"右手腕位置: {hand_data}")
+        head_data = streamer.get_head_data()
+        if head_data is not None:
+            print(f"头部位置: {head_data}")
         else:
-            print("未获取到右手腕位置数据")
+            print("未获取到头部位置数据")
+        # hand_data = streamer.get_hand_position("right")
+        # if hand_data is not None:
+        #     print(f"右手腕位置: {hand_data}")
+        # else:
+        #     print("未获取到右手腕位置数据")
         
         # fingers_data = streamer.get_fingers_data("right")
         # if fingers_data is not None:
