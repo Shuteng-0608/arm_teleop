@@ -1051,7 +1051,8 @@ IKResult ArmKineComb::cal_IK_feasible_armAngle_vec_ref(
         // 计算新的臂角
         double new_arm_angle = current_arm_angle + deviation;
 
-        double clamp_arm_angle = std::clamp(new_arm_angle, -100.0/180.0*M_PI, 0.0); 
+        // double clamp_arm_angle = std::clamp(new_arm_angle, -100.0/180.0*M_PI, 0.0); 
+        double clamp_arm_angle = new_arm_angle;
         
         // 检查该臂角是否已经计算过（例如多次钳位到边缘值）
         bool is_calculated = false;

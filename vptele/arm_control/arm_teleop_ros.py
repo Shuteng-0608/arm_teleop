@@ -69,8 +69,8 @@ class ArmTeleopROS:
         pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        # self.current_arm_angle_right = 0.1
-        self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
+        self.current_arm_angle_right = 0
+        # self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
 
@@ -96,7 +96,7 @@ class ArmTeleopROS:
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
-        self.current_arm_angle_left = 0.1
+        self.current_arm_angle_left = 0
         logger.info("LEFT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[LEFT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_left_robot_pose]}")
 
@@ -147,8 +147,8 @@ class ArmTeleopROS:
         self.scaling_factor = 1.0 # 手部运动到机械臂运动的缩放因子
 
         # ============ OneEuroFilter 用于姿态平滑 ============
-        self.pose_filter_right = PoseFilter7D(min_cutoff=0.08, beta=0.5)
-        self.pose_filter_left = PoseFilter7D(min_cutoff=0.08, beta=0.5)
+        self.pose_filter_right = PoseFilter7D(min_cutoff=0.01, beta=0.5)
+        self.pose_filter_left = PoseFilter7D(min_cutoff=0.01, beta=0.5)
         # t_now = time.time()
         # self.joints_filter_right = OneEuroFilter(t_now, np.array(self.last_right_joint_angles), min_cutoff=0.001, beta=0.8)
         # self.last_smooth_joints_right = self.last_right_joint_angles.copy()
@@ -181,8 +181,14 @@ class ArmTeleopROS:
         self.calibrate_right_hand_position()
         self.calibrate_left_hand_position()
 
-        # self.lastest_head_z_rotation = 0.0
-        # self.calibrate_head_position()
+        self.lastest_head_z_rotation = 0.0
+        self.calibrate_head_position()
+
+        # self.head_thread = None
+        logger.info("启动 头部数据获取线程...")
+        self.head_thread = Thread(target=self.head_loop, daemon=True) 
+        self.head_thread.start()
+
     
     def calibrate_head_position(self):
         """校准头部位置，记录初始位置作为参考点"""
@@ -485,10 +491,17 @@ class ArmTeleopROS:
                         ik_request.method = 'feasible'  # 使用组合方法
                     # ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
                     # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
-                    offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    if arm_side == 'right':
+                        offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    elif arm_side == 'left':
+                        offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+
                     ik_request.current_arm_angle = 0
                     # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
-                    offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
+                    if arm_side == 'right':
+                        offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
+                    elif arm_side == 'left':
+                        offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
                     offset_list = offset_list1 + offset_list2
                     ik_request.offset_list = offset_list
                     ik_request.offset_refer = 0.5
@@ -535,11 +548,12 @@ class ArmTeleopROS:
                         logger.info(f"[{arm_side}] 逆解成功")
                         
                         # 对计算的关节角度进行平滑处理
+                        
                         if arm_side == 'right':
-                            # 对[关节角度]进行 1Euro 滤波
-                            # if self.last_smooth_joints_right is not None:
-                            #     smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
-                            #     self.last_smooth_joints_right = list(smooth_joints).copy()
+                        #     # 对[关节角度]进行 1Euro 滤波
+                        #     # if self.last_smooth_joints_right is not None:
+                        #     #     smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
+                        #     #     self.last_smooth_joints_right = list(smooth_joints).copy()
                             if self.last_smooth_joints_right is not None:
                                 smooth_joint_angles, self.joints_buffer_right = smooth_values(
                                     joint_angles,
@@ -552,9 +566,10 @@ class ArmTeleopROS:
                                 smooth_joint_angles = joint_angles
                                 self.last_smooth_joints_right = joint_angles.copy()
                         elif arm_side == 'left':
-                            # if self.last_smooth_joints_left is not None:
-                            #     smooth_joints = self.joints_filter_left(current_timestamp, np.array(joint_angles))
-                            #     self.last_smooth_joints_left = list(smooth_joints).copy()
+                        #     # if self.last_smooth_joints_left is not None:
+                        #     #     smooth_joints = self.joints_filter_left(current_timestamp, np.array(joint_angles))
+                        #     #     self.last_smooth_joints_left = list(smooth_joints).copy()
+                            
                             if self.last_smooth_joints_left is not None:
                                 smooth_joint_angles, self.joints_buffer_left = smooth_values(
                                     joint_angles,
@@ -566,6 +581,16 @@ class ArmTeleopROS:
                             else:
                                 smooth_joint_angles = joint_angles
                                 self.last_smooth_joints_left = joint_angles.copy()
+                        
+                        # for i in range(len(joint_angles)):
+                        #     if arm_side == "right":
+                        #         if abs(joint_angles[i] - self.last_right_joint_angles[i]) > 0.5:
+                        #             self.last_right_joint_angles[i] = joint_angles[i]
+                        #         self.last_smooth_joints_right = self.last_right_joint_angles.copy()
+                        #     elif arm_side == "left":
+                        #         if abs(joint_angles[i] - self.last_left_joint_angles[i]) > 0.5:
+                        #             self.last_left_joint_angles[i] = joint_angles[i]
+                        #         self.last_smooth_joints_left = self.last_left_joint_angles.copy()
                             
                             
                         
@@ -589,6 +614,19 @@ class ArmTeleopROS:
                 logger.error(f"控制循环出错: {str(e)}", exc_info=True)  # 使用exc_info=True记录完整堆栈
                 time.sleep(1)  # 错误恢复等待
 
+    def head_loop(self):
+        """持续发布头部数据的循环线程"""
+        while not rospy.is_shutdown():
+            head_z_rotation = self.get_head_z_rotation()
+            # throttle head angle logs to avoid log spam
+            if abs(head_z_rotation - self.lastest_head_z_rotation) > 0.05:
+                rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
+                self.lastest_head_z_rotation = head_z_rotation
+            if abs(head_z_rotation) <= 0.1:
+                self.lastest_head_z_rotation = 0.0
+            rospy.sleep(0.01)
+        
+    
     def publish_loop(self):
         """发布线程"""
         rate = self.publish_rate
@@ -621,12 +659,13 @@ class ArmTeleopROS:
                 dual_arm_msg.right_arm.arm_id = 1
                 dual_arm_msg.left_arm.arm_id = 0
                 
-                # dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
-                dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
-                # dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
+                dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
+                # dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
+                dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
+                # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
+
+                dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 
-                # dual_arm_msg.left_arm.arm_joints = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
-                dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
                 
                 # 发布数据
                 self.dual_arm_publisher.publish(dual_arm_msg)
@@ -675,10 +714,16 @@ class ArmTeleopROS:
         self.control_thread_left.daemon = True
         self.control_thread_left.start()
 
+        # logger.info("启动 头部数据获取线程...")
+        # self.head_thread = Thread(target=self.head_loop, daemon=True) 
+        # self.head_thread.start()
+
         logger.info("启动 [DUAL AMR] 双臂数据发布线程...")
         self.publisher_thread = Thread(target=self.publish_loop, name="ArmTeleopPublishThread")
         self.publisher_thread.daemon = True
         self.publisher_thread.start()
+
+        
 
 
 

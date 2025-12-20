@@ -1,8 +1,10 @@
+import threading
 import numpy as np
 from end_effectors.end_effector_base import EndEffectorBase
 from utils.logger import get_logger
 import rospy
 from aiui.srv import DH5SetPosition, DH5SetPositionRequest
+from arm_teleop.msg import DualHandTele
 import time
 logger = get_logger()
 
@@ -23,31 +25,50 @@ class HandTeleopROS(EndEffectorBase):
         # self.max_hand_range = self.config.get('max_hand_range', 1.57) # TODO RIGHT_HAND
         self.max_hand_range = 1.57
         # 手指位置限制范围 [弯曲, 伸直]，根据实际灵巧手调整
-        self.latest_hand_pos_right = [920, 1770, 1707, 1730, 1730, 980]
+        self.latest_hand_pos_right = [873, 1686, 1686, 1690, 1692, 873]
+        self.smooth_hand_pos_right = self.latest_hand_pos_right.copy()
         self.position_limits_right = [
-            [30, 920],
-            [10, 1770],
-            [30, 1707],
-            [30, 1730],
-            [30, 1730],
-            [30, 980],
+            [10, 873],
+            [10, 1686],
+            [10, 1686],
+            [10, 1690],
+            [10, 1692],
+            [10, 873],
         ]
-        self.latest_hand_pos_left = [851, 1683, 1699, 1681, 1683, 867]
+        self.latest_hand_pos_left = [868, 1701, 1693, 1690, 1689, 866]
+        self.smooth_hand_pos_left = self.latest_hand_pos_left.copy()
+        # self.position_limits_left = [ 
+        #     [30, 851],
+        #     [10, 1683],
+        #     [30, 1699],
+        #     [30, 1681],
+        #     [10, 1683],
+        #     [30, 867],
+        # ]
         self.position_limits_left = [ 
-            [30, 851],
-            [10, 1683],
-            [30, 1699],
-            [30, 1681],
-            [10, 1683],
-            [30, 867],
+            [10, 868],
+            [10, 1701],
+            [10, 1693],
+            [10, 1690],
+            [10, 1689],
+            [10, 866],
         ]
-        self.smoothing_factor = self.config.get('smoothing_factor', 0.6)
+        # self.smoothing_factor = self.config.get('smoothing_factor', 0.6)
+        self.smoothing_factor = 0.8
         self.last_hand_pos = [0, 0, 0, 0, 0, 0]
         if not rospy.core.is_initialized():
             rospy.init_node('hand_teleop', anonymous=True)
         
-        rospy.wait_for_service('/dh5/set_all_position')
-        self.dh5_service = rospy.ServiceProxy('/dh5/set_all_position', DH5SetPosition)
+        # rospy.wait_for_service('/dh5/set_all_position')
+        # self.dh5_service = rospy.ServiceProxy('/dh5/set_all_position', DH5SetPosition)
+
+        self.dual_arm_publisher = rospy.Publisher('/arm_teleop/dual_hand_tele', DualHandTele, queue_size=100)
+        self.publish_rate = rospy.Rate(100)
+        # self.hand_teleop_thread = threading.Thread(target=self.publish_loop)
+        # self.hand_teleop_thread.daemon = True
+        # self.hand_teleop_thread.start()
+        # logger.info("启动灵巧手遥控发布线程...")
+
         self.initialize()
         
     def initialize(self):
@@ -367,7 +388,7 @@ class HandTeleopROS(EndEffectorBase):
         
         return mapped_values
     
-    def smooth_hand_position(self, new_pos):
+    def smooth_hand_position(self, new_pos, hand_side="right"):
         """
         应用平滑过滤，减少抖动
         
@@ -378,18 +399,61 @@ class HandTeleopROS(EndEffectorBase):
             list: 平滑处理后的手部位置
         """
         # 如果是首次调用，直接返回新位置
-        if all(x == 0 for x in self.last_hand_pos):
-            self.last_hand_pos = new_pos.copy()
-            return new_pos
+        if hand_side == "right":
+            if all(x == 0 for x in self.latest_hand_pos_right):
+                self.latest_hand_pos_right = new_pos.copy()
+                return new_pos
+        elif hand_side == "left":
+            if all(x == 0 for x in self.latest_hand_pos_left):
+                self.latest_hand_pos_left = new_pos.copy()
+                return new_pos
             
-        smooth_pos = []
-        for i in range(len(new_pos)):
-            # 应用平滑系数
-            value = self.smoothing_factor * self.last_hand_pos[i] + (1 - self.smoothing_factor) * new_pos[i]
-            smooth_pos.append(value)
+        # smooth_pos = []
+        # for i in range(len(new_pos)):
+        #     # 应用平滑系数
+        #     if hand_side == "right":
+                
+        #         value = self.smoothing_factor * self.latest_hand_pos_right[i] + (1 - self.smoothing_factor) * new_pos[i]
+        #     elif hand_side == "left":
+        #         value = self.smoothing_factor * self.latest_hand_pos_left[i] + (1 - self.smoothing_factor) * new_pos[i]
+        #     smooth_pos.append(value)
+        smooth_pos = new_pos.copy()
             
-        self.last_hand_pos = smooth_pos.copy()
+        for i in range(len(smooth_pos)):
+            # 防抖动
+            if hand_side == "right":
+                if abs(smooth_pos[i] - self.latest_hand_pos_right[i]) > 10: 
+                    self.latest_hand_pos_right = smooth_pos.copy()
+            elif hand_side == "left":
+                if abs(smooth_pos[i] - self.latest_hand_pos_left[i]) > 10: 
+                    self.latest_hand_pos_left = smooth_pos.copy()
+        
+        
         return [int(x) for x in smooth_pos]  # 确保返回整数值
+    
+    def publish_loop(self):
+        """持续发布灵巧手状态"""
+        while not rospy.is_shutdown():
+            # 发布DualHandTele消息
+            try:
+                dual_hand_msg = DualHandTele()
+                # dual_hand_msg.right_position_list = self.smooth_hand_pos_right
+                dual_hand_msg.right_position_list = [873, 1686, 1686, 1690, 1692, 873]
+                
+                
+                # rospy.loginfo(f"右手指位置: {self.smooth_hand_pos_right}")
+                # dual_hand_msg.left_position_list = self.smooth_hand_pos_left
+                dual_hand_msg.left_position_list = [868, 1701, 1693, 1690, 1689, 866]
+                
+                # rospy.loginfo(f"左手指位置: {self.smooth_hand_pos_left}")
+                self.dual_arm_publisher.publish(dual_hand_msg)
+                # self.publish_rate.sleep()
+            except Exception as e:
+                rospy.logerr(f"发布灵巧手状态时出错: {e}")
+
+            self.publish_rate.sleep()
+            
+
     
     def update(self):
         """更新灵巧手状态"""
@@ -398,22 +462,37 @@ class HandTeleopROS(EndEffectorBase):
         
         if hand_data is not None and "right_fingers" in hand_data:
             # 将手部数据映射到灵巧手控制值
-            self.latest_hand_pos_right = self.process_vp_data(hand_data, hand_side="right")
+            new_hand_pos_right = self.process_vp_data(hand_data, hand_side="right")
             # 应用平滑过滤
-            smooth_hand_pos_right = self.smooth_hand_position(self.latest_hand_pos_right)
+            self.smooth_hand_pos_right = self.smooth_hand_position(new_hand_pos_right, hand_side="right")
         if hand_data is not None and "left_fingers" in hand_data:
-            self.latest_hand_pos_left = self.process_vp_data(hand_data, hand_side="left")
-            smooth_hand_pos_left = self.smooth_hand_position(self.latest_hand_pos_left)
+            new_hand_pos_left = self.process_vp_data(hand_data, hand_side="left")
+            self.smooth_hand_pos_left = self.smooth_hand_position(new_hand_pos_left, hand_side="left")
+        
+        try:
+            dual_hand_msg = DualHandTele()
+            # dual_hand_msg.right_position_list = self.smooth_hand_pos_right
+            dual_hand_msg.right_position_list = [873, 1686, 1686, 1690, 1692, 873]
+            # rospy.loginfo(f"右手指位置: {self.smooth_hand_pos_right}")
+            # dual_hand_msg.left_position_list = self.smooth_hand_pos_left
+            dual_hand_msg.left_position_list = [868, 1701, 1693, 1690, 1689, 866]
+            # rospy.loginfo(f"左手指位置: {self.smooth_hand_pos_left}")
+            self.dual_arm_publisher.publish(dual_hand_msg)
+            # self.publish_rate.sleep()
+        except Exception as e:
+            rospy.logerr(f"发布灵巧手状态时出错: {e}")
 
-        rospy.sleep(0.1)
 
-        try: 
-            dh5_req = DH5SetPositionRequest()
-            dh5_req.hand_type = 'both'
-            dh5_req.hand_mode = 'hand'
-            dh5_req.right_position_list = smooth_hand_pos_right
-            dh5_req.left_position_list = smooth_hand_pos_left
-            self.dh5_service(dh5_req)
+        
+        # rospy.sleep(0.1)
+
+        # try: 
+        #     dh5_req = DH5SetPositionRequest()
+        #     dh5_req.hand_type = 'both'
+        #     dh5_req.hand_mode = 'hand'
+        #     dh5_req.right_position_list = self.smooth_hand_pos_right
+        #     dh5_req.left_position_list = self.smooth_hand_pos_left
+        #     self.dh5_service.call(dh5_req)
             
-        except rospy.ServiceException as e:
-            logger.error(f"调用灵巧手服务失败: {e}")
+        # except rospy.ServiceException as e:
+        #     logger.error(f"调用灵巧手服务失败: {e}")

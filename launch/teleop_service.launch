@@ -22,7 +22,7 @@
     <node 
         pkg="aiui" 
         type="dh5_control_teleop.py"
-        name="dh5_service_node" 
+        name="dh5_service_teleop_node" 
         output="screen"
     />    
     

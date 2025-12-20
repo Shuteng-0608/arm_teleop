@@ -95,6 +95,7 @@ add_message_files(
   FILES
   ArmJoints.msg
   DualArmMovej.msg
+  DualHandTele.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -264,6 +265,7 @@ catkin_install_python(PROGRAMS
   vptele/main_mujoco.py
   scripts/movej_agent.py
   test/record_play.py
+  test/play_multi.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
