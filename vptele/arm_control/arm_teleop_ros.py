@@ -485,6 +485,7 @@ class ArmTeleopROS:
                     # TODO: call 逆解服务
                     start_time = time.time()
                     ik_request = ArmIKRequest()
+                    # ======================== [feasible method] ========================
                     if arm_side == 'right':
                         ik_request.method = 'feasible'  # 使用组合方法
                     elif arm_side == 'left':
@@ -505,6 +506,8 @@ class ArmTeleopROS:
                     offset_list = offset_list1 + offset_list2
                     ik_request.offset_list = offset_list
                     ik_request.offset_refer = 0.5
+                    # ======================== [feasible method] ========================
+                    
 
                     # if arm_side == 'left':
                     #     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
@@ -661,8 +664,8 @@ class ArmTeleopROS:
                 
                 dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
                 # dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
-                dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
-                # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
+                # dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
+                dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
 
                 dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 
