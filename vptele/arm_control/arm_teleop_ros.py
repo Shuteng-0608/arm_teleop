@@ -4,6 +4,7 @@ from arm_teleop.srv import MovejService, MovejServiceRequest
 from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
 # from pangu_msgs.msg import ArmJoints, DualArmMovej
 from arm_teleop.msg import ArmJoints, DualArmMovej
+from arm_angle.msg import ArmAngle
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose, Point, Quaternion
 import time
@@ -46,6 +47,11 @@ class ArmTeleopROS:
         # ================== Single Arm MoveJ SERVICE ==================
         rospy.wait_for_service('/aris_node/movej_srv')
         self.pq_movej_service = rospy.ServiceProxy('/aris_node/movej_srv', MovejService)
+
+
+
+        self.current_arm_angle_right = 0.0
+        self.arm_angle_subscriber = rospy.Subscriber('/arm_angle/info', ArmAngle, self.arm_angle_callback, queue_size=10)
         
 
 
@@ -189,6 +195,10 @@ class ArmTeleopROS:
         self.head_thread = Thread(target=self.head_loop, daemon=True) 
         self.head_thread.start()
 
+    def arm_angle_callback(self, msg: ArmAngle):
+        """接收机械臂当前臂角的回调函数"""
+        self.current_arm_angle_right = msg.right_arm_angle
+        self.current_arm_angle_left = msg.left_arm_angle
     
     def calibrate_head_position(self):
         """校准头部位置，记录初始位置作为参考点"""
@@ -487,25 +497,31 @@ class ArmTeleopROS:
                     ik_request = ArmIKRequest()
                     # ======================== [feasible method] ========================
                     if arm_side == 'right':
-                        ik_request.method = 'feasible'  # 使用组合方法
+                        ik_request.method = 'comb'  # 使用组合方法
                     elif arm_side == 'left':
-                        ik_request.method = 'feasible'  # 使用组合方法
+                        ik_request.method = 'comb'  # 使用组合方法
+                    if arm_side == 'right':
+                        ik_request.current_arm_angle = self.current_arm_angle_right * np.pi / 180.0  # 传入当前臂角，转换为0~1范围
+                    elif arm_side == 'left':
+                        # ik_request.current_arm_angle = 0.0
+                        ik_request.current_arm_angle = (-1) * self.current_arm_angle_left * np.pi / 180.0  # 传入当前臂角，转换为0~1范围
+                    # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
                     # ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
                     # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
-                    if arm_side == 'right':
-                        offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
-                    elif arm_side == 'left':
-                        offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    # if arm_side == 'right':
+                    #     offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    # elif arm_side == 'left':
+                    #     offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
 
-                    ik_request.current_arm_angle = 0
-                    # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
-                    if arm_side == 'right':
-                        offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
-                    elif arm_side == 'left':
-                        offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
-                    offset_list = offset_list1 + offset_list2
-                    ik_request.offset_list = offset_list
-                    ik_request.offset_refer = 0.5
+                    # ik_request.current_arm_angle = 0
+                    # # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
+                    # if arm_side == 'right':
+                    #     offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
+                    # elif arm_side == 'left':
+                    #     offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+                    # offset_list = offset_list1 + offset_list2
+                    # ik_request.offset_list = offset_list
+                    # ik_request.offset_refer = 0.5
                     # ======================== [feasible method] ========================
                     
 
@@ -541,10 +557,10 @@ class ArmTeleopROS:
                     if success:
                         # 更新最后使用的关节角度
                         if arm_side == 'right':
-                            self.current_arm_angle_right = response.new_arm_angle
+                            # self.current_arm_angle_right = response.new_arm_angle
                             self.last_right_joint_angles = [round(angle, 4) for angle in joint_angles]
                         elif arm_side == 'left':
-                            self.current_arm_angle_left = response.new_arm_angle
+                            # self.current_arm_angle_left = response.new_arm_angle
                             self.last_left_joint_angles = [round(angle, 4) for angle in joint_angles]
                         rospy.loginfo(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left}")
                         rospy.loginfo(f"[{arm_side}] 逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")

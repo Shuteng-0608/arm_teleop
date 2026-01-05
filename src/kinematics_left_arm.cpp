@@ -62,6 +62,24 @@ IKResult ArmLeftKine::cal_left_arm_IK(
     return result_R;
 }
 
+
+IKResult ArmLeftKine::cal_left_arm_IK_vec_ref(
+            const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
+            double current_joints_array[], 
+            double arm_angle){
+    
+    Matrix4d TeeL_G = target_pose; // 左臂末端在全局坐标系下的位姿
+    Matrix4d TeeRMir_R = T_RG * M_mirror * TeeL_G * M_mirror; // 左臂末端镜像到右边之后在右臂坐标系下的表示，因此可以直接用IK
+
+    IKResult result_R = right_arm.calculateIK_vec_ref(
+        TeeRMir_R, 
+        current_joints_array, 
+        arm_angle // 传入arm_angle
+        // theta7 传入 std::nullopt，因为 ArmKineOfst 默认是空
+    );
+    return result_R;
+}
+
 FKResult ArmLeftKine::calculateFK(const Vector7d& theta){
 
     FKResult res_L;

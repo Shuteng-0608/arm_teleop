@@ -362,6 +362,12 @@ class ArmLeftKine{
             double arm_angle
         );
 
+        IKResult cal_left_arm_IK_vec_ref(
+            const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
+            double current_joints_array[], 
+            double arm_angle
+        );
+
         IKResult cal_left_arm_feasible_IK_vec_ref(
             const Matrix4d& target_pose,  // 左臂末端在全局坐标系下的位姿
             double current_joints_array[], 
