@@ -75,6 +75,7 @@ rotation = R.from_euler("XYZ", euler_angles, degrees=False)
 print("单个欧拉角列表转换结果:")
 # print(rotation)
 print(rotation.as_matrix())
+print(euler_xyz_list_to_rotation_matrix(euler_angles))
 
 # 示例2: 验证旋转矩阵性质
 # print(f"\n旋转矩阵行列式: {np.linalg.det(R):.6f} (应该接近1)")

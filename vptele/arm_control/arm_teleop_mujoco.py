@@ -37,10 +37,10 @@ class ArmTeleopMujoco:
         # ================== [RIGHT ARM INIT] ==================
         rospy.loginfo("Connecting to ik service......")
         rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
-        # self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
-        self.right_ik_service = rospy.ServiceProxy('/arm_teleop/left_arm_ik_srv', ArmIK)
-        # self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
-        self.initial_right_robot_pose = [0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
+        self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
+        self.left_ik_service = rospy.ServiceProxy('/arm_teleop/left_arm_ik_srv', ArmIK)
+        self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
+        self.initial_left_robot_pose = [0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
         self.init_right_rotation = R.from_euler("XYZ", 
                                         [self.initial_right_robot_pose[3], 
                                          self.initial_right_robot_pose[4], 
@@ -156,8 +156,8 @@ class ArmTeleopMujoco:
         logger.info("开始校准手部位置...")
         
         while attempts < max_attempts:
-            # hand_data = self.vp_streamer.get_hand_position(hand='right')
-            hand_data = self.vp_streamer.get_hand_position(hand='left')
+            hand_data = self.vp_streamer.get_hand_position(hand='right')
+            # hand_data = self.vp_streamer.get_hand_position(hand='left')
             if hand_data is not None and len(hand_data) > 0:
                 # 记录右手腕初始位置和姿态
                 self.initial_hand_transform_right = hand_data[0]
@@ -190,16 +190,16 @@ class ArmTeleopMujoco:
         hand_position = hand_transform[:3, 3]
         
         # 计算手部位置相对于初始位置的偏移
-        # if hand_side == 'right':
-        #     hand_offset = hand_position - self.initial_hand_position_right
-        if hand_side == 'left':
+        if hand_side == 'right':
             hand_offset = hand_position - self.initial_hand_position_right
+        # if hand_side == 'left':
+        #     hand_offset = hand_position - self.initial_hand_position_right
         
         # 将偏移应用到机械臂初始位置
-        # if hand_side == 'right':
-        #     target_position = self.initial_right_robot_pose.copy()
-        if hand_side == 'left':
+        if hand_side == 'right':
             target_position = self.initial_right_robot_pose.copy()
+        # if hand_side == 'left':
+        #     target_position = self.initial_right_robot_pose.copy()
         target_position[0] += hand_offset[1] * 1.5
         target_position[1] += hand_offset[2] * 1.5
         target_position[2] += hand_offset[0] * 1.5
@@ -210,10 +210,10 @@ class ArmTeleopMujoco:
         
         # 计算相对于初始手部姿态的旋转变化
         # 相对旋转 = 当前旋转 × 初始旋转的逆
-        # if hand_side == 'right':
-        #     relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_right)
-        if hand_side == 'left':
+        if hand_side == 'right':
             relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_right)
+        # if hand_side == 'left':
+        #     relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_right)
         rospy.loginfo(f"相对旋转矩阵: \n{relative_rotation}")
         transfrom_matrix = np.array([[0.0, 1.0, 0.0],
                                      [0.0, 0.0, 1.0],
@@ -221,10 +221,10 @@ class ArmTeleopMujoco:
 
         rotation_in_arm = np.dot(transfrom_matrix, relative_rotation) @ transfrom_matrix.T
         
-        # if hand_side == 'right':
-        #     relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
-        if hand_side == 'left':
+        if hand_side == 'right':
             relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
+        # if hand_side == 'left':
+        #     relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
         [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
         
         target_position[3] = new_rx
@@ -270,7 +270,7 @@ class ArmTeleopMujoco:
         
         return quaternion_pose
 
-    def control_loop(self, arm_side="left", arm_id=1):
+    def control_loop(self, arm_side="right", arm_id=1):
         """控制循环，持续更新机械臂位置和姿态"""
         logger.info(f"开始[{arm_side}]机械臂控制循环")
         
@@ -323,8 +323,8 @@ class ArmTeleopMujoco:
                     offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
                     ik_request.current_arm_angle = 0
                     # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
-                    # offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
-                    offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+                    offset_list1 = [0, -0.1,  -0.2, -0.3, -0.4, -0.5]
+                    # offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
                     offset_list = offset_list1 + offset_list2
                     ik_request.offset_list = offset_list
                     # ik_request.offset_list_2 = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
@@ -340,7 +340,10 @@ class ArmTeleopMujoco:
                     ik_request.target_pose.orientation.y = smooth_target_in_quat[5]
                     ik_request.target_pose.orientation.z = smooth_target_in_quat[6]
                     ik_request.init_joints = self.last_right_joint_angles if self.last_right_joint_angles is not None else []
-                    response = self.right_ik_service.call(ik_request)
+                    if arm_side == "left":
+                        response = self.left_ik_service.call(ik_request)
+                    else:
+                        response = self.right_ik_service.call(ik_request)
                     success = response.success
                     joint_angles = response.solution
 
