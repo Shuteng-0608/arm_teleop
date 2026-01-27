@@ -104,6 +104,7 @@ add_service_files(
   ArmIK.srv
   MovejService.srv
   StartDualTeleOP.srv
+  RemoteZero.srv
 )
 
 ## Generate actions in the 'action' folder

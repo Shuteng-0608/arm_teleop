@@ -4,6 +4,7 @@ from end_effectors.end_effector_base import EndEffectorBase
 from utils.logger import get_logger
 import rospy
 from aiui.srv import DH5SetPosition, DH5SetPositionRequest
+from arm_teleop.srv import RemoteZero, RemoteZeroRequest
 import time
 logger = get_logger()
 
@@ -412,6 +413,20 @@ class HandTeleopMujoco(EndEffectorBase):
             # process_start_time = time.time()
             # hand_pos = self.process_vp_data(hand_data)
             self.latest_hand_pos_right = self.process_vp_data(hand_data, hand_side="right")
+            if self.latest_hand_pos_right[2] > 0.75 and self.latest_hand_pos_right[3] > 0.75 and self.latest_hand_pos_right[4] > 0.75 and self.latest_hand_pos_right[5] > 0.75:
+                try:
+                    remote_zero_req = RemoteZeroRequest()
+                    remote_zero_req.remote_zero = "right"
+                    remote_zero_client = rospy.ServiceProxy('/arm_teleop/remote_zero', RemoteZero)
+                    resp = remote_zero_client(remote_zero_req)
+                    if resp.success:
+                        logger.info("成功发送右手远程归零指令")
+                    else:
+                        logger.error("右手远程归零指令失败")
+                except rospy.ServiceException as e:
+                    logger.error(f"调用远程归零服务失败: {e}")
+
+            
             # print(f"[hand_teleop] 处理手部数据耗时: {time.time() - process_start_time:.4f}秒")
             
             # 应用平滑过滤
