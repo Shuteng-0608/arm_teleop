@@ -48,8 +48,14 @@ class TeleopSystemROS:
         # 初始化机械臂遥控
         logger.info("正在初始化机械臂遥控模块...")
 
-        from arm_control.arm_teleop_ros import ArmTeleopROS
-        self.arm_teleop = ArmTeleopROS(
+        # from arm_control.arm_teleop_ros import ArmTeleopROS
+        # self.arm_teleop = ArmTeleopROS(
+        #     self.vp_streamer,
+        #     self.robot_controller,
+        #     self.config.get('arm_config', {})
+        # )
+        from arm_control.arm_teleop_pure import ArmTeleopPure
+        self.arm_teleop = ArmTeleopPure(
             self.vp_streamer,
             self.robot_controller,
             self.config.get('arm_config', {})

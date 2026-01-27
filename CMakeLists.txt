@@ -96,6 +96,8 @@ add_message_files(
   ArmJoints.msg
   DualArmMovej.msg
   DualHandTele.msg
+  DualTelePQ.msg
+  ArmPQ.msg
 )
 
 ## Generate services in the 'srv' folder
