@@ -513,6 +513,14 @@ class ArmTeleopROS:
                         offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
                     elif arm_side == 'left':
                         offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    # if arm_side == 'right':
+                    #     offset_list2 = [i + self.current_arm_angle_right for i in [0, -0.01, -0.03, -0.06, -0.1, -0.15, -0.2]]
+                    # elif arm_side == 'left':
+                    #     offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.01, 0.03, 0.06, 0.1, 0.15, 0.2]]
+                    # if arm_side == 'right':
+                    #     offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.01, -0.01, 0.02, -0.02, 0.05, -0.05, 0.1, -0.1]]
+                    # elif arm_side == 'left':
+                    #     offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.01, -0.01, 0.02, -0.02, 0.05, -0.05, 0.1, -0.1]]
 
                     # ik_request.current_arm_angle = 0
                     # # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
@@ -521,6 +529,14 @@ class ArmTeleopROS:
                     elif arm_side == 'left':
                         offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
                     offset_list = offset_list1 + offset_list2
+                    # if arm_side == 'right':
+                    #     for i in range(len(offset_list)):
+                    #         if offset_list[i] < 0.0:
+                    #             offset_list[i] = 0.0
+                    # elif arm_side == 'left':
+                    #     for i in range(len(offset_list)):
+                    #         if offset_list[i] > 0.0:
+                    #             offset_list[i] = 0.0
                     ik_request.offset_list = offset_list
                     ik_request.offset_refer = 0.5
                     # ======================== [feasible method] ========================
@@ -558,10 +574,10 @@ class ArmTeleopROS:
                     if success:
                         # 更新最后使用的关节角度
                         if arm_side == 'right':
-                            # self.current_arm_angle_right = response.new_arm_angle
+                            self.current_arm_angle_right = response.new_arm_angle
                             self.last_right_joint_angles = [round(angle, 4) for angle in joint_angles]
                         elif arm_side == 'left':
-                            # self.current_arm_angle_left = response.new_arm_angle
+                            self.current_arm_angle_left = response.new_arm_angle
                             self.last_left_joint_angles = [round(angle, 4) for angle in joint_angles]
                         rospy.loginfo(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left}")
                         rospy.loginfo(f"[{arm_side}] 逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")
@@ -684,7 +700,8 @@ class ArmTeleopROS:
                 dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
                 # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
 
-                dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
+                # dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
+                dual_arm_msg.head_z_rotation = 0.0
                 
                 
                 # 发布数据
