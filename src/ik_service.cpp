@@ -1,28 +1,22 @@
 #include <ros/ros.h>
 #include <Eigen/Dense>
 #include "arm_teleop/ArmIK.h"  // 替换为实际服务头文件
-#include "kinematics_new.h"
-#include "tools.h"
+// #include "/home/pangu/pangu/src/arm_teleop/lib/kInematics_advanced/Arm_kinematics_cal_cpp-test_refactor/include/arm_kinematics/arm_kinematics.h"
+// #include "tools.h"
+#include "arm_kinematics/arm_kinematics.h"
 #include <ros/package.h>
+using namespace arm_kinematics;
 
 class ArmKinematicsServer {
+
 private:
+    
     ros::ServiceServer service_;
-    std::shared_ptr<ArmKineStd> std_solver;
-    std::shared_ptr<ArmKineOfst> ofst_solver;
-    std::shared_ptr<ArmKineComb> comb_solver;
+    CombinedSolver solver_;
 
 public:
-    ArmKinematicsServer(ros::NodeHandle& nh, const std::string& config_path) {
-        // 初始化三种求解器
-        try {
-            std_solver = std::make_shared<ArmKineStd>(config_path);
-            ofst_solver = std::make_shared<ArmKineOfst>(config_path);
-            
-            auto std_for_comb = std::make_shared<ArmKineStd>(config_path);
-            auto ofst_for_comb = std::make_shared<ArmKineOfst>(config_path);
-            comb_solver = std::make_shared<ArmKineComb>((std_for_comb), (ofst_for_comb));
-                
+    ArmKinematicsServer(ros::NodeHandle& nh, const std::string& config_path) : solver_(config_path) {
+        try {      
             ROS_INFO("[right_arm_teleop] Inverse Kinematics solvers initialized successfully");
         } catch (const std::exception& e) {
             ROS_FATAL("[right_arm_teleop] Solver initialization failed: %s", e.what());
@@ -31,6 +25,27 @@ public:
 
         // 注册服务
         service_ = nh.advertiseService("/arm_teleop/right_arm_ik_srv", &ArmKinematicsServer::handleRequest, this);
+    }
+
+    /**
+     * @brief 验证IK解的精度
+     */
+    bool verifyIKSolution(CombinedSolver& solver, 
+                        const Matrix4d& target_pose, 
+                        const IKResult& result,
+                        double trans_tol = 1e-5,
+                        double rot_tol = 1e-4) {
+        if (!result.is_valid) {
+            return false;
+        }
+        
+        Vector7d sol_vector = jointAnglesToVector(result.final_solution);
+        FKResult fk_result = solver.computeFK(sol_vector);
+        
+        PoseComparisonResult comparison = comparePosesDetailed(
+            target_pose, fk_result.T_08, trans_tol, rot_tol);
+        
+        return comparison.is_approximate;
     }
 
     bool handleRequest(arm_teleop::ArmIK::Request& req, arm_teleop::ArmIK::Response& res) {
@@ -81,14 +96,38 @@ public:
         
         try {
             ROS_INFO("Calculating IK...");
-            if (req.method == "std") {
-                ik_res = std_solver->calculateIK(Tee, init_joints_array, 0.1, std::nullopt);
-            } else if (req.method == "ofst") {
-                ik_res = ofst_solver->calculateIK(Tee, init_joints_array, std::nullopt, 0.14);
-            } else if (req.method == "comb") {
-                ik_res = comb_solver->calculateIK_vec_ref(Tee, init_joints_array, req.current_arm_angle, std::nullopt);
-            } else if (req.method == "feasible") {
-                ik_res = comb_solver->cal_IK_feasible_armAngle_vec_ref(Tee, init_joints_array, req.current_arm_angle, req.offset_list, req.offset_refer);
+            if (req.method == "feasible_ref") {
+                ik_res = solver_.computeIKWithSearch(Tee, 
+                                                    init_joints_array, 
+                                                    req.current_arm_angle,
+                                                    req.offset_list,
+                                                    req.offset_refer,
+                                                    IKSolveMode::kFeasible,
+                                                    IKMethodType::kVecRef);
+            } else if (req.method == "feasible_std") {
+                ik_res = solver_.computeIKWithSearch(Tee, 
+                                                    init_joints_array, 
+                                                    req.current_arm_angle,
+                                                    req.offset_list,
+                                                    req.offset_refer,
+                                                    IKSolveMode::kFeasible,
+                                                    IKMethodType::kStandard);
+            } else if (req.method == "optimal_ref") {
+                ik_res = solver_.computeIKWithSearch(Tee, 
+                                                    init_joints_array, 
+                                                    req.current_arm_angle,
+                                                    req.offset_list,
+                                                    req.offset_refer,
+                                                    IKSolveMode::kOptimal,
+                                                    IKMethodType::kVecRef);
+            } else if (req.method == "optimal_std") {
+                ik_res = solver_.computeIKWithSearch(Tee, 
+                                                    init_joints_array, 
+                                                    req.current_arm_angle,
+                                                    req.offset_list,
+                                                    req.offset_refer,
+                                                    IKSolveMode::kOptimal,
+                                                    IKMethodType::kStandard);
             } else {
                 throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, feasible");
             }
@@ -101,52 +140,25 @@ public:
         // 处理结果
         if (ik_res.is_valid) {
             // 返回关节角度
-            res.solution[0] = std::get<0>(ik_res.final_sol);
-            res.solution[1] = std::get<1>(ik_res.final_sol);
-            res.solution[2] = std::get<2>(ik_res.final_sol);
-            res.solution[3] = std::get<3>(ik_res.final_sol);
-            res.solution[4] = std::get<4>(ik_res.final_sol);
-            res.solution[5] = std::get<5>(ik_res.final_sol);
-            res.solution[6] = std::get<6>(ik_res.final_sol);
+            res.solution[0] = std::get<0>(ik_res.final_solution);
+            res.solution[1] = std::get<1>(ik_res.final_solution);
+            res.solution[2] = std::get<2>(ik_res.final_solution);
+            res.solution[3] = std::get<3>(ik_res.final_solution);
+            res.solution[4] = std::get<4>(ik_res.final_solution);
+            res.solution[5] = std::get<5>(ik_res.final_solution);
+            res.solution[6] = std::get<6>(ik_res.final_solution);
             res.new_arm_angle = ik_res.arm_angle;
             
             // 验证结果
-            Vector7d sol_vec = serial_joints_to_vec7d(ik_res.final_sol);
-            FKResult fk_res;
-            if (req.method == "std") fk_res = std_solver->calculateFK(sol_vec);
-            else if (req.method == "ofst") fk_res = ofst_solver->calculateFK(sol_vec);
-            else fk_res = comb_solver->calculateFK(sol_vec);
-            
-            PoseComparisonResult cmp = compare_poses_detailed(Tee, fk_res.T_08, 1e-5, 1e-4);
+            bool verified = verifyIKSolution(solver_, Tee, ik_res);
+            std::cout << "  FK验证: " << (verified ? "通过" : "失败") << "\n\n";
             
             res.success = true;
-            res.message = "Success! Trans error: " + std::to_string(cmp.translation_error) +
-                        "m, Rot error: " + std::to_string(cmp.rotation_error) + "rad";
+            res.message = "Success! ovo";
         } else {
             res.success = false;
-    
-            switch(ik_res.error_code) {
-                case -1:
-                    res.message = "No valid solution found (general failure)";
-                    break;
-                case -2:
-                    res.message = "No valid solution found (elbow position)";
-                    break;
-                case -3:
-                    res.message = "No valid solution found (wrist position)";
-                    break;
-                case -4:
-                    res.message = "No valid solution found (singularity)";
-                    break;
-                case -5:
-                    res.message = "No valid solution found (joint limit violation)";
-                    break;
-                default:
-                    res.message = "No valid IK solution found (error code: " + 
-                                std::to_string(ik_res.error_code) + ")";
-            }
+            res.message = "Failed qwq";
         
-            return true;
         }
         return true; // 服务处理成功
     }

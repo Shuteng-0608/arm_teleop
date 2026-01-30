@@ -30,6 +30,7 @@ find_package(catkin REQUIRED COMPONENTS
   roslib
   sensor_msgs
   trajectory_msgs
+
   # yaml-cpp
 )
 
@@ -37,10 +38,17 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(Eigen3 CONFIG REQUIRED) # 推荐使用 CONFIG 模式，更现代且可靠
 find_package(Ceres CONFIG REQUIRED COMPONENTS SuiteSparse)
 find_package(yaml-cpp CONFIG REQUIRED)
+find_package(ArmKinematics CONFIG REQUIRED PATHS /usr/local/lib/cmake/ArmKinematics/**)  # 查找 Arm_Kinematics 包
 # pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
 # find_package(yaml-cpp REQUIRED)
 
-
+if(ArmKinematics_FOUND)
+    message(STATUS "Found ArmKinematics version: ${ArmKinematics_VERSION}")
+    message(STATUS "ArmKinematics include directory: ${ArmKinematics_INCLUDE_DIRS}")
+    message(STATUS "ArmKinematics libraries: ${ArmKinematics_LIBRARIES}")
+else()
+    message(FATAL_ERROR "ArmKinematics not found! Please install it.")
+endif()
 
 # 打印 yaml-cpp 信息
 # if(yaml-cpp_FOUND)
@@ -167,38 +175,38 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${YAML_CPP_INCLUDE_DIRS}
-
+  ${ArmKinematics_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
-add_library(arm_kinematics_core STATIC
-  src/kinematics_new.cpp
-  src/kinematics_cal_tools.cpp
-  src/kinematics_left_arm.cpp
-  src/kinematics_vec_ref.cpp
-  src/tools.cpp
-)
+# add_library(arm_kinematics_core STATIC
+#   src/kinematics_new.cpp
+#   src/kinematics_cal_tools.cpp
+#   src/kinematics_left_arm.cpp
+#   src/kinematics_vec_ref.cpp
+#   src/tools.cpp
+# )
 
-target_include_directories(arm_kinematics_core PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/lib  # 头文件目录
-  ${catkin_INCLUDE_DIRS}
-  Eigen3::Eigen
-  ${YAML_CPP_INCLUDE_DIR}
-  # Ceres 的传递依赖，如 glog, gflags, pthread，在 CONFIG 模式下通常由 Ceres::Ceres 自动处理
-  # 如果遇到链接错误，再取消注释下面的行
-  ceres
-  glog
-  gflags
-  pthread
-)
+# target_include_directories(arm_kinematics_core PUBLIC
+#   ${CMAKE_CURRENT_SOURCE_DIR}/lib  # 头文件目录
+#   ${catkin_INCLUDE_DIRS}
+#   Eigen3::Eigen
+#   ${YAML_CPP_INCLUDE_DIR}
+#   # Ceres 的传递依赖，如 glog, gflags, pthread，在 CONFIG 模式下通常由 Ceres::Ceres 自动处理
+#   # 如果遇到链接错误，再取消注释下面的行
+#   ceres
+#   glog
+#   gflags
+#   pthread
+# )
 
-target_link_libraries(arm_kinematics_core
-  ${catkin_LIBRARIES}
-  # yaml-cpp
-  yaml-cpp
-  # ${YAML_CPP_LIBRARIES}
-  # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a  # 正确链接静态库
-)
+# target_link_libraries(arm_kinematics_core
+#   ${catkin_LIBRARIES}
+#   # yaml-cpp
+#   yaml-cpp
+#   # ${YAML_CPP_LIBRARIES}
+#   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a  # 正确链接静态库
+# )
 
 
 ## Add cmake target dependencies of the library
@@ -230,7 +238,8 @@ target_link_libraries(ik_service_right_node
   # ${YAML_CPP_LIBRARIES}
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
   
-  arm_kinematics_core
+  # arm_kinematics_core
+  /usr/local/lib/libarm_kinematics.so
   /usr/lib/libceres.so
 
 )
@@ -242,7 +251,8 @@ target_link_libraries(ik_service_left_node
   # ${YAML_CPP_LIBRARIES}
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
   
-  arm_kinematics_core
+  # arm_kinematics_core
+  /usr/local/lib/libarm_kinematics.so
   /usr/lib/libceres.so
 
 )
