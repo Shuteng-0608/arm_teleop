@@ -30,6 +30,10 @@ class VPStreamer:
         try:
             self.streamer = AVPStreamer(ip, record=record)
             logger.info(f"成功连接到VisionPro: {ip}")
+            # streaming camera data from robot's head camera to VisionPro
+            self.streamer.configure_video(device="/dev/video6", format="v4l2", size="640x400", fps=30)
+            self.streamer.start_webrtc()
+
         except Exception as e:
             logger.error(f"连接VisionPro失败: {e}")
             raise
