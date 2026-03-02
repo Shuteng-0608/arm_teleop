@@ -102,8 +102,8 @@ catkin_python_setup()
 add_message_files(
   FILES
   ArmJoints.msg
-  DualArmMovej.msg
   DualHandTele.msg
+  DualArmMovej.msg
 )
 
 ## Generate services in the 'srv' folder

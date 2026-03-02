@@ -189,6 +189,8 @@ class ArmTeleopROS:
         self.calibrate_left_hand_position()
 
         self.lastest_head_z_rotation = 0.0
+        self.lastest_head_x_rotation = 0.0
+        self.lastest_head_y_movement = 0.0
         self.calibrate_head_position()
 
         # self.head_thread = None
@@ -256,6 +258,44 @@ class ArmTeleopROS:
         rospy.loginfo(f"头部相对旋转欧拉角: {[round(angle, 4) for angle in euler]}")
         
         return euler[2]
+
+    def get_head_x_rotation(self):
+        """
+        获取头部相对于初始位置绕X轴的旋转角度 (弧度)
+        返回:
+            x_angle: 绕X轴的旋转角度 (弧度)
+        """
+        head_data = self.vp_streamer.get_head_data()
+        if head_data is None:
+            return 0.0
+
+        current_transform = head_data[0]
+        current_rotation = current_transform[:3, :3]
+
+        relative_rotation = current_rotation @ np.linalg.inv(self.initial_head_rotation)
+
+        r = R.from_matrix(relative_rotation)
+        euler = r.as_euler('xyz', degrees=False)
+        rospy.loginfo(f"头部相对旋转欧拉角: {[round(angle, 4) for angle in euler]}")
+        return euler[0]
+
+    def get_head_y_movement(self):
+        """
+        获取头部相对于初始位置在Y轴方向上的平移距离 (米)
+        返回:
+            y_disp: Y方向的位移 (正表示向右, 负表示向左)
+        """
+        head_data = self.vp_streamer.get_head_data()
+        if head_data is None:
+            return 0.0
+
+        current_transform = head_data[0]
+        current_position = current_transform[:3, 3]
+
+        # 只关注Y轴的变化
+        y_disp = current_position[1] - self.initial_head_position[1]
+        rospy.loginfo(f"头部Y轴位移: {y_disp:.4f} m")
+        return y_disp
     
     def calibrate_right_hand_position(self):
         """校准手部位置和姿态，记录初始位置作为参考点"""
@@ -656,12 +696,25 @@ class ArmTeleopROS:
         """持续发布头部数据的循环线程"""
         while not rospy.is_shutdown():
             head_z_rotation = self.get_head_z_rotation()
+            head_x_rotation = self.get_head_x_rotation()
+            head_y_movement = self.get_head_y_movement()
+            
             # throttle head angle logs to avoid log spam
             if abs(head_z_rotation - self.lastest_head_z_rotation) > 0.05:
                 rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
                 self.lastest_head_z_rotation = head_z_rotation
+            if abs(head_x_rotation - self.lastest_head_x_rotation) > 0.05:
+                rospy.loginfo(f"更新头部绕X轴旋转角度: {head_x_rotation}")
+                self.lastest_head_x_rotation = head_x_rotation
+            if abs(head_y_movement - self.lastest_head_y_movement) > 0.05:
+                rospy.loginfo(f"更新头部Y轴移动距离: {head_y_movement}")
+                self.lastest_head_y_movement = head_y_movement
             if abs(head_z_rotation) <= 0.1:
                 self.lastest_head_z_rotation = 0.0
+            if abs(head_x_rotation) <= 0.05:
+                self.lastest_head_x_rotation = 0.0
+            if abs(head_y_movement) <= 0.05:
+                self.lastest_head_y_movement = 0.0
             rospy.sleep(0.01)
         
     
@@ -702,8 +755,12 @@ class ArmTeleopROS:
                 dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
                 # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
 
-                # dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
-                dual_arm_msg.head_z_rotation = 0.0
+                # dual_arm_msg.head_z_rotation = 0.0
+                dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
+                # dual_arm_msg.head_x_rotation = 0.0
+                dual_arm_msg.head_x_rotation = self.lastest_head_x_rotation
+                # dual_arm_msg.head_y_movement = 0.0
+                dual_arm_msg.head_y_movement = self.lastest_head_y_movement
                 
                 
                 # 发布数据
