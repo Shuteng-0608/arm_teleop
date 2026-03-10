@@ -276,6 +276,7 @@ catkin_install_python(PROGRAMS
   scripts/movej_agent.py
   test/record_play.py
   test/play_multi.py
+  vptele/arm_control/loco_teleop.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -2,6 +2,8 @@ std_msgs/Header header
 uint32 sequence       
 ArmJoints left_arm
 ArmJoints right_arm
+float64[7] target_pose_raw
+float64[7] target_pose_smoothed
 float64 head_z_rotation
 float64 head_x_rotation
 float64 head_y_movement

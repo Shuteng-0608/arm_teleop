@@ -1,14 +1,20 @@
+import actionlib
 import rospy
+
 from arm_teleop.srv import ArmIK, ArmIKRequest
 from arm_teleop.srv import MovejService, MovejServiceRequest
 from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
-# from pangu_msgs.msg import ArmJoints, DualArmMovej
 from arm_teleop.msg import ArmJoints, DualArmMovej
+
+from woosh_msgs.msg import StepControlGoal, StepControl, StepControlAction
+
 from arm_angle.msg import ArmAngle
+
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose, Point, Quaternion
 import time
 import numpy as np
+import math
 from threading import Thread
 from utils.math_utils import rotation_matrix_to_euler, smooth_values
 from utils.logger import get_logger
@@ -52,6 +58,8 @@ class ArmTeleopROS:
 
         self.current_arm_angle_right = 0.0
         self.arm_angle_subscriber = rospy.Subscriber('/arm_angle/info', ArmAngle, self.arm_angle_callback, queue_size=10)
+        self.target_pose_raw = None # 未经平滑处理的目标位姿
+        self.target_pose_smoothed = None  # 平滑后的目标位姿
         
 
 
@@ -190,13 +198,35 @@ class ArmTeleopROS:
 
         self.lastest_head_z_rotation = 0.0
         self.lastest_head_x_rotation = 0.0
+        # 
+        self.woosh_client = actionlib.SimpleActionClient('/cmd_vel_control', StepControlAction)
         self.lastest_head_y_movement = 0.0
+
+        # pending buffer and send parameters for head-driven forward/back movement
+        self.pending_head_y = 0.0
+        self.pending_head_z = 0.0
+        self.head_send_threshold = self.config.get('head_send_threshold', 0.05)
+        self.head_send_scale = self.config.get('head_send_scale', 1.0)
+        self.head_max_step = self.config.get('head_max_step', 0.3)
+        self.head_send_rate = self.config.get('head_send_rate', 5.0)  # Hz
+        # rotation parameters
+        self.head_rot_threshold = self.config.get('head_rot_threshold', 0.1)  # rad
+        self.head_rot_scale = self.config.get('head_rot_scale', 1.0)  # multiplier to degrees
+        self.head_max_rot = self.config.get('head_max_rot', 30.0)  # degrees per command
+        self._last_head_send_time = 0.0
+        # timeout used by woosh action client
+        self.timeout = self.config.get('woosh_timeout', 5.0)
+
         self.calibrate_head_position()
 
         # self.head_thread = None
-        logger.info("启动 头部数据获取线程...")
-        self.head_thread = Thread(target=self.head_loop, daemon=True) 
-        self.head_thread.start()
+        # logger.info("启动 头部数据获取线程...")
+        # self.head_thread = Thread(target=self.head_loop, daemon=True) 
+        # self.head_thread.start()
+        # # 启动单独的头部移动发送线程
+        # logger.info("启动 头部移动发送线程...")
+        # self.head_move_thread = Thread(target=self.head_move_loop, daemon=True)
+        # self.head_move_thread.start()
 
     def arm_angle_callback(self, msg: ArmAngle):
         """接收机械臂当前臂角的回调函数"""
@@ -222,6 +252,11 @@ class ArmTeleopROS:
                 # self.init_head_pos = head_data
                 logger.info(f"已校准头部位置: {self.initial_head_position}")
                 logger.info(f"已校准头部姿态: {rotation_matrix_to_euler(self.initial_head_rotation)}")
+                # 记录上一次的头部位置（用于计算帧间位移）
+                try:
+                    self.last_head_position = np.array(self.initial_head_position)
+                except Exception:
+                    self.last_head_position = np.array([0.0, 0.0, 0.0])
                 return
             
             time.sleep(0.5)
@@ -231,6 +266,7 @@ class ArmTeleopROS:
         logger.info("警告: 无法获取头部位置进行校准！使用默认值。")
         self.initial_head_position = np.array([0, 0, 0])
         self.initial_head_rotation = np.eye(3)  # 单位矩阵作为默认旋转
+        self.last_head_position = np.array([0.0, 0.0, 0.0])
     
     def get_head_z_rotation(self):
         """
@@ -264,6 +300,7 @@ class ArmTeleopROS:
         获取头部相对于初始位置绕X轴的旋转角度 (弧度)
         返回:
             x_angle: 绕X轴的旋转角度 (弧度)
+            正值表示抬头，负值表示低头
         """
         head_data = self.vp_streamer.get_head_data()
         if head_data is None:
@@ -281,9 +318,9 @@ class ArmTeleopROS:
 
     def get_head_y_movement(self):
         """
-        获取头部相对于初始位置在Y轴方向上的平移距离 (米)
+        获取头部Y轴方向上的平移距离 (米)
         返回:
-            y_disp: Y方向的位移 (正表示向右, 负表示向左)
+            y_disp: Y方向的位移 (正表示向前, 负表示向后)
         """
         head_data = self.vp_streamer.get_head_data()
         if head_data is None:
@@ -292,10 +329,136 @@ class ArmTeleopROS:
         current_transform = head_data[0]
         current_position = current_transform[:3, 3]
 
-        # 只关注Y轴的变化
-        y_disp = current_position[1] - self.initial_head_position[1]
-        rospy.loginfo(f"头部Y轴位移: {y_disp:.4f} m")
+        # 若没有上一次的位置（首次），使用初始位置作为上一次位置
+        if not hasattr(self, 'last_head_position') or self.last_head_position is None:
+            try:
+                self.last_head_position = np.array(self.initial_head_position)
+            except Exception:
+                self.last_head_position = np.array(current_position)
+
+        # 只关注相邻两帧Y轴的变化（相对于上一次数据）
+        y_disp = current_position[1] - self.last_head_position[1]
+
+        # 更新为最新的位置，供下一帧比较
+        self.last_head_position = np.array(current_position)
         return y_disp
+    
+    def woosh_mf(self, distance, speed, use_avoid=True):
+        """发送移动命令"""
+        try:
+            goal = StepControlGoal()
+            goal.mode = StepControlGoal.EXCUTE
+            goal.useAvoid = use_avoid
+            
+            step = StepControl()
+            step.executeMode = StepControlGoal.STRAIGHT
+            step.data = distance
+            step.speed = speed
+            # step.angle = (angle - 90) / 180.0 * math.pi  # 角度转弧度
+            
+            goal.stepControl = [step]
+            
+            # rospy.loginfo(f"发送移动指令: 距离={distance}m, 速度={speed}m/s, 避障={use_avoid}")
+            
+            # 发送目标并设置回调函数
+            self.woosh_client.send_goal(goal, 
+                                 done_cb=self.done_callback, 
+                                 active_cb=self.active_callback, 
+                                 feedback_cb=self.feedback_callback)
+            rospy.loginfo("✅ 移动指令已发送，等待执行...")
+            
+            # 可选：等待结果（同步方式）
+            success = self.woosh_client.wait_for_result(rospy.Duration(self.timeout))
+            
+            if success:
+                rospy.loginfo("🎉 移动任务顺利完成！")
+                return True
+            else:
+                rospy.logwarn("⏰ 移动任务超时！")
+                self.woosh_client.cancel_goal()
+                return False
+                
+        except Exception as e:
+            rospy.logerr(f"发送指令时发生错误: {e}")
+            return False
+    
+    def woosh_rotate(self, angle, mode='normal'):
+        """发送移动命令"""
+        try:
+            goal = StepControlGoal()
+            goal.mode = StepControlGoal.EXCUTE
+            goal.useAvoid = False
+            
+            step = StepControl()
+            step.executeMode = StepControlGoal.ROTATE
+            if mode == 'wake_up':
+                step.data = -(angle - 90) / 180.0 * math.pi  # 听声辨位特殊处理
+            elif mode == 'normal':
+                step.data = angle / 180.0 * math.pi  # 角度转弧度
+            step.speed = 2
+            # step.angle = (angle - 90) / 180.0 * math.pi  # 角度转弧度
+            
+            goal.stepControl = [step]
+            
+            # rospy.loginfo(f"发送移动指令: 距离={distance}m, 速度={speed}m/s, 避障={use_avoid}")
+            
+            # 发送目标并设置回调函数
+            self.woosh_client.send_goal(goal, 
+                                 done_cb=self.done_callback, 
+                                 active_cb=self.active_callback, 
+                                 feedback_cb=self.feedback_callback)
+            rospy.loginfo("✅ 移动指令已发送，等待执行...")
+            
+            # 可选：等待结果（同步方式）
+            success = self.woosh_client.wait_for_result(rospy.Duration(self.timeout))
+            
+            if success:
+                rospy.loginfo("🎉 移动任务顺利完成！")
+                return True
+            else:
+                rospy.logwarn("⏰ 移动任务超时！")
+                self.woosh_client.cancel_goal()
+                return False
+                
+        except Exception as e:
+            rospy.logerr(f"发送指令时发生错误: {e}")
+            return False
+    
+    def active_callback(self):
+        """Goal开始执行时的回调"""
+        rospy.loginfo("🚀 移动动作开始执行...")
+    
+    def feedback_callback(self, feedback):
+        """进度反馈回调"""
+        rospy.loginfo(f"Feedback: {feedback}")
+        # rospy.loginfo(f"📊 移动进度: {feedback.feedback}, 百分比: {feedback.percent}%, 模式: {feedback.executeMode}")
+    
+    def done_callback(self, status, result):
+        """Goal完成时的回调"""
+        # 状态码说明
+        status_names = {
+            actionlib.GoalStatus.PENDING: "等待中",
+            actionlib.GoalStatus.ACTIVE: "执行中", 
+            actionlib.GoalStatus.PREEMPTED: "被抢占",
+            actionlib.GoalStatus.SUCCEEDED: "成功",
+            actionlib.GoalStatus.ABORTED: "失败",
+            actionlib.GoalStatus.REJECTED: "被拒绝",
+            actionlib.GoalStatus.PREEMPTING: "抢占中",
+            actionlib.GoalStatus.RECALLING: "召回中",
+            actionlib.GoalStatus.RECALLED: "已召回",
+            actionlib.GoalStatus.LOST: "丢失"
+        }
+        
+        status_name = status_names.get(status, "未知状态")
+        rospy.loginfo(f"🎯 移动动作完成! 状态: {status_name}({status}), 结果码: {result.result}")
+        
+        # 根据结果进行不同处理
+        if status == actionlib.GoalStatus.SUCCEEDED:
+            rospy.loginfo("✅ 移动任务成功完成！")
+        elif status == actionlib.GoalStatus.PREEMPTED:
+            rospy.logwarn("⚠️ 移动任务被取消！")
+        elif status == actionlib.GoalStatus.ABORTED:
+            rospy.logerr("❌ 移动任务失败！")
     
     def calibrate_right_hand_position(self):
         """校准手部位置和姿态，记录初始位置作为参考点"""
@@ -488,10 +651,12 @@ class ArmTeleopROS:
                     
                     # 映射到机械臂位置和姿态
                     target_pose = self.map_hand_to_robot(hand_transform, arm_side)
+                    self.target_pose_raw = target_pose.copy()
                     logger.info(f'{arm_side}目标位置: {[round(x, 4) for x in target_pose]}')
                     
                     # 应用平滑过滤到位置
                     target_pose_in_quat = self.euler_to_quaternion(target_pose) # 转为四元数形式 [x, y, z, qw, qx, qy, qz]
+                    self.target_pose_smoothed = target_pose_in_quat.copy()
                     current_timestamp = time.time()
 
                     if arm_side == 'right':
@@ -699,19 +864,23 @@ class ArmTeleopROS:
             head_x_rotation = self.get_head_x_rotation()
             head_y_movement = self.get_head_y_movement()
             
-            # throttle head angle logs to avoid log spam
             if abs(head_z_rotation - self.lastest_head_z_rotation) > 0.05:
                 rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
                 self.lastest_head_z_rotation = head_z_rotation
+                with self.data_lock:
+                    self.pending_head_z += head_z_rotation
             if abs(head_x_rotation - self.lastest_head_x_rotation) > 0.05:
                 rospy.loginfo(f"更新头部绕X轴旋转角度: {head_x_rotation}")
                 self.lastest_head_x_rotation = head_x_rotation
+
             if abs(head_y_movement - self.lastest_head_y_movement) > 0.05:
                 rospy.loginfo(f"更新头部Y轴移动距离: {head_y_movement}")
                 self.lastest_head_y_movement = head_y_movement
+                with self.data_lock:
+                    self.pending_head_y += head_y_movement
             if abs(head_z_rotation) <= 0.1:
                 self.lastest_head_z_rotation = 0.0
-            if abs(head_x_rotation) <= 0.05:
+            if abs(head_x_rotation) <= 0.1:
                 self.lastest_head_x_rotation = 0.0
             if abs(head_y_movement) <= 0.05:
                 self.lastest_head_y_movement = 0.0
@@ -755,6 +924,9 @@ class ArmTeleopROS:
                 dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
                 # dual_arm_msg.left_arm.arm_joints = [0,0,0,0,0,0,0]
 
+                dual_arm_msg.target_pose_raw = self.target_pose_raw.tolist() if self.target_pose_raw is not None else []
+                dual_arm_msg.target_pose_smoothed = self.target_pose_smoothed.tolist() if self.target_pose_smoothed is not None else []
+
                 # dual_arm_msg.head_z_rotation = 0.0
                 dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 # dual_arm_msg.head_x_rotation = 0.0
@@ -771,6 +943,43 @@ class ArmTeleopROS:
                 rospy.logerr("Publish error: %s", str(e))
             rate.sleep()
             # rospy.sleep(1)
+
+    def head_move_loop(self):
+        """独立线程：检查累积的位移与旋转并按阈值/速率发送移动命令"""
+        rate_sleep = 1.0 / max(1.0, self.head_send_rate)
+        while not rospy.is_shutdown():
+            try:
+                with self.data_lock:
+                    pending_y = self.pending_head_y
+                    pending_z = self.pending_head_z
+
+                # 只有当累积超过阈值且 action client 空闲时才发送
+                # forward/back
+                if abs(pending_y) > self.head_send_threshold:
+                    state = self.woosh_client.get_state()
+                    if state not in (actionlib.GoalStatus.PENDING, actionlib.GoalStatus.ACTIVE):
+                        distance = max(-self.head_max_step, min(self.head_max_step, pending_y * self.head_send_scale))
+                        success = self.woosh_mf(distance, speed=0.1, use_avoid=True)
+                        if success:
+                            with self.data_lock:
+                                self.pending_head_y = 0.0
+                            self._last_head_send_time = time.time()
+                # rotation
+                if abs(pending_z) > self.head_rot_threshold:
+                    state = self.woosh_client.get_state()
+                    if state not in (actionlib.GoalStatus.PENDING, actionlib.GoalStatus.ACTIVE):
+                        # convert rad to degree and scale
+                        angle_deg = pending_z * (180.0/math.pi) * self.head_rot_scale
+                        angle_deg = max(-self.head_max_rot, min(self.head_max_rot, angle_deg))
+                        success = self.woosh_rotate(angle_deg, mode='normal')
+                        if success:
+                            with self.data_lock:
+                                self.pending_head_z = 0.0
+                            self._last_head_send_time = time.time()
+                time.sleep(rate_sleep)
+            except Exception as e:
+                logger.error(f"head_move_loop 出错: {e}", exc_info=True)
+                time.sleep(rate_sleep)
     
     
     def start(self):
