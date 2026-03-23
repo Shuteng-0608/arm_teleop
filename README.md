@@ -1,13 +1,20 @@
 # Pangu Arm Teleopration System via Apple Vision Pro  
-1. Ensure ROS Master is running
 ```bash
-roscore
+CTRL + ALT + T # 打开终端
 ```
-2. Launch the arm inverse kinematics service:
 ```bash
-rosrun arm_teleop ik_service_node
+CTRL + SHIFT + O # 拆分终端
+```
+
+1. Ensure ROS env is activated
+```bash
+pangu # 每一个终端都要pangu一下
+```
+2. Launch the service:
+```bash
+roslaunch arm_teleop teleop_pure.launch # 上面的终端
 ```
 3. Launch the arm teleopration node:
 ```bash
-rosrun arm_teleop main_ros.py
+rosrun arm_teleop main_ros.py # 下面的终端，运行前需要工控机先 tele_run
 ```

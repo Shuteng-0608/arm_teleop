@@ -422,10 +422,10 @@ class HandTeleopROS(EndEffectorBase):
         for i in range(len(smooth_pos)):
             # 防抖动
             if hand_side == "right":
-                if abs(smooth_pos[i] - self.latest_hand_pos_right[i]) > 10: 
+                if abs(smooth_pos[i] - self.latest_hand_pos_right[i]) > 200: 
                     self.latest_hand_pos_right = smooth_pos.copy()
             elif hand_side == "left":
-                if abs(smooth_pos[i] - self.latest_hand_pos_left[i]) > 10: 
+                if abs(smooth_pos[i] - self.latest_hand_pos_left[i]) > 200: 
                     self.latest_hand_pos_left = smooth_pos.copy()
         
         
@@ -471,12 +471,12 @@ class HandTeleopROS(EndEffectorBase):
         
         try:
             dual_hand_msg = DualHandTele()
-            # dual_hand_msg.right_position_list = self.smooth_hand_pos_right
-            dual_hand_msg.right_position_list = [873, 1686, 1686, 1690, 1692, 873]
-            # rospy.loginfo(f"右手指位置: {self.smooth_hand_pos_right}")
-            # dual_hand_msg.left_position_list = self.smooth_hand_pos_left
-            dual_hand_msg.left_position_list = [868, 1701, 1693, 1690, 1689, 866]
-            # rospy.loginfo(f"左手指位置: {self.smooth_hand_pos_left}")
+            dual_hand_msg.right_position_list = self.smooth_hand_pos_right
+            # dual_hand_msg.right_position_list = [873, 1686, 1686, 1690, 1692, 873]
+            rospy.loginfo(f"右手指位置: {self.smooth_hand_pos_right}")
+            dual_hand_msg.left_position_list = self.smooth_hand_pos_left
+            # dual_hand_msg.left_position_list = [868, 1701, 1693, 1690, 1689, 866]
+            rospy.loginfo(f"左手指位置: {self.smooth_hand_pos_left}")
             self.dual_arm_publisher.publish(dual_hand_msg)
             # self.publish_rate.sleep()
         except Exception as e:
