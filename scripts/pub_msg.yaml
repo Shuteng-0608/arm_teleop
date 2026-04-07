@@ -1,0 +1,12 @@
+header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: ''
+sequence: 0
+left_arm:
+  arm_id: 0
+  arm_joints: [0.314957,   0.238734,   -0.658534,   1.496385,   -1.000000,   -0.080329,   -0.113492 ]
+right_arm:
+  arm_id: 1
+  arm_joints: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+head_z_rotation: 0.0

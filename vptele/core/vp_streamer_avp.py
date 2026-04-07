@@ -29,6 +29,9 @@ class VPStreamer:
         """
         try:
             self.streamer = AVPStreamer(ip, record=record)
+            # self.streamer.configure_video(device="/dev/video6", format="v4l2", size="640x400", fps=30) # head color camera
+            self.streamer.configure_video(device="/dev/video14", format="v4l2", size="640x400", fps=30) # breast color camera
+            self.streamer.start_webrtc()
             logger.info(f"成功连接到VisionPro: {ip}")
         except Exception as e:
             logger.error(f"连接VisionPro失败: {e}")

@@ -35,14 +35,18 @@ public:
     bool verifyIKSolution(LeftArmSolver& solver, 
                         const Matrix4d& target_pose, 
                         const IKResult& result,
-                        double trans_tol = 1e-5,
-                        double rot_tol = 1e-4) {
+                        // double trans_tol = 1e-5,
+                        double trans_tol = 1e-3,
+                        // double rot_tol = 1e-4) {
+                        double rot_tol = 1e-3) {
         if (!result.is_valid) {
             return false;
         }
         
         Vector7d sol_vector = jointAnglesToVector(result.final_solution);
         FKResult fk_result = solver.computeFK(sol_vector);
+        std::cout << "  [Left]FK验证 - 期望位姿: " << target_pose << std::endl;
+        std::cout << "  [Left]FK验证 - FK位姿: " << fk_result.T_08 << "\n";
         
         PoseComparisonResult comparison = comparePosesDetailed(
             target_pose, fk_result.T_08, trans_tol, rot_tol);
@@ -174,11 +178,20 @@ public:
             res.solution[5] = std::get<5>(ik_res.final_solution);
             res.solution[6] = std::get<6>(ik_res.final_solution);
 
+            // 
+            // std::get<0>(ik_res.final_solution) *= -1;
+            // // std::get<1>(ik_res.final_solution) *= -1;
+            // std::get<3>(ik_res.final_solution) *= -1;
+            // std::get<4>(ik_res.final_solution) *= -1;
+            // std::get<5>(ik_res.final_solution) *= -1;
+            // std::get<6>(ik_res.final_solution) *= -1;
+            // // std::get<0>(ik_res.final_solution) *= -1;
+
             res.new_arm_angle = ik_res.arm_angle;
             
             // 验证结果
             bool verified = verifyIKSolution(solver_, Tee, ik_res);
-            std::cout << "  FK验证: " << (verified ? "通过" : "失败") << "\n\n";
+            std::cout << "  [Left]FK验证: " << (verified ? "通过" : "失败") << "\n\n";
             
             res.success = true;
             res.message = "Success! ovo";

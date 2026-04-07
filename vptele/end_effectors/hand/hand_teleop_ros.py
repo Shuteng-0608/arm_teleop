@@ -36,6 +36,7 @@ class HandTeleopROS(EndEffectorBase):
             [10, 873],
         ]
         self.latest_hand_pos_left = [868, 1701, 1693, 1690, 1689, 866]
+        self.latest_hand_pos_left = [300, 500, 500, 500, 500, 200]
         self.smooth_hand_pos_left = self.latest_hand_pos_left.copy()
         # self.position_limits_left = [ 
         #     [30, 851],
@@ -443,6 +444,8 @@ class HandTeleopROS(EndEffectorBase):
                 
                 # rospy.loginfo(f"右手指位置: {self.smooth_hand_pos_right}")
                 dual_hand_msg.left_position_list = self.smooth_hand_pos_left
+                # dual_hand_msg.left_position_list = [300, 500, 500, 500, 500, 200]
+
                 # dual_hand_msg.left_position_list = [868, 1701, 1693, 1690, 1689, 866]
                 
                 # rospy.loginfo(f"左手指位置: {self.smooth_hand_pos_left}")
@@ -475,6 +478,7 @@ class HandTeleopROS(EndEffectorBase):
             # dual_hand_msg.right_position_list = [873, 1686, 1686, 1690, 1692, 873]
             # rospy.loginfo(f"右手指位置: {self.smooth_hand_pos_right}")
             dual_hand_msg.left_position_list = self.smooth_hand_pos_left
+            # dual_hand_msg.left_position_list = [300, 500, 500, 500, 500, 200]
             # dual_hand_msg.left_position_list = [868, 1701, 1693, 1690, 1689, 866]
             # rospy.loginfo(f"左手指位置: {self.smooth_hand_pos_left}")
             self.dual_arm_publisher.publish(dual_hand_msg)
