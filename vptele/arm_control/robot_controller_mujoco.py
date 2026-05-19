@@ -250,7 +250,6 @@ if __name__ == "__main__":
         # simulator.set_arm_positions([-0.816, -0.722, -1.57, -1.04, 0.659, -0.879, -0.722])
         # simulator.set_hand_positions([0.157, 0.094, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0])
         time.sleep(2.0)
-        # simulator.set_hand_positions([1, 0,  0.32, 0.33, 0.34, 0.35])
         
         
         
