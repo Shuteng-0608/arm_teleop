@@ -217,9 +217,9 @@ def get_logger(prefix=''):
     Args:
         prefix: 日志前缀，用于区分不同的机械臂
     """
-    print(LoggerWrapper._instances)
+    # print(LoggerWrapper._instances)
     keys = list(LoggerWrapper._instances.keys())
-    print(f'key: {keys}')
+    # print(f'key: {keys}')
     if keys:
         prefix = keys[-1]
     else:

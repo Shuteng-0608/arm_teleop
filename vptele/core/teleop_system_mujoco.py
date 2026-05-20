@@ -31,17 +31,20 @@ class TeleopSystemMujoco:
         """完整初始化所有组件（用于遥操控）"""
         # 初始化VisionPro数据流
         logger.info("正在初始化VisionPro数据流...")
-        vp_record = self.config.get('vp_record', False)
-        use_vuer = self.config.get('vuer', True)
-        if use_vuer:
-            from core.vp_streamer_vuer import VPStreamer
-        else:
-            from core.vp_streamer_avp import VPStreamer
+       
+        from core.vp_streamer_avp import VPStreamer
             
-        self.vp_streamer = VPStreamer(self.config['vp_ip'], record=vp_record)
+        self.vp_streamer = VPStreamer(ip="192.168.1.112", record=False)
+        right_hand_data = self.vp_streamer.get_hand_position(hand="right")
+        if right_hand_data is not None:
+            print(f"右手位置: {right_hand_data}")
+        else:
+            print("未获取到右手位置数据")
         # 等待一段时间确保数据流稳定
-        time.sleep(1)
-        
+        logger.info("正在等待VisionPro数据流稳定...")
+        time.sleep(3)
+        logger.info("VisionPro数据流初始化完成")
+
         # 初始化机械臂控制器和其他组件
         self._initialize_robot_controller()
         
@@ -56,37 +59,62 @@ class TeleopSystemMujoco:
         )
 
         # 初始化末端执行器
-        self._initialize_end_effector() # TODO: 灵巧手控制器
-        
+        # self._initialize_end_effector() # TODO: 灵巧手控制器
+        # peg-tool 模型默认不启用灵巧手末端执行器
+        enable_hand = self.config.get("enable_hand", False)
+
+        if enable_hand:
+            self._initialize_end_effector()
+        else:
+            self.end_effector = None
+            logger.info("已禁用手部遥操作模块，当前使用 peg-tool 模型。")
+                
         logger.info("系统完整初始化完成")
     
-
     def _initialize_robot_controller(self):
-        """初始化机械臂控制器"""
-        logger.info("正在初始化机械臂控制器...")
-        # 配置参数
+        """初始化 MuJoCo 机械臂控制器: peg-tool 版本"""
+        logger.info("正在初始化 MuJoCo 机械臂控制器...")
+
+        # peg-tool 模型只包含 7 个机械臂关节，不再包含灵巧手关节
         sim_config = {
-            'kp': 2000.0,
-            'kd': 50.0,
-            'max_force': 2000.0,
-            'control_rate': 100,
-            'gripper_joints': [
-                "joint_thumb_1", "joint_thumb_2",
-                "joint_index_1", "joint_index_2",
-                "joint_middle_1", "joint_middle_2",
-                "joint_ring_1", "joint_ring_2",
-                "joint_little_1", "joint_little_2"
-            ]
+            "control_mode": "qpos",
+            "control_rate": 100,
+            "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+            "arm_joint_names": [
+                "joint_1",
+                "joint_2",
+                "joint_3",
+                "joint_4",
+                "joint_5",
+                "joint_6",
+                "joint_7",
+            ],
         }
-        logger.info("初始化Mujoco......")
+        model_path = self.config.get(
+            "mujoco_model_path",
+            "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
+        )
+
+        logger.info(f"初始化 MuJoCo 模型: {model_path}")
+
         try:
-            from arm_control.robot_controller_mujoco import RobotControllerMuJoCo
-            self.robot_controller = RobotControllerMuJoCo(
-                model_path = '/home/pangu/pangu/src/arm_teleop/model/right_arm_stable.xml',
-                config = sim_config
+            from arm_control.robot_controller_mujoco_peg_tool import RobotControllerMuJoCoPegTool
+
+            self.robot_controller = RobotControllerMuJoCoPegTool(
+                model_path=model_path,
+                config=sim_config
             )
-        except ImportError:
-            logger.error("错误: 无法导入Mujoco模块，请确保它已正确安装")
+
+            logger.info("MuJoCo 机械臂控制器初始化完成")
+
+        except ImportError as e:
+            logger.error("错误: 无法导入 RobotControllerMuJoCoPegTool, 请检查 PYTHONPATH 和 mujoco 是否安装正确")
+            logger.error(str(e))
+            raise
+
+        except Exception as e:
+            logger.error(f"错误: MuJoCo 机械臂控制器初始化失败: {e}")
+            raise
     
     
     def _initialize_end_effector(self):
@@ -111,7 +139,13 @@ class TeleopSystemMujoco:
         # 如果配置了末端执行器，启动对应的遥控
         if self.end_effector:
             self.end_effector.start()
-            
+        enable_hand = self.config.get("enable_hand", False)
+
+        if enable_hand:
+            self.end_effector.start()
+        else:
+            logger.info("已禁用手部遥操作模块，当前使用 peg-tool 模型。")
+
         logger.info("遥操控系统已启动")
             
 

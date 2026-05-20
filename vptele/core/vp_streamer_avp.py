@@ -29,9 +29,6 @@ class VPStreamer:
         """
         try:
             self.streamer = AVPStreamer(ip, record=record)
-            # self.streamer.configure_video(device="/dev/video6", format="v4l2", size="640x400", fps=30) # head color camera
-            self.streamer.configure_video(device="/dev/video14", format="v4l2", size="640x400", fps=30) # breast color camera
-            self.streamer.start_webrtc()
             logger.info(f"成功连接到VisionPro: {ip}")
         except Exception as e:
             logger.error(f"连接VisionPro失败: {e}")
@@ -99,25 +96,14 @@ class VPStreamer:
     
 if __name__ == "__main__":
     # 测试VPStreamer类
-    streamer = VPStreamer("192.168.8.145",False)
-    # streamer = VPStreamer("10.32.205.7",False)
-    time.sleep(1)
+    streamer = VPStreamer(ip="192.168.1.112", record=False)
+    time.sleep(2)
     while True:
-        head_data = streamer.get_head_data()
-        if head_data is not None:
-            print(f"头部位置: {head_data}")
+        print("获取右手位置...")
+        right_hand_data = streamer.get_hand_position(hand="right")
+        if right_hand_data is not None:
+            print(f"右手位置: {right_hand_data}")
         else:
-            print("未获取到头部位置数据")
-        # hand_data = streamer.get_hand_position("right")
-        # if hand_data is not None:
-        #     print(f"右手腕位置: {hand_data}")
-        # else:
-        #     print("未获取到右手腕位置数据")
-        
-        # fingers_data = streamer.get_fingers_data("right")
-        # if fingers_data is not None:
-        #     print(f"右手指关节位置: {fingers_data}")
-        # else:
-        #     print("未获取到右手指关节位置数据")
+            print("未获取到右手位置数据")
         
         time.sleep(3)

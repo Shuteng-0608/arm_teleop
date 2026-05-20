@@ -239,16 +239,6 @@ if __name__ == "__main__":
         # model_path = "/home/stw/pangu/src/arm_teleop/model/Arm_simplified.xml"
         model_path = "/home/pangu/pangu/src/arm_teleop/model/right_arm_stable.xml"
         simulator = RobotControllerMuJoCo(model_path, config)
-        # simulator.test_rotation_matrix_to_quaternion()
-
-        # simulator.target_joints = [0.0]
-        # if len(simulator.target_joints) < len(simulator.joint_names):
-        #     simulator.target_joints.extend([0.0] * (len(simulator.joint_names) - len(simulator.target_joints)))
-        # simulator.move_to_safe_position()
-        # simulator.set_arm_positions([-0.816, -0.722, -1.57, -1.04, 0.659, -0.879, -0.722])
-        # simulator.set_hand_positions([0.157, 0.094, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0])
-        # simulator.set_arm_positions([-0.816, -0.722, -1.57, -1.04, 0.659, -0.879, -0.722])
-        # simulator.set_hand_positions([0.157, 0.094, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0])
         time.sleep(2.0)
         
         

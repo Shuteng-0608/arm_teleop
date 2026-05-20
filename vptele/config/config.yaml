@@ -1,5 +1,9 @@
+# Mujoco配置
+mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
+enable_hand: false
+
 # VisionPro配置
-vp_ip: "192.168.1.144"
+vp_ip: "192.168.1.112"
 vp_record: false  # 是否记录VisionPro数据流
 vuer: false
 

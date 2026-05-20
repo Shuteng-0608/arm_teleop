@@ -54,27 +54,20 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
     
     logger.info(f"正在启动VisionPro机械臂遥操控系统... 配置文件: {config_path}")
     
-    # 命令行参数覆盖配置文件
-    vp_ip = "192.168.8.145"
-    if vp_ip:
-        config['vp_ip'] = vp_ip
-    # if robot_ip:
-    #     config['robot_ip'] = robot_ip
-    if end_effector:
-        config['end_effector'] = end_effector
+    # # 命令行参数覆盖配置文件
+    # vp_ip = "192.168.1.117"
+    # if vp_ip:
+    #     config['vp_ip'] = vp_ip
+    # if end_effector:
+    #     config['end_effector'] = end_effector
     
-    # 验证必要的配置项
-    if 'vp_ip' not in config:
-        logger.error("错误: 未指定VisionPro IP地址")
-        raise ValueError("未指定VisionPro IP地址")
-    # if 'robot_ip' not in config:
-    #     logger.error("错误: 未指定机械臂IP地址")
-    #     raise ValueError("未指定机械臂IP地址")
+    # # 验证必要的配置项
+    # if 'vp_ip' not in config:
+    #     logger.error("错误: 未指定VisionPro IP地址")
+    #     raise ValueError("未指定VisionPro IP地址")
     
-    # 打印配置信息
-    logger.info(f"VisionPro IP: {config['vp_ip']}")
-    # logger.info(f"机械臂 IP: {config['robot_ip']}")
-    logger.info(f"末端执行器: {config.get('end_effector', 'none')}")
+    # # 打印配置信息
+    # logger.info(f"VisionPro IP: {config['vp_ip']}")
     
     # 创建并初始化遥操控系统
     from core.teleop_system_mujoco import TeleopSystemMujoco
@@ -97,8 +90,6 @@ class TeleopROSNode:
         self.log_level = rospy.get_param('~log_level', None)
         self.process_name = rospy.get_param('~process_name', None)
         self.mode = rospy.get_param('~mode', 'full')
-        # rospy.wait_for_service('/aris_node/start_teleop_srv')
-        # self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
         
         # 轨迹相关参数
         self.command = rospy.get_param('~command', None)
