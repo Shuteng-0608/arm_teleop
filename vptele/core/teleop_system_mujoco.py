@@ -35,11 +35,6 @@ class TeleopSystemMujoco:
         from core.vp_streamer_avp import VPStreamer
             
         self.vp_streamer = VPStreamer(ip="192.168.1.112", record=False)
-        right_hand_data = self.vp_streamer.get_hand_position(hand="right")
-        if right_hand_data is not None:
-            print(f"右手位置: {right_hand_data}")
-        else:
-            print("未获取到右手位置数据")
         # 等待一段时间确保数据流稳定
         logger.info("正在等待VisionPro数据流稳定...")
         time.sleep(3)

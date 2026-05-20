@@ -142,7 +142,7 @@ class ArmTeleopMujoco:
         
         while attempts < max_attempts:
             hand_data = self.vp_streamer.get_hand_position(hand='right')
-            # hand_data = self.vp_streamer.get_hand_position(hand='left')
+            
             if hand_data is not None and len(hand_data) > 0:
                 # 记录右手腕初始位置和姿态
                 self.initial_hand_transform_right = hand_data[0]
@@ -177,14 +177,12 @@ class ArmTeleopMujoco:
         # 计算手部位置相对于初始位置的偏移
         if hand_side == 'right':
             hand_offset = hand_position - self.initial_hand_position_right
-        # if hand_side == 'left':
-        #     hand_offset = hand_position - self.initial_hand_position_right
+        
         
         # 将偏移应用到机械臂初始位置
         if hand_side == 'right':
             target_position = self.initial_right_robot_pose.copy()
-        # if hand_side == 'left':
-        #     target_position = self.initial_right_robot_pose.copy()
+        
         target_position[0] += hand_offset[1] * 1.5
         target_position[1] += hand_offset[2] * 1.5
         target_position[2] += hand_offset[0] * 1.5
@@ -197,8 +195,7 @@ class ArmTeleopMujoco:
         # 相对旋转 = 当前旋转 × 初始旋转的逆
         if hand_side == 'right':
             relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_right)
-        # if hand_side == 'left':
-        #     relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_right)
+        
         rospy.loginfo(f"相对旋转矩阵: \n{relative_rotation}")
         transfrom_matrix = np.array([[0.0, 1.0, 0.0],
                                      [0.0, 0.0, 1.0],
@@ -283,6 +280,24 @@ class ArmTeleopMujoco:
                 hand_data = self.vp_streamer.latest
                     
                 hand_data = self.vp_streamer.get_hand_position(hand=arm_side)
+
+                # 检查手部数据是否有效
+                # if hand_data is None:
+                #     logger.warning(f"[{arm_side}] 未获取到手腕数据，跳过本帧")
+                #     time.sleep(self.update_frequency)
+                #     continue
+
+                # hand_data = np.asarray(hand_data)
+
+                # if hand_data.ndim == 3 and hand_data.shape[1:] == (4, 4):
+                #     hand_transform = hand_data[0]
+                # elif hand_data.shape == (4, 4):
+                #     hand_transform = hand_data
+                # else:
+                #     logger.warning(f"[{arm_side}] 手腕数据shape异常: {hand_data.shape}")
+                #     time.sleep(self.update_frequency)
+                #     continue
+
                 # 只有当遥操作激活时才执行控制
                 if self.teleop_active:
                     # 提取右手腕的完整变换矩阵

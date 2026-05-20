@@ -156,7 +156,11 @@ def main():
     except rospy.ROSInterruptException:
         pass
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         rospy.logerr(f"遥操控系统ROS节点运行失败: {e}")
+        raise
+        # rospy.logerr(f"遥操控系统ROS节点运行失败: {e}")
 
 if __name__ == "__main__":
     main()

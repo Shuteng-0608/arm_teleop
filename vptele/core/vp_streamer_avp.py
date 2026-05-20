@@ -12,9 +12,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 try:
     from avp_stream import VisionProStreamer as AVPStreamer
+    
 except ImportError:
     logger.error("错误: 无法导入avp_stream模块，请确保它已正确安装")
     sys.exit(1)
+
+
 
 class VPStreamer:
     """VisionPro数据流处理类，扩展原始的VisionProStreamer"""
@@ -31,7 +34,7 @@ class VPStreamer:
             self.streamer = AVPStreamer(ip, record=record)
             logger.info(f"成功连接到VisionPro: {ip}")
         except Exception as e:
-            logger.error(f"连接VisionPro失败: {e}")
+            logger.exception(f"连接VisionPro失败: {e}")
             raise
     
     @property
