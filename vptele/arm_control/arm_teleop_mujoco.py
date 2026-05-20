@@ -52,7 +52,7 @@ class ArmTeleopMujoco:
         self.update_frequency = self.config.get('update_frequency', 0.01)  # 更新频率 (秒)
         self.control_thread = None # single arm control thread
         self.control_thread_right = None # right arm control thread
-        self.scaling_factor = 1.0 # 手部运动到机械臂运动的缩放因子
+        self.scaling_factor = float(self.config.get("scaling_factor", 1.5)) # 手部运动到机械臂运动的缩放因子
 
 
         # ============ OneEuroFilter ============
@@ -164,7 +164,7 @@ class ArmTeleopMujoco:
         self.initial_hand_rotation_right = np.eye(3)  # 单位矩阵作为默认旋转
     
 
-    def map_hand_to_robot(self, hand_transform, hand_side="left"):
+    def map_hand_to_robot(self, hand_transform, hand_side="right"):
         """
         将手部位置和旋转映射到机械臂位置和姿态
         
@@ -183,9 +183,11 @@ class ArmTeleopMujoco:
         if hand_side == 'right':
             target_position = self.initial_right_robot_pose.copy()
         
-        target_position[0] += hand_offset[1] * 1.5
-        target_position[1] += hand_offset[2] * 1.5
-        target_position[2] += hand_offset[0] * 1.5
+        s = self.scaling_factor
+
+        target_position[0] += hand_offset[1] * s
+        target_position[1] += hand_offset[2] * s
+        target_position[2] += hand_offset[0] * s
 
         
         # 从变换矩阵中提取旋转信息，转为欧拉角
@@ -205,8 +207,7 @@ class ArmTeleopMujoco:
         
         if hand_side == 'right':
             relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
-        # if hand_side == 'left':
-        #     relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation.as_matrix())
+      
         [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
         
         target_position[3] = new_rx
@@ -268,35 +269,16 @@ class ArmTeleopMujoco:
                 # 增加帧计数
                 frame_count += 1
                 current_time = time.time()
-                
-                # 每秒计算并显示一次 FPS
-                # if current_time - last_fps_time >= 1.0:
-                fps = frame_count / (current_time - last_fps_time)
-                logger.info(f"[{arm_side}] 遥操作 FPS: {fps:.2f}")
-                frame_count = 0
-                last_fps_time = current_time
-                
+                if current_time - last_fps_time >= 1.0:
+                    fps = frame_count / (current_time - last_fps_time)
+                    logger.info(f"[{arm_side}] 遥操作 FPS: {fps:.2f}")
+                    frame_count = 0
+                    last_fps_time = current_time
+
                 # 获取最新的手部数据
                 hand_data = self.vp_streamer.latest
                     
                 hand_data = self.vp_streamer.get_hand_position(hand=arm_side)
-
-                # 检查手部数据是否有效
-                # if hand_data is None:
-                #     logger.warning(f"[{arm_side}] 未获取到手腕数据，跳过本帧")
-                #     time.sleep(self.update_frequency)
-                #     continue
-
-                # hand_data = np.asarray(hand_data)
-
-                # if hand_data.ndim == 3 and hand_data.shape[1:] == (4, 4):
-                #     hand_transform = hand_data[0]
-                # elif hand_data.shape == (4, 4):
-                #     hand_transform = hand_data
-                # else:
-                #     logger.warning(f"[{arm_side}] 手腕数据shape异常: {hand_data.shape}")
-                #     time.sleep(self.update_frequency)
-                #     continue
 
                 # 只有当遥操作激活时才执行控制
                 if self.teleop_active:
@@ -316,8 +298,8 @@ class ArmTeleopMujoco:
                     start_time = time.time()
 
                     ik_request = ArmIKRequest()
-                    ik_request.method = 'feasible_std'  # 使用组合方法
-                    
+                    ik_request.method = 'optimal_ref'  # method in ['feasible_ref', 'optimal_ref', 'optimal_std', 'feasible_std']
+
                     # ===========  处理Arm Angle  ============ #
                     ik_request.current_arm_angle = 0
                     offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
@@ -362,32 +344,36 @@ class ArmTeleopMujoco:
                         else:
                             smooth_joint_angles = joint_angles
                             self.last_smooth_joints_right = joint_angles.copy()
-
-                        # 对[关节角度]进行 1Euro 滤波
-                        # smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
-                        # self.last_smooth_joints_right = list(smooth_joints).copy()
                             
                         if self.config.get('move', True):
                             rospy.loginfo(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
                             logger.info(f"[{arm_side}]移动到关节角度位置: {[round(x, 4) for x in smooth_joint_angles]}")
-                            for i in range(len(smooth_joint_angles)):
-                                if i == 1:
-                                    smooth_joint_angles[i] = -1.0 * smooth_joint_angles[i]
+                            # for i in range(len(smooth_joint_angles)):
+                            #     if i == 1:
+                            #         smooth_joint_angles[i] = -1.0 * smooth_joint_angles[i]
 
-                            self.robot_controller.set_arm_positions(smooth_joint_angles + [0.0])
+                            self.robot_controller.set_arm_positions(smooth_joint_angles)
                             
                     else:
                         rospy.logwarn(f"[{arm_side}] 逆解失败，无法控制到位置: {joint_angles}")
                     
                 
                 # 等待一段时间再更新
+                # loop_cost_time = time.time() - loop_start_time
+                # if loop_cost_time > 0.01:
+                #     continue
+                # else:
+                #     diff_time = 0.01 - loop_cost_time
+                #     time.sleep(diff_time)
+                
+                period = float(self.update_frequency)
                 loop_cost_time = time.time() - loop_start_time
-                if loop_cost_time > 0.01:
-                    continue
+                sleep_time = period - loop_cost_time
+
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
                 else:
-                    diff_time = 0.01 - loop_cost_time
-                    time.sleep(diff_time)
-                # time.sleep(1)
+                    logger.debug(f"[{arm_side}] 控制循环超时: {loop_cost_time:.4f}s")
                 
             except Exception as e:
                 logger.error(f"控制循环出错: {str(e)}", exc_info=True)  # 使用exc_info=True记录完整堆栈

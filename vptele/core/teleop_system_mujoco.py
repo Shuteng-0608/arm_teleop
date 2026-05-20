@@ -1,4 +1,5 @@
 import time
+import numpy as np
 from utils.logger import get_logger
 logger = get_logger()
 
@@ -33,11 +34,16 @@ class TeleopSystemMujoco:
         logger.info("正在初始化VisionPro数据流...")
        
         from core.vp_streamer_avp import VPStreamer
-            
-        self.vp_streamer = VPStreamer(ip="192.168.1.112", record=False)
+        vp_ip = self.config.get("vp_ip")
+        vp_record = self.config.get("vp_record", False)
+
+        if not vp_ip:
+            raise ValueError("配置中缺少 vp_ip")
+
+        self.vp_streamer = VPStreamer(ip=vp_ip, record=vp_record)
         # 等待一段时间确保数据流稳定
         logger.info("正在等待VisionPro数据流稳定...")
-        time.sleep(3)
+        self._wait_for_vp_ready(timeout=2.0)
         logger.info("VisionPro数据流初始化完成")
 
         # 初始化机械臂控制器和其他组件
@@ -54,7 +60,6 @@ class TeleopSystemMujoco:
         )
 
         # 初始化末端执行器
-        # self._initialize_end_effector() # TODO: 灵巧手控制器
         # peg-tool 模型默认不启用灵巧手末端执行器
         enable_hand = self.config.get("enable_hand", False)
 
@@ -65,6 +70,26 @@ class TeleopSystemMujoco:
             logger.info("已禁用手部遥操作模块，当前使用 peg-tool 模型。")
                 
         logger.info("系统完整初始化完成")
+    
+    def _wait_for_vp_ready(self, timeout=10.0):
+        start = time.time()
+
+        while time.time() - start < timeout:
+            data = self.vp_streamer.latest
+
+            if isinstance(data, dict):
+                right_wrist = self.vp_streamer.get_hand_position("right")
+                if right_wrist is not None:
+                    wrist = np.asarray(right_wrist)
+                    if wrist.shape == (4, 4) or (
+                        wrist.ndim == 3 and wrist.shape[1:] == (4, 4) and wrist.shape[0] > 0
+                    ):
+                        logger.info("VisionPro right_wrist 数据已就绪")
+                        return
+
+            time.sleep(0.05)
+
+        raise TimeoutError("VisionPro 数据流超时：未收到有效 right_wrist")
     
     def _initialize_robot_controller(self):
         """初始化 MuJoCo 机械臂控制器: peg-tool 版本"""

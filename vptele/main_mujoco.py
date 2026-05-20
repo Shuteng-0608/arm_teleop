@@ -9,7 +9,7 @@ from utils.logger import get_logger, setup_logger
 from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
 import time
 
-def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None, 
+def run_teleop_system(config_path, vp_ip=None, end_effector=None, 
                       log_level=None, process_name=None, mode="full"):
     """
     初始化并运行机械臂遥操控系统
@@ -17,7 +17,6 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
     Args:
         config_path (str): 配置文件路径
         vp_ip (str, optional): 覆盖配置文件中的VisionPro IP
-        robot_ip (str, optional): 覆盖配置文件中的机械臂IP
         end_effector (str, optional): 覆盖配置文件中的末端执行器类型
         log_level (str, optional): 日志级别
         process_name (str, optional): 进程名称，用于多进程环境中区分日志
@@ -46,28 +45,13 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
     max_file_size = log_config.get('max_file_size', 100 * 1024 * 1024)
     backup_count = log_config.get('backup_count', 5)
     
-    # 如果提供了进程名称，添加到日志文件名中, 否则取ip地址的最后一位，例如169.254.128.19取19
-    log_prefix = f"{process_name}" if process_name else f"{config['robot_ip'].split('.')[-1]}"
-    
+    # log_prefix = "mujoco"
+    log_prefix = log_config.get('log_prefix', 'mujoco')
+
     setup_logger(console_level, file_level, max_file_size, backup_count, prefix=log_prefix)
     logger = get_logger(log_prefix)
     
     logger.info(f"正在启动VisionPro机械臂遥操控系统... 配置文件: {config_path}")
-    
-    # # 命令行参数覆盖配置文件
-    # vp_ip = "192.168.1.117"
-    # if vp_ip:
-    #     config['vp_ip'] = vp_ip
-    # if end_effector:
-    #     config['end_effector'] = end_effector
-    
-    # # 验证必要的配置项
-    # if 'vp_ip' not in config:
-    #     logger.error("错误: 未指定VisionPro IP地址")
-    #     raise ValueError("未指定VisionPro IP地址")
-    
-    # # 打印配置信息
-    # logger.info(f"VisionPro IP: {config['vp_ip']}")
     
     # 创建并初始化遥操控系统
     from core.teleop_system_mujoco import TeleopSystemMujoco
@@ -83,19 +67,13 @@ class TeleopROSNode:
         rospy.init_node('teleop_system', anonymous=True)
         
         # 从ROS参数服务器获取参数
-        self.config_path = rospy.get_param('~config_path', 'config/config_arm_right.yaml')
+        self.config_path = rospy.get_param('~config_path', 'config/config_arm_right_peg.yaml')
         self.vp_ip = rospy.get_param('~vp_ip', None)
-        self.robot_ip = rospy.get_param('~robot_ip', None)
         self.end_effector = rospy.get_param('~end_effector', None)
         self.log_level = rospy.get_param('~log_level', None)
         self.process_name = rospy.get_param('~process_name', None)
         self.mode = rospy.get_param('~mode', 'full')
-        
-        # 轨迹相关参数
-        self.command = rospy.get_param('~command', None)
-        self.record_name = rospy.get_param('~record_name', None)
-        self.play_file = rospy.get_param('~play_file', None)
-        self.play_speed = rospy.get_param('~play_speed', 1.0)
+
         
         self.system = None
         self.logger = None
@@ -107,7 +85,7 @@ class TeleopROSNode:
             self.system = run_teleop_system(
                 config_path=self.config_path,
                 vp_ip=self.vp_ip,
-                robot_ip=self.robot_ip,
+                # robot_ip=self.robot_ip,
                 end_effector=self.end_effector,
                 log_level=self.log_level,
                 process_name=self.process_name,
