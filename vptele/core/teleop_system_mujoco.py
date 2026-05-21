@@ -164,7 +164,7 @@ class TeleopSystemMujoco:
 
             # 关节目标速度限制，单位 rad/s
             # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
-            "max_joint_velocity": 0.8,
+            "max_joint_velocity": 0.5,
 
             # 初始机械臂姿态，仍然用你现在这组
             "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
