@@ -1,5 +1,6 @@
 import time
 import numpy as np
+import rospy
 from utils.logger import get_logger
 logger = get_logger()
 
@@ -39,6 +40,9 @@ class TeleopSystemMujoco:
 
         if not vp_ip:
             raise ValueError("配置中缺少 vp_ip")
+        else:
+            logger.info(f"使用的 VisionPro IP 地址: {vp_ip}")
+            rospy.loginfo(f"使用的 VisionPro IP 地址: {vp_ip}")
 
         self.vp_streamer = VPStreamer(ip=vp_ip, record=vp_record)
         # 等待一段时间确保数据流稳定
@@ -91,16 +95,83 @@ class TeleopSystemMujoco:
 
         raise TimeoutError("VisionPro 数据流超时：未收到有效 right_wrist")
     
+    # def _initialize_robot_controller(self):
+    #     """初始化 MuJoCo 机械臂控制器: peg-tool 版本"""
+    #     logger.info("正在初始化 MuJoCo 机械臂控制器...")
+
+    #     # peg-tool 模型只包含 7 个机械臂关节，不再包含灵巧手关节
+    #     sim_config = {
+    #         "control_mode": "qpos",
+    #         "control_rate": 100,
+    #         "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+    #         "arm_joint_names": [
+    #             "joint_1",
+    #             "joint_2",
+    #             "joint_3",
+    #             "joint_4",
+    #             "joint_5",
+    #             "joint_6",
+    #             "joint_7",
+    #         ],
+    #     }
+    #     model_path = self.config.get(
+    #         "mujoco_model_path",
+    #         "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
+    #     )
+
+    #     logger.info(f"初始化 MuJoCo 模型: {model_path}")
+
+    #     try:
+    #         from arm_control.robot_controller_mujoco_peg_tool_contact import RobotControllerMuJoCoPegTool
+
+    #         self.robot_controller = RobotControllerMuJoCoPegTool(
+    #             model_path=model_path,
+    #             config=sim_config
+    #         )
+
+    #         logger.info("MuJoCo 机械臂控制器初始化完成")
+
+    #     except ImportError as e:
+    #         logger.error("错误: 无法导入 RobotControllerMuJoCoPegTool, 请检查 PYTHONPATH 和 mujoco 是否安装正确")
+    #         logger.error(str(e))
+    #         raise
+
+    #     except Exception as e:
+    #         logger.error(f"错误: MuJoCo 机械臂控制器初始化失败: {e}")
+    #         raise
+
     def _initialize_robot_controller(self):
-        """初始化 MuJoCo 机械臂控制器: peg-tool 版本"""
+        """初始化 MuJoCo 机械臂控制器: peg-tool contact 版本"""
         logger.info("正在初始化 MuJoCo 机械臂控制器...")
 
-        # peg-tool 模型只包含 7 个机械臂关节，不再包含灵巧手关节
+        # contact 版本：使用 actuator position control，而不是 qpos 直接写入
         sim_config = {
-            "control_mode": "qpos",
-            "control_rate": 100,
+            # 关键：真实接触仿真必须用 actuator，而不是 qpos
+            "control_mode": "actuator",
+
+            # 是否打开 MuJoCo viewer
+            "launch_viewer": True,
+
+            # 构造 controller 后自动启动仿真线程
+            "auto_start": True,
+
+            # viewer 刷新频率，不等于物理仿真频率
+            # 物理仿真频率由 XML 里的 timestep 决定
+            "viewer_rate": 60,
+
+            # 尽量按真实时间运行仿真
+            "realtime": True,
+
+            # 关节目标速度限制，单位 rad/s
+            # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
+            "max_joint_velocity": 0.8,
+
+            # 初始机械臂姿态，仍然用你现在这组
             "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
-            "arm_joint_names": [
+
+            # 机械臂关节名称
+            # 注意：我的 contact controller 里读取的是 arm_joints，不是 arm_joint_names
+            "arm_joints": [
                 "joint_1",
                 "joint_2",
                 "joint_3",
@@ -109,16 +180,23 @@ class TeleopSystemMujoco:
                 "joint_6",
                 "joint_7",
             ],
+
+            # 保持你原来 controller 的符号修正逻辑
+            "arm_sign": [-1, 1, 1, -1, 1, 1, 1],
+
+            # 等 viewer 启动的时间
+            "viewer_start_wait": 1.0,
         }
+
         model_path = self.config.get(
             "mujoco_model_path",
-            "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
+            "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
         )
 
         logger.info(f"初始化 MuJoCo 模型: {model_path}")
 
         try:
-            from arm_control.robot_controller_mujoco_peg_tool import RobotControllerMuJoCoPegTool
+            from arm_control.robot_controller_mujoco_peg_tool_contact import RobotControllerMuJoCoPegTool
 
             self.robot_controller = RobotControllerMuJoCoPegTool(
                 model_path=model_path,

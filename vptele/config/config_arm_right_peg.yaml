@@ -1,9 +1,11 @@
 # Mujoco配置
-mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
+# mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
+# mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall.xml"
+mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
 enable_hand: false
 
 # VisionPro配置
-vp_ip: "192.168.1.112"
+vp_ip: "192.168.1.144" # DaiLab-Normal
 vp_record: false  # 是否记录VisionPro数据流
 # vuer: true
 vuer: false
