@@ -110,7 +110,28 @@
       <geom name="wall_hole_ring_21" type="box" pos="0.013435 0 -0.013435" size="0.005000 0.002487 0.022500" xyaxes="0.707107 0.000000 -0.707107 0.707107 0.000000 0.707107" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
       <geom name="wall_hole_ring_22" type="box" pos="0.016454 0 -0.009500" size="0.005000 0.002487 0.022500" xyaxes="0.866025 0.000000 -0.500000 0.500000 0.000000 0.866025" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
       <geom name="wall_hole_ring_23" type="box" pos="0.018353 0 -0.004918" size="0.005000 0.002487 0.022500" xyaxes="0.965926 0.000000 -0.258819 0.258819 0.000000 0.965926" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
-      <site name="hole_center_site" pos="0 0 0" size="0.001" rgba="0 1 0 0" />
+      <!-- <site name="hole_center_site" pos="0 0 0" size="0.001" rgba="0 1 0 0" /> -->
+      <!-- <site name="hole_center_marker" type="sphere" pos="0 0.026 0" size="0.012" rgba="0 1 0 0.65" /> -->
+      <!-- Invisible task-state site: used for computing peg-hole error -->
+      <site name="hole_center_site"
+            type="sphere"
+            pos="0 0 0"
+            size="0.001"
+            rgba="0 1 0 0" />
+
+      <!-- Visible marker at the hole entrance -->
+      <site name="hole_center_marker"
+            type="sphere"
+            pos="0 0.026 0"
+            size="0.012"
+            rgba="0 1 0 0.65" />
+
+      <!-- Slightly larger transparent alignment area -->
+      <site name="hole_alignment_zone"
+            type="sphere"
+            pos="0 0.026 0"
+            size="0.025"
+            rgba="0 1 0 0.18" />
     </body>
   </worldbody>
   <actuator>

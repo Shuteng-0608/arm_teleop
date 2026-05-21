@@ -186,6 +186,22 @@ class TeleopSystemMujoco:
 
             # 等 viewer 启动的时间
             "viewer_start_wait": 1.0,
+
+            # 当前 wall-parallel 版本默认插入方向沿 y 轴。
+            "hole_axis_world": [0.0, 1.0, 0.0],
+
+            # 洞口可视入口点相对 hole_center 的偏移
+            "hole_entrance_offset": 0.026,
+
+            # 黄色插入方向箭头长度
+            "hole_axis_arrow_length": 0.20,
+
+            # peg->hole 引导箭头粗细
+            "guide_arrow_width": 0.002,
+
+            # 对准误差颜色阈值，单位 m
+            "guide_green_threshold": 0.010,
+            "guide_yellow_threshold": 0.020,
         }
 
         model_path = self.config.get(

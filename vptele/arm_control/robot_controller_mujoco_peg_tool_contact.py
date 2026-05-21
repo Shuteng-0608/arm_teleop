@@ -68,6 +68,54 @@ class RobotControllerMuJoCoPegTool:
         # Sign convention kept from your original controller.
         self.arm_sign = self.config.get("arm_sign", [-1, 1, 1, -1, 1, 1, 1])
 
+        # -------------------- Visual guidance --------------------
+        self.enable_visual_guides = bool(self.config.get("enable_visual_guides", True))
+
+        # 当前 wall-parallel 版本：墙面是 x-z 平面，插入方向沿 y 方向。
+        # 这里的 axis 指向“洞口外侧/可视侧”。
+        # 如果你发现黄色箭头方向反了，把 [0.0, -1.0, 0.0] 改成 [0.0, 1.0, 0.0]。
+        self.hole_axis_world = np.array(
+            self.config.get("hole_axis_world", [0.0, -1.0, 0.0]),
+            dtype=float,
+        )
+
+        axis_norm = np.linalg.norm(self.hole_axis_world)
+        if axis_norm < 1e-8:
+            self.hole_axis_world = np.array([0.0, -1.0, 0.0], dtype=float)
+        else:
+            self.hole_axis_world = self.hole_axis_world / axis_norm
+
+        # 洞口 marker 相对于 hole_center 的偏移。
+        # 你的 hole 深度约 0.045 m，半深度 0.0225 m，所以 0.026 会稍微浮在洞口外侧。
+        self.hole_entrance_offset = float(self.config.get("hole_entrance_offset", 0.026))
+
+        # 黄色洞口法向/插入方向箭头长度
+        self.hole_axis_arrow_length = float(self.config.get("hole_axis_arrow_length", 0.08))
+
+        # peg->hole 引导箭头粗细
+        self.guide_arrow_width = float(self.config.get("guide_arrow_width", 0.006))
+
+        # 颜色切换阈值，单位 m。
+        # 这里用的是横向对准误差，不是沿插入方向的距离。
+        self.guide_green_threshold = float(self.config.get("guide_green_threshold", 0.010))
+        self.guide_yellow_threshold = float(self.config.get("guide_yellow_threshold", 0.030))
+
+
+        # -------------------- Visual peg color --------------------
+        self.peg_geom_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            "cylindrical_peg",
+        )
+
+        self.peg_mat_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_MATERIAL,
+            "mat_peg",
+        )
+
+        self.default_peg_rgba = np.array([0.90, 0.18, 0.10, 1.0], dtype=float)
+
         # Simulation and visualization timing.
         self.sim_timestep = float(self.model.opt.timestep)
         self.viewer_rate = float(self.config.get("viewer_rate", 60.0))
@@ -153,6 +201,7 @@ class RobotControllerMuJoCoPegTool:
                 else:
                     joint_angles.append(0.0)
         return joint_angles
+
 
     # ------------------------------------------------------------------
     # Command conversion and target setting
@@ -334,6 +383,195 @@ class RobotControllerMuJoCoPegTool:
                 g2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom2)
                 if g1 == "cylindrical_peg" or g2 == "cylindrical_peg":
                     print(f"[contact {i}] {g1} <-> {g2}, dist={c.dist:.6f}")
+    
+    def set_peg_color(self, rgba):
+        """
+        动态修改 peg 的显示颜色。
+
+        优先修改 material 颜色，因为 cylindrical_peg 使用了 material="mat_peg"。
+        同时也修改 geom_rgba，避免不同 viewer/渲染路径下不生效。
+        """
+        rgba = np.asarray(rgba, dtype=float)
+
+        if rgba.shape[0] != 4:
+            return
+
+        if getattr(self, "peg_mat_id", -1) != -1:
+            self.model.mat_rgba[self.peg_mat_id] = rgba
+
+        if getattr(self, "peg_geom_id", -1) != -1:
+            self.model.geom_rgba[self.peg_geom_id] = rgba
+    
+    # def draw_guidance_arrow(self, viewer):
+    #     """
+    #     在 peg_tip_site 和 hole_center_site 之间绘制动态引导箭头。
+    #     """
+    #     peg_tip_id = mujoco.mj_name2id(
+    #         self.model, mujoco.mjtObj.mjOBJ_SITE, "peg_tip_site"
+    #     )
+    #     hole_center_id = mujoco.mj_name2id(
+    #         self.model, mujoco.mjtObj.mjOBJ_SITE, "hole_center_site"
+    #     )
+
+    #     if peg_tip_id == -1 or hole_center_id == -1:
+    #         return
+
+    #     peg_pos = self.data.site_xpos[peg_tip_id].copy()
+    #     hole_pos = self.data.site_xpos[hole_center_id].copy()
+
+    #     # 清空用户自定义可视化几何
+    #     viewer.user_scn.ngeom = 0
+
+    #     # 画一个箭头：从 peg_tip 指向 hole_center
+    #     geom = viewer.user_scn.geoms[viewer.user_scn.ngeom]
+    #     mujoco.mjv_initGeom(
+    #         geom,
+    #         type=mujoco.mjtGeom.mjGEOM_ARROW,
+    #         size=[0.01, 0.01, 0.01],
+    #         pos=[0, 0, 0],
+    #         mat=np.eye(3).flatten(),
+    #         rgba=[0.0, 1.0, 0.0, 0.8],
+    #     )
+    #     mujoco.mjv_connector(
+    #         geom,
+    #         mujoco.mjtGeom.mjGEOM_ARROW,
+    #         0.006,          # 箭头粗细
+    #         peg_pos,
+    #         hole_pos
+    #     )
+    #     viewer.user_scn.ngeom += 1
+    
+    def _get_site_xpos_for_viewer(self, site_name: str):
+        """
+        获取 site 的世界坐标。
+        这个函数只在仿真线程里绘图用，不额外加锁，避免和 mj_step/viewer.sync 互相阻塞。
+        """
+        site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            site_name,
+        )
+
+        if site_id == -1:
+            return None
+
+        return self.data.site_xpos[site_id].copy()
+
+
+    def _add_connector_geom(self, viewer, geom_type, start, end, width, rgba):
+        """
+        在 MuJoCo viewer.user_scn 里添加一条 connector。
+        可以是 LINE / ARROW / CAPSULE 等。
+        """
+        start = np.asarray(start, dtype=float)
+        end = np.asarray(end, dtype=float)
+        rgba = np.asarray(rgba, dtype=float)
+
+        if np.linalg.norm(end - start) < 1e-6:
+            return
+
+        scene = viewer.user_scn
+
+        if scene.ngeom >= len(scene.geoms):
+            return
+
+        geom = scene.geoms[scene.ngeom]
+
+        mujoco.mjv_initGeom(
+            geom,
+            geom_type,
+            np.zeros(3),
+            np.zeros(3),
+            np.eye(3).reshape(-1),
+            rgba,
+        )
+
+        mujoco.mjv_connector(
+            geom,
+            geom_type,
+            width,
+            start,
+            end,
+        )
+
+        scene.ngeom += 1
+
+
+    def draw_insertion_guides(self, viewer):
+        """
+        绘制插孔视觉引导：
+        1. peg_tip -> hole_entrance 的动态箭头，颜色随对准误差变化；
+        2. 洞口法向/插入方向黄色箭头。
+        """
+        if not self.enable_visual_guides:
+            self.set_peg_color(self.default_peg_rgba)
+            return
+
+        # 清空上一帧自定义视觉几何。
+        # 如果后面还想画别的自定义元素，也统一放在这个函数里画。
+        viewer.user_scn.ngeom = 0
+
+        peg_tip = self._get_site_xpos_for_viewer("peg_tip_site")
+        hole_center = self._get_site_xpos_for_viewer("hole_center_site")
+
+        if peg_tip is None or hole_center is None:
+            self.set_peg_color(self.default_peg_rgba)
+            return
+
+        axis = self.hole_axis_world
+
+        # 洞口可视入口点。
+        # 如果发现箭头/marker 在墙背面，把 hole_axis_world 改成 [0, 1, 0]。
+        hole_entrance = hole_center + axis * self.hole_entrance_offset
+
+        # 从 peg tip 指向洞口入口的误差向量
+        error_vec = hole_entrance - peg_tip
+
+        # 将误差分解为：
+        #   insertion_error：沿插入轴方向的误差
+        #   lateral_error：垂直于插入轴的对准误差
+        insertion_error = float(np.dot(error_vec, axis))
+        lateral_vec = error_vec - insertion_error * axis
+        lateral_error = float(np.linalg.norm(lateral_vec))
+
+        if lateral_error <= self.guide_green_threshold:
+            # 对准较好：绿色
+            guide_rgba = [0.0, 1.0, 0.0, 0.85]
+            peg_rgba = [0.0, 0.95, 0.10, 1.0]
+        elif lateral_error <= self.guide_yellow_threshold:
+            # 中等偏差：黄色
+            guide_rgba = [1.0, 1.0, 0.0, 0.85]
+            peg_rgba = [1.0, 0.85, 0.0, 1.0]
+        else:
+            # 偏差较大：红色
+            guide_rgba = [1.0, 0.0, 0.0, 0.85]
+            peg_rgba = [1.0, 0.10, 0.05, 1.0]
+
+        self.set_peg_color(peg_rgba)
+
+        # 1. peg_tip -> hole_entrance 动态引导箭头
+        self._add_connector_geom(
+            viewer=viewer,
+            geom_type=mujoco.mjtGeom.mjGEOM_ARROW,
+            start=peg_tip,
+            end=hole_entrance,
+            width=self.guide_arrow_width,
+            rgba=guide_rgba,
+        )
+
+        # 2. 洞口法向 / 插入方向箭头
+        # axis 指向洞外侧，所以正确插入方向是 -axis。
+        normal_start = hole_entrance
+        normal_end = hole_entrance - axis * self.hole_axis_arrow_length
+
+        self._add_connector_geom(
+            viewer=viewer,
+            geom_type=mujoco.mjtGeom.mjGEOM_ARROW,
+            start=normal_start,
+            end=normal_end,
+            width=0.005,
+            rgba=[1.0, 0.85, 0.0, 0.90],
+        )
 
     # ------------------------------------------------------------------
     # Simulation / visualization thread
@@ -367,6 +605,8 @@ class RobotControllerMuJoCoPegTool:
 
                         now = time.perf_counter()
                         if now - last_sync >= self.viewer_period:
+                            with self.lock:
+                                self.draw_insertion_guides(viewer)
                             viewer.sync()
                             last_sync = now
 
@@ -433,6 +673,24 @@ if __name__ == "__main__":
         "realtime": True,
         "max_joint_velocity": 1.2,
         "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+        "enable_visual_guides": True,
+
+        # 当前 wall-parallel 版本默认插入方向沿 y 轴。
+        # 如果黄色箭头方向反了，把它改成 [0.0, 1.0, 0.0]。
+        "hole_axis_world": [0.0, 1.0, 0.0],
+
+        # 洞口可视入口点相对 hole_center 的偏移
+        "hole_entrance_offset": 0.026,
+
+        # 黄色插入方向箭头长度
+        "hole_axis_arrow_length": 0.10,
+
+        # peg->hole 引导箭头粗细
+        "guide_arrow_width": 0.003,
+
+        # 对准误差颜色阈值，单位 m
+        "guide_green_threshold": 0.010,
+        "guide_yellow_threshold": 0.030,
     }
 
     try:
