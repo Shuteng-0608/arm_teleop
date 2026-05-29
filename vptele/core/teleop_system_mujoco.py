@@ -94,51 +94,6 @@ class TeleopSystemMujoco:
             time.sleep(0.05)
 
         raise TimeoutError("VisionPro 数据流超时：未收到有效 right_wrist")
-    
-    # def _initialize_robot_controller(self):
-    #     """初始化 MuJoCo 机械臂控制器: peg-tool 版本"""
-    #     logger.info("正在初始化 MuJoCo 机械臂控制器...")
-
-    #     # peg-tool 模型只包含 7 个机械臂关节，不再包含灵巧手关节
-    #     sim_config = {
-    #         "control_mode": "qpos",
-    #         "control_rate": 100,
-    #         "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
-    #         "arm_joint_names": [
-    #             "joint_1",
-    #             "joint_2",
-    #             "joint_3",
-    #             "joint_4",
-    #             "joint_5",
-    #             "joint_6",
-    #             "joint_7",
-    #         ],
-    #     }
-    #     model_path = self.config.get(
-    #         "mujoco_model_path",
-    #         "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
-    #     )
-
-    #     logger.info(f"初始化 MuJoCo 模型: {model_path}")
-
-    #     try:
-    #         from arm_control.robot_controller_mujoco_peg_tool_contact import RobotControllerMuJoCoPegTool
-
-    #         self.robot_controller = RobotControllerMuJoCoPegTool(
-    #             model_path=model_path,
-    #             config=sim_config
-    #         )
-
-    #         logger.info("MuJoCo 机械臂控制器初始化完成")
-
-    #     except ImportError as e:
-    #         logger.error("错误: 无法导入 RobotControllerMuJoCoPegTool, 请检查 PYTHONPATH 和 mujoco 是否安装正确")
-    #         logger.error(str(e))
-    #         raise
-
-    #     except Exception as e:
-    #         logger.error(f"错误: MuJoCo 机械臂控制器初始化失败: {e}")
-    #         raise
 
     def _initialize_robot_controller(self):
         """初始化 MuJoCo 机械臂控制器: peg-tool contact 版本"""
@@ -146,6 +101,7 @@ class TeleopSystemMujoco:
 
         # contact 版本：使用 actuator position control，而不是 qpos 直接写入
         sim_config = {
+            "cctv_camera": self.config.get("cctv_camera", "cctv_cam"),
             # 关键：真实接触仿真必须用 actuator，而不是 qpos
             "control_mode": "actuator",
 
@@ -187,6 +143,7 @@ class TeleopSystemMujoco:
             # 等 viewer 启动的时间
             "viewer_start_wait": 1.0,
 
+            "enable_visual_guides": self.config.get("enable_visual_guides", False),
             # 当前 wall-parallel 版本默认插入方向沿 y 轴。
             "hole_axis_world": [0.0, 1.0, 0.0],
 
@@ -202,6 +159,52 @@ class TeleopSystemMujoco:
             # 对准误差颜色阈值，单位 m
             "guide_green_threshold": 0.010,
             "guide_yellow_threshold": 0.020,
+
+            # data recording
+            "record_data": self.config.get("record_data", True),
+            "record_dir": self.config.get(
+                "record_dir",
+                "/home/stw/pangu/src/arm_teleop/data/peg_in_hole"
+            ),
+            "record_force_hz": self.config.get("record_force_hz", 500.0),
+            "record_state_hz": self.config.get("record_state_hz", 30.0),
+            "record_all_500hz": self.config.get("record_all_500hz", True),
+
+            # video stream config
+            "show_camera_streams": True,
+            "camera_stream_width": 640,
+            "camera_stream_height": 480,
+            "camera_stream_fps": 15.0,
+
+            "monitor_camera_names": ["ee_cam", "base_top_cam"],
+
+            # HDF5 recording
+            "record_hdf5": self.config.get("record_hdf5", True),
+            "hdf5_record_dir": self.config.get(
+                "hdf5_record_dir",
+                "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5"
+            ),
+            "hdf5_force_hz": self.config.get("hdf5_force_hz", 500.0),
+            "hdf5_state_hz": self.config.get("hdf5_state_hz", 30.0),
+            "hdf5_image_hz": self.config.get("hdf5_image_hz", 30.0),
+
+            # 图像第一版建议外部 JPG，HDF5 保存路径和时间戳
+            "hdf5_record_images": self.config.get("hdf5_record_images", True),
+            "hdf5_camera_names": self.config.get(
+                "hdf5_camera_names",
+                ["ee_cam", "base_top_cam"]
+            ),
+            "hdf5_image_width": self.config.get("hdf5_image_width", 640),
+            "hdf5_image_height": self.config.get("hdf5_image_height", 480),
+            "hdf5_image_format": self.config.get("hdf5_image_format", "jpg"),
+            "hdf5_jpg_quality": self.config.get("hdf5_jpg_quality", 90),
+
+            # 先自动记录，后面再升级成按键 start/stop
+            "hdf5_auto_start": self.config.get("hdf5_auto_start", True),
+            "hdf5_episode_label": self.config.get("hdf5_episode_label", "teleop"),
+            "hdf5_max_buffer_rows": self.config.get("hdf5_max_buffer_rows", 500000),
+
+
         }
 
         model_path = self.config.get(

@@ -57,7 +57,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="model/right_arm_peg_tool_wall_contact.xml",
+        default="model/pangu_all_right.xml",
         help="Path to MuJoCo XML model."
     )
     parser.add_argument(

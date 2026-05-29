@@ -110,6 +110,9 @@ logs/
 *.bag
 *.csv
 *.txt
+*.png
+*.jpg
+*.hdf5
 data/
 bagfiles/
 

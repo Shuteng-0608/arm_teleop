@@ -26,16 +26,28 @@ import threading
 from typing import List, Optional, Dict, Any
 
 import numpy as np
+import cv2
 import mujoco
 import mujoco.viewer
+import h5py
+
+from utils.mujoco_data_recorder import MujocoDataRecorder
+from utils.mujoco_hdf5_recorder import MujocoHDF5Recorder
 
 
 class RobotControllerMuJoCoPegTool:
     def __init__(self, model_path: str, config: Optional[Dict[str, Any]] = None):
+
         self.config = config or {}
         self.model_path = model_path
 
-        # -------------------- Load MuJoCo model --------------------
+        
+
+
+        # ########################################################### #
+        # -------------------- Load MuJoCo model -------------------- #
+        # ########################################################### #
+
         try:
             self.model = mujoco.MjModel.from_xml_path(model_path)
             self.data = mujoco.MjData(self.model)
@@ -68,12 +80,53 @@ class RobotControllerMuJoCoPegTool:
         # Sign convention kept from your original controller.
         self.arm_sign = self.config.get("arm_sign", [-1, 1, 1, -1, 1, 1, 1])
 
-        # -------------------- Visual guidance --------------------
+
+
+
+        # ############################################################### #
+        # -------------------- Camera stream monitor -------------------- #
+        # ############################################################### #
+
+        self.cctv_camera = self.config.get("cctv_camera", "cctv_cam")
+        self.show_camera_streams = bool(self.config.get("show_camera_streams", True))
+        self.camera_stream_width = int(self.config.get("camera_stream_width", 640))
+        self.camera_stream_height = int(self.config.get("camera_stream_height", 480))
+        self.camera_stream_fps = float(self.config.get("camera_stream_fps", 15.0))
+        self.camera_stream_period = 1.0 / max(self.camera_stream_fps, 1.0)
+        self.last_camera_stream_time = 0.0
+
+        self.monitor_camera_names = self.config.get(
+            "monitor_camera_names",
+            ["ee_cam", "base_top_cam"]
+        )
+
+        self.camera_renderer = None
+        self.monitor_camera_ids = {}
+
+        if self.show_camera_streams:
+            for cam_name in self.monitor_camera_names:
+                cam_id = mujoco.mj_name2id(
+                    self.model,
+                    mujoco.mjtObj.mjOBJ_CAMERA,
+                    cam_name
+                )
+                if cam_id == -1:
+                    print(f"[Camera Monitor] Warning: camera not found: {cam_name}")
+                else:
+                    self.monitor_camera_ids[cam_name] = cam_id
+
+            if len(self.monitor_camera_ids) == 0:
+                print("[Camera Monitor] No valid monitor cameras found, disable stream display.")
+                self.show_camera_streams = False
+
+
+
+
+        # ######################################################### #
+        # -------------------- Visual guidance -------------------- #
+        # ######################################################### #
         self.enable_visual_guides = bool(self.config.get("enable_visual_guides", True))
 
-        # 当前 wall-parallel 版本：墙面是 x-z 平面，插入方向沿 y 方向。
-        # 这里的 axis 指向“洞口外侧/可视侧”。
-        # 如果你发现黄色箭头方向反了，把 [0.0, -1.0, 0.0] 改成 [0.0, 1.0, 0.0]。
         self.hole_axis_world = np.array(
             self.config.get("hole_axis_world", [0.0, -1.0, 0.0]),
             dtype=float,
@@ -99,9 +152,14 @@ class RobotControllerMuJoCoPegTool:
         # 这里用的是横向对准误差，不是沿插入方向的距离。
         self.guide_green_threshold = float(self.config.get("guide_green_threshold", 0.010))
         self.guide_yellow_threshold = float(self.config.get("guide_yellow_threshold", 0.030))
+        
 
 
-        # -------------------- Visual peg color --------------------
+
+        # ########################################################## #
+        # -------------------- Visual peg color -------------------- #
+        # ########################################################## #
+
         self.peg_geom_id = mujoco.mj_name2id(
             self.model,
             mujoco.mjtObj.mjOBJ_GEOM,
@@ -122,11 +180,81 @@ class RobotControllerMuJoCoPegTool:
         self.viewer_period = 1.0 / max(self.viewer_rate, 1.0)
         self.realtime = bool(self.config.get("realtime", True))
 
-        # Target smoothing / safety.
-        # In actuator mode, set_arm_positions() only changes target_joints.
-        # command_joints is moved toward target_joints with a velocity limit.
+
+
+        # ######################################################## #
+        # -------------------- Data recording -------------------- #
+        # ######################################################## #
+
+        self.data_recorder = None
+
+        if bool(self.config.get("record_data", False)):
+            self.data_recorder = MujocoDataRecorder(
+                model=self.model,
+                data=self.data,
+                output_dir=self.config.get(
+                    "record_dir",
+                    "/home/stw/pangu/src/arm_teleop/data/peg_in_hole"
+                ),
+                model_path=self.model_path,
+                force_hz=float(self.config.get("record_force_hz", 500.0)),
+                state_hz=float(self.config.get("record_state_hz", 30.0)),
+                write_all_500hz=bool(self.config.get("record_all_500hz", True)),
+            )
+        
+
+        # ############################################################# #
+        # -------------------- HDF5 data recording -------------------- #
+        # ############################################################# #
+
+        self.hdf5_recorder = None
+
+        if bool(self.config.get("record_hdf5", False)):
+            self.hdf5_recorder = MujocoHDF5Recorder(
+                model=self.model,
+                data=self.data,
+                output_dir=self.config.get(
+                    "hdf5_record_dir",
+                    "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5"
+                ),
+                model_path=self.model_path,
+                force_hz=float(self.config.get("hdf5_force_hz", 500.0)),
+                state_hz=float(self.config.get("hdf5_state_hz", 30.0)),
+                image_hz=float(self.config.get("hdf5_image_hz", 30.0)),
+                record_images=bool(self.config.get("hdf5_record_images", True)),
+                camera_names=self.config.get(
+                    "hdf5_camera_names",
+                    ["ee_cam", "base_top_cam"]
+                ),
+                image_width=int(self.config.get("hdf5_image_width", 640)),
+                image_height=int(self.config.get("hdf5_image_height", 480)),
+                image_format=self.config.get("hdf5_image_format", "jpg"),
+                jpg_quality=int(self.config.get("hdf5_jpg_quality", 90)),
+                max_buffer_rows=int(self.config.get("hdf5_max_buffer_rows", 500000)),
+            )
+
+            if bool(self.config.get("hdf5_auto_start", True)):
+                self.hdf5_recorder.start_episode(
+                    label=self.config.get("hdf5_episode_label", "teleop")
+                )
+
+
+
+
+
+        # ############################################################ #
+        # ---------------- Target smoothing / safety ----------------- #
+        # ############################################################ #
+
         self.max_joint_velocity = float(self.config.get("max_joint_velocity", 1.2))  # rad/s
         self.max_joint_step_qpos = float(self.config.get("max_joint_step_qpos", 0.015))  # rad/frame for qpos debug mode
+
+
+
+
+        # #################################### #
+        # ----- Launching Initialization ----- #
+        # #################################### #
 
         self.launch_viewer = bool(self.config.get("launch_viewer", True))
         self.viewer_start_wait = float(self.config.get("viewer_start_wait", 1.0))
@@ -201,7 +329,86 @@ class RobotControllerMuJoCoPegTool:
                 else:
                     joint_angles.append(0.0)
         return joint_angles
+    
+    # --------------------------
+    # Camera Rendering
+    # --------------------------
+    def _ensure_camera_renderer(self):
+        if self.camera_renderer is None:
+            self.camera_renderer = mujoco.Renderer(
+                self.model,
+                height=self.camera_stream_height,
+                width=self.camera_stream_width,
+            )
+    
+    def _render_camera_rgb(self, camera_name: str):
+        """
+        渲染指定 MuJoCo camera，返回 RGB 图像。
+        """
+        if camera_name not in self.monitor_camera_ids:
+            return None
 
+        self._ensure_camera_renderer()
+
+        cam_id = self.monitor_camera_ids[camera_name]
+        self.camera_renderer.update_scene(self.data, camera=cam_id)
+        rgb = self.camera_renderer.render()
+        return rgb
+
+    def update_camera_stream_windows(self):
+        """
+        显示两个相机的视频流：
+        左边 ee_cam，右边 base_top_cam。
+        """
+        if not self.show_camera_streams:
+            return
+
+        now = time.perf_counter()
+        if now - self.last_camera_stream_time < self.camera_stream_period:
+            return
+
+        frames = []
+        labels = []
+
+        for cam_name in self.monitor_camera_names:
+            rgb = self._render_camera_rgb(cam_name)
+            if rgb is None:
+                continue
+
+            # MuJoCo 返回 RGB，OpenCV 显示用 BGR
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+            # 在左上角打上相机名称
+            cv2.putText(
+                bgr,
+                cam_name,
+                (15, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+
+            frames.append(bgr)
+            labels.append(cam_name)
+
+        if len(frames) == 0:
+            return
+
+        # 如果只有一个相机，就单独显示
+        if len(frames) == 1:
+            panel = frames[0]
+        else:
+            # 横向拼接两个画面
+            panel = np.hstack(frames)
+
+        cv2.imshow("Task Camera Streams", panel)
+        cv2.waitKey(1)
+
+        self.last_camera_stream_time = now
+
+    
 
     # ------------------------------------------------------------------
     # Command conversion and target setting
@@ -329,6 +536,17 @@ class RobotControllerMuJoCoPegTool:
 
         mujoco.mj_step(self.model, self.data)
 
+        # Data Recording
+        if self.data_recorder is not None:
+            self.data_recorder.record_if_needed(self)
+
+        if self.hdf5_recorder is not None:
+            self.hdf5_recorder.record_if_needed(self)
+
+        # Camera Streaming
+        if self.show_camera_streams:
+            self.update_camera_stream_windows()
+
     # ------------------------------------------------------------------
     # Task/debug helpers
     # ------------------------------------------------------------------
@@ -401,46 +619,7 @@ class RobotControllerMuJoCoPegTool:
 
         if getattr(self, "peg_geom_id", -1) != -1:
             self.model.geom_rgba[self.peg_geom_id] = rgba
-    
-    # def draw_guidance_arrow(self, viewer):
-    #     """
-    #     在 peg_tip_site 和 hole_center_site 之间绘制动态引导箭头。
-    #     """
-    #     peg_tip_id = mujoco.mj_name2id(
-    #         self.model, mujoco.mjtObj.mjOBJ_SITE, "peg_tip_site"
-    #     )
-    #     hole_center_id = mujoco.mj_name2id(
-    #         self.model, mujoco.mjtObj.mjOBJ_SITE, "hole_center_site"
-    #     )
 
-    #     if peg_tip_id == -1 or hole_center_id == -1:
-    #         return
-
-    #     peg_pos = self.data.site_xpos[peg_tip_id].copy()
-    #     hole_pos = self.data.site_xpos[hole_center_id].copy()
-
-    #     # 清空用户自定义可视化几何
-    #     viewer.user_scn.ngeom = 0
-
-    #     # 画一个箭头：从 peg_tip 指向 hole_center
-    #     geom = viewer.user_scn.geoms[viewer.user_scn.ngeom]
-    #     mujoco.mjv_initGeom(
-    #         geom,
-    #         type=mujoco.mjtGeom.mjGEOM_ARROW,
-    #         size=[0.01, 0.01, 0.01],
-    #         pos=[0, 0, 0],
-    #         mat=np.eye(3).flatten(),
-    #         rgba=[0.0, 1.0, 0.0, 0.8],
-    #     )
-    #     mujoco.mjv_connector(
-    #         geom,
-    #         mujoco.mjtGeom.mjGEOM_ARROW,
-    #         0.006,          # 箭头粗细
-    #         peg_pos,
-    #         hole_pos
-    #     )
-    #     viewer.user_scn.ngeom += 1
-    
     def _get_site_xpos_for_viewer(self, site_name: str):
         """
         获取 site 的世界坐标。
@@ -572,6 +751,26 @@ class RobotControllerMuJoCoPegTool:
             width=0.005,
             rgba=[1.0, 0.85, 0.0, 0.90],
         )
+    
+
+    def set_viewer_fixed_camera(self, viewer, camera_name: str):
+        """
+        强制将 MuJoCo viewer 切换到指定 fixed camera。
+        """
+        cam_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_CAMERA,
+            camera_name
+        )
+
+        if cam_id == -1:
+            print(f"[Camera] Cannot find camera: {camera_name}")
+            return
+
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        viewer.cam.fixedcamid = cam_id
+
+        print(f"[Camera] Switched viewer to fixed camera: {camera_name}")
 
     # ------------------------------------------------------------------
     # Simulation / visualization thread
@@ -591,6 +790,7 @@ class RobotControllerMuJoCoPegTool:
             if self.launch_viewer:
                 with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
                     print("可视化已启动，按 ESC 或关闭窗口退出")
+                    self.set_viewer_fixed_camera(viewer, self.cctv_camera)
                     self.viewer_running = True
                     last_sync = time.perf_counter()
 
@@ -606,7 +806,8 @@ class RobotControllerMuJoCoPegTool:
                         now = time.perf_counter()
                         if now - last_sync >= self.viewer_period:
                             with self.lock:
-                                self.draw_insertion_guides(viewer)
+                                if self.enable_visual_guides:
+                                    self.draw_insertion_guides(viewer)
                             viewer.sync()
                             last_sync = now
 
@@ -656,6 +857,20 @@ class RobotControllerMuJoCoPegTool:
         self.running = False
         if self.vis_thread is not None and self.vis_thread.is_alive():
             self.vis_thread.join(timeout=1.0)
+
+        # Stop and close data recorder
+        if self.data_recorder is not None:
+            self.data_recorder.close()
+
+        if self.hdf5_recorder is not None:
+            self.hdf5_recorder.close()
+
+        if self.camera_renderer is not None:
+            self.camera_renderer.close()
+            self.camera_renderer = None
+        
+        cv2.destroyAllWindows()
+
         print("仿真停止")
 
 
@@ -673,7 +888,7 @@ if __name__ == "__main__":
         "realtime": True,
         "max_joint_velocity": 1.2,
         "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
-        "enable_visual_guides": True,
+        "enable_visual_guides": False,
 
         # 当前 wall-parallel 版本默认插入方向沿 y 轴。
         # 如果黄色箭头方向反了，把它改成 [0.0, 1.0, 0.0]。
@@ -691,11 +906,19 @@ if __name__ == "__main__":
         # 对准误差颜色阈值，单位 m
         "guide_green_threshold": 0.010,
         "guide_yellow_threshold": 0.030,
+
+        # video stream config
+        "show_camera_streams": True,
+        "camera_stream_width": 640,
+        "camera_stream_height": 480,
+        "camera_stream_fps": 15.0,
+
+        "monitor_camera_names": ["ee_cam", "base_top_cam"],
     }
 
     try:
         print("创建仿真器...")
-        model_path = "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
+        model_path = "/home/stw/pangu/src/arm_teleop/model/pangu_all_right.xml"
         simulator = RobotControllerMuJoCoPegTool(model_path, config)
 
         while simulator.running:

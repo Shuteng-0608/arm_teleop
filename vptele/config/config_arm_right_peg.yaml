@@ -1,8 +1,40 @@
+# Data Recording
+record_data: false
+record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole"
+record_force_hz: 500.0
+record_state_hz: 30.0
+record_all_500hz: true
+
+
+# HDF5 recording
+record_hdf5: false
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5"
+
+hdf5_force_hz: 500.0
+hdf5_state_hz: 30.0
+hdf5_image_hz: 30.0
+
+hdf5_record_images: true
+hdf5_camera_names:
+  - "ee_cam"
+  - "base_top_cam"
+
+hdf5_image_width: 640
+hdf5_image_height: 480
+hdf5_image_format: "jpg"
+hdf5_jpg_quality: 90
+
+hdf5_auto_start: true
+hdf5_episode_label: "teleop"
+hdf5_max_buffer_rows: 500000
+
 # Mujoco配置
 # mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
 # mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall.xml"
-mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
+mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/pangu_all_right.xml"
 enable_hand: false
+enable_visual_guides: false
+cctv_camera: "cctv_cam"
 
 # VisionPro配置
 vp_ip: "192.168.1.144" # DaiLab-Normal
