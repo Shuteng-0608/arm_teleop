@@ -112,6 +112,7 @@ add_service_files(
   ArmIK.srv
   MovejService.srv
   StartDualTeleOP.srv
+  SetRecording.srv
 )
 
 ## Generate actions in the 'action' folder
@@ -269,13 +270,14 @@ target_link_libraries(ik_service_left_node
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
   # scripts/main_ros.py
-  scripts/test_ik.py
-  scripts/avp_test.py
+  # scripts/test_ik.py
+  # scripts/avp_test.py
   vptele/main_ros.py
   vptele/main_mujoco.py
-  scripts/movej_agent.py
-  test/record_play.py
-  test/play_multi.py
+  # scripts/movej_agent.py
+  # test/record_play.py
+  # test/play_multi.py
+  scripts/recording_keyboard_client.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

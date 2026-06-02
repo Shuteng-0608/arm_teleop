@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Compact MuJoCo HDF5 recorder for peg-in-hole teleoperation.
+
+Records only core data:
+  state stream: ee_pose, joint_pos, joint_vel, joint_torque
+  force stream: ft_wrench
+  image stream: RGB frame tensors stored directly inside HDF5
+  episode_metadata: rates, names, initial/final poses and task setup information
+
+Public API is compatible with the previous recorder:
+  start_episode(label), record_if_needed(controller), stop_episode(status), close(), add_event(event)
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,24 +21,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import h5py
-import imageio.v2 as imageio
 import mujoco
 import numpy as np
 
 
 class MujocoHDF5Recorder:
-    """
-    HDF5 recorder for MuJoCo peg-in-hole teleoperation.
-
-    One episode creates:
-        <output_dir>/<timestamp>_<label>/episode.hdf5
-        <output_dir>/<timestamp>_<label>/images/<camera_name>/*.jpg   optional
-        <output_dir>/<timestamp>_<label>/metadata.json
-
-    Alignment rule:
-        Every stream uses MuJoCo simulation time: data.time.
-    """
-
     def __init__(
         self,
         model,
@@ -34,13 +35,26 @@ class MujocoHDF5Recorder:
         force_hz: float = 500.0,
         state_hz: float = 30.0,
         image_hz: float = 30.0,
-        record_images: bool = False,
+        record_images: bool = True,
         camera_names: Optional[List[str]] = None,
         image_width: int = 640,
         image_height: int = 480,
-        image_format: str = "jpg",
-        jpg_quality: int = 90,
+        image_format: str = "hdf5_rgb",   # compatibility only; images are stored in HDF5
+        jpg_quality: int = 90,            # compatibility only; unused
         max_buffer_rows: int = 500000,
+        joint_names: Optional[List[str]] = None,
+        actuator_names: Optional[List[str]] = None,
+        ee_body_name: str = "peg_tool",
+        ft_force_sensor_name: str = "peg_ft_force",
+        ft_torque_sensor_name: str = "peg_ft_torque",
+        peg_tip_site_name: str = "peg_tip_site",
+        hole_center_site_name: str = "hole_center_site",
+        image_compression: Optional[str] = "lzf",   # "lzf", "gzip", or None
+        image_compression_level: int = 1,
+        numeric_compression: Optional[str] = None,
+        chunk_size_state: int = 256,
+        chunk_size_force: int = 2048,
+        chunk_size_image: int = 1,
     ):
         self.model = model
         self.data = data
@@ -56,107 +70,141 @@ class MujocoHDF5Recorder:
         self.image_period = 1.0 / max(self.image_hz, 1e-9)
 
         self.record_images = bool(record_images)
-        self.camera_names = list(camera_names or [])
+        self.camera_names = list(camera_names or ["ee_cam", "base_top_cam"])
         self.image_width = int(image_width)
         self.image_height = int(image_height)
-        self.image_format = image_format.lower().lstrip(".")
-        self.jpg_quality = int(jpg_quality)
         self.max_buffer_rows = int(max_buffer_rows)
 
-        if self.image_format not in {"jpg", "jpeg", "png"}:
-            raise ValueError("image_format must be jpg, jpeg, or png")
+        self.joint_names = list(joint_names or [f"joint_{i}" for i in range(1, 8)])
+        self.actuator_names = list(actuator_names or [f"motor_joint_{i}" for i in range(1, 8)])
+        self.ee_body_name = ee_body_name
+        self.ft_force_sensor_name = ft_force_sensor_name
+        self.ft_torque_sensor_name = ft_torque_sensor_name
+        self.peg_tip_site_name = peg_tip_site_name
+        self.hole_center_site_name = hole_center_site_name
+
+        self.image_compression = image_compression
+        self.image_compression_level = int(image_compression_level)
+        self.numeric_compression = numeric_compression
+        self.chunk_size_state = int(chunk_size_state)
+        self.chunk_size_force = int(chunk_size_force)
+        self.chunk_size_image = int(chunk_size_image)
 
         self.active = False
         self.session_dir: Optional[Path] = None
         self.hdf5_path: Optional[Path] = None
-        self.image_root: Optional[Path] = None
+        self.h5: Optional[h5py.File] = None
         self.renderer: Optional[mujoco.Renderer] = None
 
         self.episode_label = ""
         self.episode_start_sim_time = 0.0
         self.episode_start_wall_time = 0.0
-        self.next_force_t = 0.0
         self.next_state_t = 0.0
+        self.next_force_t = 0.0
         self.next_image_t = 0.0
-        self.image_frame_id = 0
+        self.n_state = 0
+        self.n_force = 0
+        self.n_image = 0
+        self.event_rows: List[Dict[str, Any]] = []
 
-        self.joint_names = [f"joint_{i}" for i in range(1, 8)]
-        self.joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n) for n in self.joint_names]
-        self.actuator_names = [f"motor_joint_{i}" for i in range(1, 8)]
-        self.actuator_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in self.actuator_names]
-
-        self.link7_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link_7")
-        self.peg_tool_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "peg_tool")
-        self.peg_tip_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "peg_tip_site")
-        self.hole_center_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "hole_center_site")
-        self.ft_force_sensor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "peg_ft_force")
-        self.ft_torque_sensor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "peg_ft_torque")
+        self.joint_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            for name in self.joint_names
+        ]
+        self.actuator_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+            for name in self.actuator_names
+        ]
+        self.ee_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, self.ee_body_name)
+        self.ft_force_sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, self.ft_force_sensor_name)
+        self.ft_torque_sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, self.ft_torque_sensor_name)
+        self.peg_tip_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.peg_tip_site_name)
+        self.hole_center_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.hole_center_site_name)
 
         self.camera_ids: Dict[str, int] = {}
         if self.record_images:
-            for name in self.camera_names:
-                cid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, name)
-                if cid == -1:
-                    print(f"[HDF5Recorder] Warning: camera not found: {name}")
+            for cam_name in self.camera_names:
+                cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+                if cam_id == -1:
+                    print(f"[CompactHDF5Recorder] Warning: camera not found: {cam_name}")
                 else:
-                    self.camera_ids[name] = cid
+                    self.camera_ids[cam_name] = cam_id
             if not self.camera_ids:
-                print("[HDF5Recorder] No valid cameras; image recording disabled.")
                 self.record_images = False
+                print("[CompactHDF5Recorder] No valid camera found; image recording disabled.")
 
-        self._reset_buffers()
-        print(f"[HDF5Recorder] Ready. output_dir={self.output_dir}")
+        print("[CompactHDF5Recorder] Ready.")
+        print(f"  output_dir    = {self.output_dir}")
+        print(f"  state_hz      = {self.state_hz}")
+        print(f"  force_hz      = {self.force_hz}")
+        print(f"  image_hz      = {self.image_hz}")
+        print(f"  record_images = {self.record_images}")
+        if self.record_images:
+            print(f"  cameras       = {list(self.camera_ids.keys())}")
 
+    # ------------------------------------------------------------------
+    # Public lifecycle API
+    # ------------------------------------------------------------------
     def start_episode(self, label: str = "teleop") -> Optional[Path]:
         if self.active:
-            print("[HDF5Recorder] Episode already active.")
+            print("[CompactHDF5Recorder] Episode already active.")
             return self.hdf5_path
 
-        safe = self._safe(label)
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        self.session_dir = self.output_dir / f"{stamp}_{safe}"
+        safe_label = self._safe_name(label)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        self.session_dir = self.output_dir / f"{timestamp}_{safe_label}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.hdf5_path = self.session_dir / "episode.hdf5"
 
-        if self.record_images:
-            self.image_root = self.session_dir / "images"
-            self.image_root.mkdir(parents=True, exist_ok=True)
-            for cam in self.camera_ids:
-                (self.image_root / cam).mkdir(parents=True, exist_ok=True)
-
-        self.episode_label = safe
+        self.episode_label = safe_label
         self.episode_start_sim_time = float(self.data.time)
         self.episode_start_wall_time = time.time()
-        self.next_force_t = float(self.data.time)
         self.next_state_t = float(self.data.time)
+        self.next_force_t = float(self.data.time)
         self.next_image_t = float(self.data.time)
-        self.image_frame_id = 0
-        self._reset_buffers()
+        self.n_state = 0
+        self.n_force = 0
+        self.n_image = 0
+        self.event_rows = []
+
+        self.h5 = h5py.File(self.hdf5_path, "w")
+        self._create_file_structure()
+        self._write_initial_metadata()
+
         self.active = True
         self.add_event("record_start")
-        print(f"[HDF5Recorder] Started: {self.session_dir}")
+        print(f"[CompactHDF5Recorder] Started: {self.session_dir}")
         return self.hdf5_path
 
     def stop_episode(self, status: str = "manual_stop") -> Optional[Path]:
         if not self.active:
-            print("[HDF5Recorder] No active episode.")
+            print("[CompactHDF5Recorder] No active episode.")
             return self.hdf5_path
+
         self.add_event(status)
-        self._write_hdf5(status=status)
+        self._write_final_metadata(status=status)
+        self._write_events()
+
+        if self.h5 is not None:
+            self.h5.flush()
+            self.h5.close()
+            self.h5 = None
+
         self.active = False
-        print(f"[HDF5Recorder] Saved: {self.hdf5_path}")
+        self._write_sidecar_json(status=status)
+        print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
         return self.hdf5_path
 
     def close(self) -> None:
         if self.active:
-            self.stop_episode("controller_shutdown")
+            self.stop_episode(status="controller_shutdown")
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None
 
     def add_event(self, event: str, extra: Optional[Dict[str, Any]] = None) -> None:
         if not self.active:
-            print(f"[HDF5Recorder] Ignored event without active episode: {event}")
+            print(f"[CompactHDF5Recorder] Ignored event without active episode: {event}")
             return
         row: Dict[str, Any] = {
             "event": str(event),
@@ -168,300 +216,382 @@ class MujocoHDF5Recorder:
         if extra:
             row.update(extra)
         self.event_rows.append(row)
-        print(f"[HDF5Recorder] Event: {event} @ {row['t_episode']:.3f}s")
+        print(f"[CompactHDF5Recorder] Event: {event} @ {row['t_episode']:.3f}s")
 
     def record_if_needed(self, controller) -> None:
-        if not self.active:
+        if not self.active or self.h5 is None:
             return
-        t = float(self.data.time)
 
+        t = float(self.data.time)
         if t + 1e-12 >= self.next_force_t:
-            self.force_rows.append(self._force_row(controller))
+            self._append_force_sample()
             while self.next_force_t <= t + 1e-12:
                 self.next_force_t += self.force_period
 
         if t + 1e-12 >= self.next_state_t:
-            self.state_rows.append(self._state_row(controller))
+            self._append_state_sample()
             while self.next_state_t <= t + 1e-12:
                 self.next_state_t += self.state_period
 
         if self.record_images and t + 1e-12 >= self.next_image_t:
-            self._record_images()
+            self._append_image_sample()
             while self.next_image_t <= t + 1e-12:
                 self.next_image_t += self.image_period
 
-        if max(len(self.force_rows), len(self.state_rows), len(self.image_rows)) > self.max_buffer_rows:
-            self.stop_episode("buffer_limit")
+        if max(self.n_state, self.n_force, self.n_image) > self.max_buffer_rows:
+            self.stop_episode(status="buffer_limit")
 
-    def _base(self) -> Dict[str, float]:
-        return {
-            "t_sim": float(self.data.time),
-            "t_episode": float(self.data.time - self.episode_start_sim_time),
-            "t_wall": float(time.time()),
-            "t_wall_from_start": float(time.time() - self.episode_start_wall_time),
-        }
+    # ------------------------------------------------------------------
+    # File structure
+    # ------------------------------------------------------------------
+    def _create_file_structure(self) -> None:
+        assert self.h5 is not None
+        f = self.h5
 
-    def _force_row(self, controller) -> Dict[str, Any]:
-        r: Dict[str, Any] = {}
-        r.update(self._base())
-        r.update(self._ft())
-        r.update(self._task_error())
-        r.update(self._contact())
-        r.update(self._targets(controller))
-        return r
+        f.attrs["schema_version"] = "compact_mujoco_hdf5_v1"
+        f.attrs["alignment_clock"] = "mujoco data.time"
+        f.attrs["image_storage"] = "hdf5_uint8_rgb_frame_tensor"
+        f.attrs["episode_label"] = self.episode_label
+        f.attrs["model_path"] = self.model_path
+        f.attrs["mujoco_timestep"] = float(self.model.opt.timestep)
+        f.attrs["state_hz"] = self.state_hz
+        f.attrs["force_hz"] = self.force_hz
+        f.attrs["image_hz"] = self.image_hz
+        f.attrs["created_wall_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        f.attrs["schema_json"] = json.dumps(
+            {
+                "observations/ee_pose": "[N_state,7] x y z qw qx qy qz",
+                "observations/joint_pos": "[N_state,7] joint angles",
+                "observations/joint_vel": "[N_state,7] joint velocities",
+                "observations/joint_torque": "[N_state,7] qfrc_actuator at joint dofs",
+                "observations/ft_wrench": "[N_force,6] Fx Fy Fz Tx Ty Tz",
+                "observations/images/<camera>": "[N_image,H,W,3] uint8 RGB",
+                "timebase": "MuJoCo data.time",
+            },
+            ensure_ascii=False,
+        )
 
-    def _state_row(self, controller) -> Dict[str, Any]:
-        r: Dict[str, Any] = {}
-        r.update(self._base())
-        r.update(self._joints())
-        r.update(self._ctrl())
-        r.update(self._targets(controller))
-        r.update(self._pose(self.link7_body_id, "link7"))
-        r.update(self._pose(self.peg_tool_body_id, "peg_tool"))
-        r.update(self._site(self.peg_tip_site_id, "peg_tip"))
-        r.update(self._site(self.hole_center_site_id, "hole_center"))
-        r.update(self._task_error())
-        r.update(self._ft())
-        r.update(self._contact())
-        return r
+        f.require_group("episode_metadata")
+        f.require_group("timestamps")
+        f.require_group("observations")
+        f["observations"].require_group("images")
+        f.require_group("events")
 
-    def _record_images(self) -> None:
-        if self.session_dir is None:
-            return
+        self._create_resizable_1d("timestamps/state", dtype=np.float64, chunk=self.chunk_size_state)
+        self._create_resizable_1d("timestamps/state_episode", dtype=np.float64, chunk=self.chunk_size_state)
+        self._create_resizable_1d("timestamps/force", dtype=np.float64, chunk=self.chunk_size_force)
+        self._create_resizable_1d("timestamps/force_episode", dtype=np.float64, chunk=self.chunk_size_force)
+        self._create_resizable_1d("timestamps/image", dtype=np.float64, chunk=max(1, self.chunk_size_image))
+        self._create_resizable_1d("timestamps/image_episode", dtype=np.float64, chunk=max(1, self.chunk_size_image))
+
+        self._create_resizable_2d("observations/ee_pose", width=7, chunk=self.chunk_size_state)
+        self._create_resizable_2d("observations/joint_pos", width=len(self.joint_names), chunk=self.chunk_size_state)
+        self._create_resizable_2d("observations/joint_vel", width=len(self.joint_names), chunk=self.chunk_size_state)
+        self._create_resizable_2d("observations/joint_torque", width=len(self.joint_names), chunk=self.chunk_size_state)
+        self._create_resizable_2d("observations/ft_wrench", width=6, chunk=self.chunk_size_force)
+
+        if self.record_images:
+            str_dtype = h5py.string_dtype(encoding="utf-8")
+            camera_names = np.asarray(list(self.camera_ids.keys()), dtype=object)
+            f["observations/images"].create_dataset("camera_names", data=camera_names, dtype=str_dtype)
+            for cam_name in self.camera_ids.keys():
+                self._create_image_dataset(f"observations/images/{cam_name}")
+
+    def _create_resizable_1d(self, path: str, dtype, chunk: int) -> None:
+        assert self.h5 is not None
+        self.h5.create_dataset(
+            path,
+            shape=(0,),
+            maxshape=(None,),
+            dtype=dtype,
+            chunks=(max(1, int(chunk)),),
+            compression=self.numeric_compression,
+        )
+
+    def _create_resizable_2d(self, path: str, width: int, chunk: int) -> None:
+        assert self.h5 is not None
+        self.h5.create_dataset(
+            path,
+            shape=(0, width),
+            maxshape=(None, width),
+            dtype=np.float64,
+            chunks=(max(1, int(chunk)), width),
+            compression=self.numeric_compression,
+        )
+
+    def _create_image_dataset(self, path: str) -> None:
+        assert self.h5 is not None
+        kwargs = {}
+        if self.image_compression == "gzip":
+            kwargs["compression"] = "gzip"
+            kwargs["compression_opts"] = self.image_compression_level
+        elif self.image_compression == "lzf":
+            kwargs["compression"] = "lzf"
+        elif self.image_compression is None:
+            pass
+        else:
+            raise ValueError("image_compression must be 'lzf', 'gzip', or None")
+
+        self.h5.create_dataset(
+            path,
+            shape=(0, self.image_height, self.image_width, 3),
+            maxshape=(None, self.image_height, self.image_width, 3),
+            dtype=np.uint8,
+            chunks=(max(1, self.chunk_size_image), self.image_height, self.image_width, 3),
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Append samples
+    # ------------------------------------------------------------------
+    def _append_force_sample(self) -> None:
+        i = self.n_force
+        self._append_1d("timestamps/force", i, float(self.data.time))
+        self._append_1d("timestamps/force_episode", i, self._t_episode())
+        self._append_2d("observations/ft_wrench", i, self._ft_wrench())
+        self.n_force += 1
+
+    def _append_state_sample(self) -> None:
+        i = self.n_state
+        self._append_1d("timestamps/state", i, float(self.data.time))
+        self._append_1d("timestamps/state_episode", i, self._t_episode())
+        self._append_2d("observations/ee_pose", i, self._ee_pose())
+        self._append_2d("observations/joint_pos", i, self._joint_pos())
+        self._append_2d("observations/joint_vel", i, self._joint_vel())
+        self._append_2d("observations/joint_torque", i, self._joint_torque())
+        self.n_state += 1
+
+    def _append_image_sample(self) -> None:
         if self.renderer is None:
             self.renderer = mujoco.Renderer(self.model, height=self.image_height, width=self.image_width)
 
-        t = float(self.data.time)
-        te = float(self.data.time - self.episode_start_sim_time)
-        fid = int(self.image_frame_id)
+        i = self.n_image
+        self._append_1d("timestamps/image", i, float(self.data.time))
+        self._append_1d("timestamps/image_episode", i, self._t_episode())
 
         for cam_name, cam_id in self.camera_ids.items():
             self.renderer.update_scene(self.data, camera=cam_id)
             rgb = self.renderer.render()
-            fname = f"{fid:08d}_{t:.6f}.{self.image_format}"
-            rel = Path("images") / cam_name / fname
-            abs_path = self.session_dir / rel
-            if self.image_format in {"jpg", "jpeg"}:
-                imageio.imwrite(abs_path, rgb, quality=self.jpg_quality)
-            else:
-                imageio.imwrite(abs_path, rgb)
-            self.image_rows.append({
-                "frame_id": fid,
-                "t_sim": t,
-                "t_episode": te,
-                "camera": cam_name,
-                "file": str(rel),
-                "width": self.image_width,
-                "height": self.image_height,
-            })
-        self.image_frame_id += 1
+            if rgb.dtype != np.uint8:
+                rgb = np.asarray(np.clip(rgb, 0, 255), dtype=np.uint8)
+            self._append_image(f"observations/images/{cam_name}", i, rgb)
 
-    def _joints(self) -> Dict[str, float]:
-        r: Dict[str, float] = {}
-        for i, jid in enumerate(self.joint_ids, 1):
-            if jid == -1:
-                r[f"q{i}"] = np.nan
-                r[f"dq{i}"] = np.nan
-            else:
-                r[f"q{i}"] = float(self.data.qpos[self.model.jnt_qposadr[jid]])
-                r[f"dq{i}"] = float(self.data.qvel[self.model.jnt_dofadr[jid]])
-        return r
+        self.n_image += 1
 
-    def _ctrl(self) -> Dict[str, float]:
-        r: Dict[str, float] = {}
-        for i, aid in enumerate(self.actuator_ids, 1):
-            r[f"ctrl{i}"] = float(self.data.ctrl[aid]) if aid != -1 else np.nan
-        return r
+    def _append_1d(self, path: str, i: int, value: float) -> None:
+        assert self.h5 is not None
+        d = self.h5[path]
+        d.resize((i + 1,))
+        d[i] = value
 
-    def _targets(self, controller) -> Dict[str, float]:
-        r: Dict[str, float] = {}
-        target = getattr(controller, "target_joints", None)
-        command = getattr(controller, "command_joints", None)
-        for i in range(7):
-            r[f"q_target{i+1}"] = float(target[i]) if target is not None and i < len(target) else np.nan
-            r[f"q_cmd{i+1}"] = float(command[i]) if command is not None and i < len(command) else np.nan
-        return r
+    def _append_2d(self, path: str, i: int, row: np.ndarray) -> None:
+        assert self.h5 is not None
+        d = self.h5[path]
+        d.resize((i + 1, d.shape[1]))
+        d[i, :] = row
 
-    def _pose(self, body_id: int, prefix: str) -> Dict[str, float]:
-        keys = [f"{prefix}_{s}" for s in ["px", "py", "pz", "qw", "qx", "qy", "qz"]]
-        if body_id == -1:
-            return {k: np.nan for k in keys}
-        p = self.data.xpos[body_id].copy()
-        q = self.data.xquat[body_id].copy()
-        return dict(zip(keys, [float(p[0]), float(p[1]), float(p[2]), float(q[0]), float(q[1]), float(q[2]), float(q[3])]))
+    def _append_image(self, path: str, i: int, frame: np.ndarray) -> None:
+        assert self.h5 is not None
+        d = self.h5[path]
+        d.resize((i + 1, self.image_height, self.image_width, 3))
+        d[i, :, :, :] = frame
 
-    def _site(self, site_id: int, prefix: str) -> Dict[str, float]:
-        if site_id == -1:
-            return {f"{prefix}_{s}": np.nan for s in ["x", "y", "z"]}
-        p = self.data.site_xpos[site_id].copy()
-        return {f"{prefix}_x": float(p[0]), f"{prefix}_y": float(p[1]), f"{prefix}_z": float(p[2])}
+    # ------------------------------------------------------------------
+    # Metadata
+    # ------------------------------------------------------------------
+    def _write_initial_metadata(self) -> None:
+        assert self.h5 is not None
+        g = self.h5["episode_metadata"]
+        g.attrs["status"] = "recording"
+        g.attrs["episode_label"] = self.episode_label
+        g.attrs["episode_start_sim_time"] = self.episode_start_sim_time
+        g.attrs["episode_start_wall_time"] = self.episode_start_wall_time
+        g.attrs["model_path"] = self.model_path
+        g.attrs["mujoco_timestep"] = float(self.model.opt.timestep)
+        g.attrs["state_hz"] = self.state_hz
+        g.attrs["force_hz"] = self.force_hz
+        g.attrs["image_hz"] = self.image_hz
+        g.attrs["ee_body_name"] = self.ee_body_name
+        g.attrs["ft_force_sensor_name"] = self.ft_force_sensor_name
+        g.attrs["ft_torque_sensor_name"] = self.ft_torque_sensor_name
+        g.attrs["peg_tip_site_name"] = self.peg_tip_site_name
+        g.attrs["hole_center_site_name"] = self.hole_center_site_name
+        g.attrs["task_name"] = "wall_peg_in_hole"
+        g.attrs["task_success"] = "unknown"
+        g.attrs["random_seed"] = -1
 
-    def _sensor(self, sid: int, n: int) -> List[float]:
-        if sid == -1:
-            return [np.nan] * n
-        adr = self.model.sensor_adr[sid]
-        dim = self.model.sensor_dim[sid]
-        v = self.data.sensordata[adr: adr + dim].copy().tolist()
-        return [float(x) for x in (v + [np.nan] * n)[:n]]
+        self._write_string_dataset("episode_metadata/joint_names", self.joint_names)
+        self._write_string_dataset("episode_metadata/actuator_names", self.actuator_names)
+        self._write_string_dataset("episode_metadata/camera_names", list(self.camera_ids.keys()))
 
-    def _ft(self) -> Dict[str, float]:
-        f = self._sensor(self.ft_force_sensor_id, 3)
-        tau = self._sensor(self.ft_torque_sensor_id, 3)
-        return {"fx": f[0], "fy": f[1], "fz": f[2], "tx": tau[0], "ty": tau[1], "tz": tau[2]}
+        initial_joint_pos = self._joint_pos()
+        initial_joint_vel = self._joint_vel()
+        initial_joint_torque = self._joint_torque()
+        initial_ee_pose = self._ee_pose()
+        initial_ft = self._ft_wrench()
+        initial_peg_tip = self._site_pos(self.peg_tip_site_id)
+        initial_hole_center = self._site_pos(self.hole_center_site_id)
+        initial_err_xyz = initial_peg_tip - initial_hole_center
 
-    def _task_error(self) -> Dict[str, float]:
-        peg = self._site(self.peg_tip_site_id, "peg_tip")
-        hole = self._site(self.hole_center_site_id, "hole_center")
-        vals = [peg["peg_tip_x"], peg["peg_tip_y"], peg["peg_tip_z"], hole["hole_center_x"], hole["hole_center_y"], hole["hole_center_z"]]
-        if any(np.isnan(v) for v in vals):
-            return {"err_x": np.nan, "err_y": np.nan, "err_z": np.nan, "align_err_xz": np.nan, "insertion_err_y": np.nan}
-        ex = peg["peg_tip_x"] - hole["hole_center_x"]
-        ey = peg["peg_tip_y"] - hole["hole_center_y"]
-        ez = peg["peg_tip_z"] - hole["hole_center_z"]
-        return {"err_x": float(ex), "err_y": float(ey), "err_z": float(ez), "align_err_xz": float(np.linalg.norm([ex, ez])), "insertion_err_y": float(ey)}
+        g.create_dataset("initial_joint_pos", data=initial_joint_pos)
+        g.create_dataset("initial_joint_vel", data=initial_joint_vel)
+        g.create_dataset("initial_joint_torque", data=initial_joint_torque)
+        g.create_dataset("initial_ee_pose", data=initial_ee_pose)
+        g.create_dataset("initial_ft_wrench", data=initial_ft)
+        g.create_dataset("initial_peg_tip_pos", data=initial_peg_tip)
+        g.create_dataset("initial_hole_center_pos", data=initial_hole_center)
+        g.create_dataset("initial_task_error_xyz", data=initial_err_xyz)
+        g.attrs["initial_align_err_xz"] = float(np.linalg.norm([initial_err_xyz[0], initial_err_xyz[2]]))
+        g.attrs["initial_insertion_err_y"] = float(initial_err_xyz[1])
 
-    def _contact(self) -> Dict[str, Any]:
-        peg_contact = 0
-        min_dist = np.nan
-        for i in range(self.data.ncon):
-            c = self.data.contact[i]
-            g1 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom1)
-            g2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom2)
-            if g1 == "cylindrical_peg" or g2 == "cylindrical_peg":
-                peg_contact = 1
-                if np.isnan(min_dist) or c.dist < min_dist:
-                    min_dist = float(c.dist)
-        return {"ncon": int(self.data.ncon), "peg_contact": int(peg_contact), "peg_contact_min_dist": min_dist}
+    def _write_final_metadata(self, status: str) -> None:
+        assert self.h5 is not None
+        g = self.h5["episode_metadata"]
+        g.attrs["status"] = status
+        g.attrs["episode_end_sim_time"] = float(self.data.time)
+        g.attrs["episode_end_wall_time"] = float(time.time())
+        g.attrs["duration_sim"] = float(self.data.time - self.episode_start_sim_time)
+        g.attrs["duration_wall"] = float(time.time() - self.episode_start_wall_time)
+        g.attrs["n_state"] = int(self.n_state)
+        g.attrs["n_force"] = int(self.n_force)
+        g.attrs["n_image"] = int(self.n_image)
 
-    def _write_hdf5(self, status: str) -> None:
-        assert self.hdf5_path is not None
-        with h5py.File(self.hdf5_path, "w") as f:
-            f.attrs["status"] = status
-            f.attrs["episode_label"] = self.episode_label
-            f.attrs["model_path"] = self.model_path
-            f.attrs["mujoco_timestep"] = float(self.model.opt.timestep)
-            f.attrs["force_hz"] = self.force_hz
-            f.attrs["state_hz"] = self.state_hz
-            f.attrs["image_hz"] = self.image_hz
-            f.attrs["alignment_clock"] = "mujoco data.time"
-            f.attrs["duration_sim"] = float(self.data.time - self.episode_start_sim_time)
-            f.attrs["schema_json"] = json.dumps({
-                "image_storage": "external JPG/PNG paths in observations/images/<camera>/file_paths",
-                "task_convention": "wall-parallel: x-z alignment plane, y insertion axis",
-            })
+        final_values = {
+            "final_joint_pos": self._joint_pos(),
+            "final_joint_vel": self._joint_vel(),
+            "final_joint_torque": self._joint_torque(),
+            "final_ee_pose": self._ee_pose(),
+            "final_ft_wrench": self._ft_wrench(),
+            "final_peg_tip_pos": self._site_pos(self.peg_tip_site_id),
+            "final_hole_center_pos": self._site_pos(self.hole_center_site_id),
+        }
+        for name, value in final_values.items():
+            if name in g:
+                del g[name]
+            g.create_dataset(name, data=value)
 
-            self._write_state(f)
-            self._write_force(f)
-            self._write_images(f)
-            self._write_events(f)
+        final_err_xyz = self._site_pos(self.peg_tip_site_id) - self._site_pos(self.hole_center_site_id)
+        g.attrs["final_align_err_xz"] = float(np.linalg.norm([final_err_xyz[0], final_err_xyz[2]]))
+        g.attrs["final_insertion_err_y"] = float(final_err_xyz[1])
 
+        self.h5.attrs["status"] = status
+        self.h5.attrs["duration_sim"] = float(self.data.time - self.episode_start_sim_time)
+        self.h5.attrs["n_state"] = int(self.n_state)
+        self.h5.attrs["n_force"] = int(self.n_force)
+        self.h5.attrs["n_image"] = int(self.n_image)
+
+    def _write_events(self) -> None:
+        assert self.h5 is not None
+        g = self.h5["events"]
+        str_dtype = h5py.string_dtype(encoding="utf-8")
+        names = np.asarray([str(r.get("event", "")) for r in self.event_rows], dtype=object)
+        t_sim = np.asarray([float(r.get("t_sim", np.nan)) for r in self.event_rows], dtype=np.float64)
+        t_episode = np.asarray([float(r.get("t_episode", np.nan)) for r in self.event_rows], dtype=np.float64)
+        t_wall = np.asarray([float(r.get("t_wall", np.nan)) for r in self.event_rows], dtype=np.float64)
+        for key in ["names", "t_sim", "t_episode", "t_wall"]:
+            if key in g:
+                del g[key]
+        g.create_dataset("names", data=names, dtype=str_dtype)
+        g.create_dataset("t_sim", data=t_sim)
+        g.create_dataset("t_episode", data=t_episode)
+        g.create_dataset("t_wall", data=t_wall)
+
+    def _write_string_dataset(self, path: str, values: List[str]) -> None:
+        assert self.h5 is not None
+        str_dtype = h5py.string_dtype(encoding="utf-8")
+        arr = np.asarray([str(v) for v in values], dtype=object)
+        if path in self.h5:
+            del self.h5[path]
+        self.h5.create_dataset(path, data=arr, dtype=str_dtype)
+
+    def _write_sidecar_json(self, status: str) -> None:
+        if self.session_dir is None or self.hdf5_path is None:
+            return
         sidecar = {
             "hdf5_path": str(self.hdf5_path),
             "status": status,
+            "episode_label": self.episode_label,
             "duration_sim": float(self.data.time - self.episode_start_sim_time),
-            "n_state": len(self.state_rows),
-            "n_force": len(self.force_rows),
-            "n_image_rows": len(self.image_rows),
-            "n_events": len(self.event_rows),
-            "record_images": self.record_images,
+            "n_state": int(self.n_state),
+            "n_force": int(self.n_force),
+            "n_image": int(self.n_image),
             "camera_names": list(self.camera_ids.keys()),
+            "image_storage": "inside_hdf5_uint8_rgb",
+            "schema_version": "compact_mujoco_hdf5_v1",
         }
-        assert self.session_dir is not None
         with (self.session_dir / "metadata.json").open("w", encoding="utf-8") as f:
             json.dump(sidecar, f, indent=2, ensure_ascii=False)
 
-    def _write_state(self, f: h5py.File) -> None:
-        rows = self.state_rows
-        gts = f.require_group("timestamps")
-        obs = f.require_group("observations")
-        act = f.require_group("actions")
-        task = f.require_group("task")
-        con = f.require_group("contact")
+    # ------------------------------------------------------------------
+    # Low-level getters
+    # ------------------------------------------------------------------
+    def _t_episode(self) -> float:
+        return float(self.data.time - self.episode_start_sim_time)
 
-        gts.create_dataset("state", data=self._col(rows, "t_sim"))
-        gts.create_dataset("state_episode", data=self._col(rows, "t_episode"))
-        obs.create_dataset("qpos", data=self._mat(rows, [f"q{i}" for i in range(1, 8)]))
-        obs.create_dataset("qvel", data=self._mat(rows, [f"dq{i}" for i in range(1, 8)]))
-        obs.create_dataset("ee_pose", data=self._mat(rows, ["peg_tool_px", "peg_tool_py", "peg_tool_pz", "peg_tool_qw", "peg_tool_qx", "peg_tool_qy", "peg_tool_qz"]))
-        obs.create_dataset("link7_pose", data=self._mat(rows, ["link7_px", "link7_py", "link7_pz", "link7_qw", "link7_qx", "link7_qy", "link7_qz"]))
-        obs.create_dataset("peg_tip_pos", data=self._mat(rows, ["peg_tip_x", "peg_tip_y", "peg_tip_z"]))
-        obs.create_dataset("hole_center_pos", data=self._mat(rows, ["hole_center_x", "hole_center_y", "hole_center_z"]))
-        obs.create_dataset("force_torque_state_sample", data=self._mat(rows, ["fx", "fy", "fz", "tx", "ty", "tz"]))
-        act.create_dataset("q_target", data=self._mat(rows, [f"q_target{i}" for i in range(1, 8)]))
-        act.create_dataset("q_cmd", data=self._mat(rows, [f"q_cmd{i}" for i in range(1, 8)]))
-        act.create_dataset("ctrl", data=self._mat(rows, [f"ctrl{i}" for i in range(1, 8)]))
-        task.create_dataset("state_error_xyz", data=self._mat(rows, ["err_x", "err_y", "err_z"]))
-        task.create_dataset("state_align_err_xz", data=self._col(rows, "align_err_xz"))
-        task.create_dataset("state_insertion_err_y", data=self._col(rows, "insertion_err_y"))
-        con.create_dataset("state_peg_contact", data=self._col(rows, "peg_contact", dtype=np.int32))
-        con.create_dataset("state_peg_contact_min_dist", data=self._col(rows, "peg_contact_min_dist"))
+    def _joint_pos(self) -> np.ndarray:
+        out = np.full(len(self.joint_ids), np.nan, dtype=np.float64)
+        for i, jid in enumerate(self.joint_ids):
+            if jid == -1:
+                continue
+            qadr = self.model.jnt_qposadr[jid]
+            out[i] = float(self.data.qpos[qadr])
+        return out
 
-    def _write_force(self, f: h5py.File) -> None:
-        rows = self.force_rows
-        gts = f.require_group("timestamps")
-        obs = f.require_group("observations")
-        task = f.require_group("task")
-        con = f.require_group("contact")
-        act = f.require_group("actions")
-        gts.create_dataset("force", data=self._col(rows, "t_sim"))
-        gts.create_dataset("force_episode", data=self._col(rows, "t_episode"))
-        obs.create_dataset("force_torque", data=self._mat(rows, ["fx", "fy", "fz", "tx", "ty", "tz"]))
-        task.create_dataset("force_error_xyz", data=self._mat(rows, ["err_x", "err_y", "err_z"]))
-        task.create_dataset("force_align_err_xz", data=self._col(rows, "align_err_xz"))
-        task.create_dataset("force_insertion_err_y", data=self._col(rows, "insertion_err_y"))
-        con.create_dataset("force_peg_contact", data=self._col(rows, "peg_contact", dtype=np.int32))
-        con.create_dataset("force_peg_contact_min_dist", data=self._col(rows, "peg_contact_min_dist"))
-        act.create_dataset("q_target_force_sample", data=self._mat(rows, [f"q_target{i}" for i in range(1, 8)]))
-        act.create_dataset("q_cmd_force_sample", data=self._mat(rows, [f"q_cmd{i}" for i in range(1, 8)]))
+    def _joint_vel(self) -> np.ndarray:
+        out = np.full(len(self.joint_ids), np.nan, dtype=np.float64)
+        for i, jid in enumerate(self.joint_ids):
+            if jid == -1:
+                continue
+            dadr = self.model.jnt_dofadr[jid]
+            out[i] = float(self.data.qvel[dadr])
+        return out
 
-    def _write_images(self, f: h5py.File) -> None:
-        rows = self.image_rows
-        gts = f.require_group("timestamps")
-        img = f.require_group("observations").require_group("images")
-        str_dt = h5py.string_dtype(encoding="utf-8")
-        gts.create_dataset("image", data=self._col(rows, "t_sim"))
-        gts.create_dataset("image_episode", data=self._col(rows, "t_episode"))
-        cams = sorted(set(str(r.get("camera", "")) for r in rows if r.get("camera", "")))
-        img.create_dataset("camera_names", data=np.asarray(cams, dtype=object), dtype=str_dt)
-        for cam in cams:
-            rs = [r for r in rows if r.get("camera") == cam]
-            cg = img.require_group(cam)
-            cg.create_dataset("timestamps", data=self._col(rs, "t_sim"))
-            cg.create_dataset("timestamps_episode", data=self._col(rs, "t_episode"))
-            cg.create_dataset("frame_id", data=self._col(rs, "frame_id", dtype=np.int64))
-            paths = np.asarray([str(r.get("file", "")) for r in rs], dtype=object)
-            cg.create_dataset("file_paths", data=paths, dtype=str_dt)
-            cg.attrs["width"] = self.image_width
-            cg.attrs["height"] = self.image_height
+    def _joint_torque(self) -> np.ndarray:
+        """
+        For hinge joints, MuJoCo generalized actuator force at the joint dof
+        can be interpreted as the actuator torque for that joint.
+        """
+        out = np.full(len(self.joint_ids), np.nan, dtype=np.float64)
+        for i, jid in enumerate(self.joint_ids):
+            if jid == -1:
+                continue
+            dadr = self.model.jnt_dofadr[jid]
+            out[i] = float(self.data.qfrc_actuator[dadr])
+        return out
 
-    def _write_events(self, f: h5py.File) -> None:
-        rows = self.event_rows
-        g = f.require_group("events")
-        str_dt = h5py.string_dtype(encoding="utf-8")
-        names = np.asarray([str(r.get("event", "")) for r in rows], dtype=object)
-        g.create_dataset("names", data=names, dtype=str_dt)
-        g.create_dataset("t_sim", data=self._col(rows, "t_sim"))
-        g.create_dataset("t_episode", data=self._col(rows, "t_episode"))
+    def _ee_pose(self) -> np.ndarray:
+        if self.ee_body_id == -1:
+            return np.full(7, np.nan, dtype=np.float64)
+        p = self.data.xpos[self.ee_body_id].copy()
+        q = self.data.xquat[self.ee_body_id].copy()  # MuJoCo quaternion order: w x y z
+        return np.asarray([p[0], p[1], p[2], q[0], q[1], q[2], q[3]], dtype=np.float64)
 
-    def _reset_buffers(self) -> None:
-        self.force_rows: List[Dict[str, Any]] = []
-        self.state_rows: List[Dict[str, Any]] = []
-        self.image_rows: List[Dict[str, Any]] = []
-        self.event_rows: List[Dict[str, Any]] = []
+    def _site_pos(self, site_id: int) -> np.ndarray:
+        if site_id == -1:
+            return np.full(3, np.nan, dtype=np.float64)
+        return self.data.site_xpos[site_id].copy().astype(np.float64)
+
+    def _sensor_vec(self, sensor_id: int, dim_expected: int) -> np.ndarray:
+        if sensor_id == -1:
+            return np.full(dim_expected, np.nan, dtype=np.float64)
+        adr = self.model.sensor_adr[sensor_id]
+        dim = self.model.sensor_dim[sensor_id]
+        values = self.data.sensordata[adr:adr + dim].copy().astype(np.float64)
+        if len(values) < dim_expected:
+            padded = np.full(dim_expected, np.nan, dtype=np.float64)
+            padded[:len(values)] = values
+            return padded
+        return values[:dim_expected]
+
+    def _ft_wrench(self) -> np.ndarray:
+        force = self._sensor_vec(self.ft_force_sensor_id, 3)
+        torque = self._sensor_vec(self.ft_torque_sensor_id, 3)
+        return np.concatenate([force, torque]).astype(np.float64)
 
     @staticmethod
-    def _safe(x: str) -> str:
-        s = "".join(c if c.isalnum() or c in {"_", "-"} else "_" for c in str(x))
-        return s.strip("_") or "episode"
+    def _safe_name(text: str) -> str:
+        safe = "".join(c if c.isalnum() or c in {"_", "-"} else "_" for c in str(text))
+        return safe.strip("_") or "episode"
 
-    @staticmethod
-    def _col(rows: List[Dict[str, Any]], key: str, dtype=np.float64) -> np.ndarray:
-        if not rows:
-            return np.asarray([], dtype=dtype)
-        return np.asarray([r.get(key, np.nan) for r in rows], dtype=dtype)
 
-    @staticmethod
-    def _mat(rows: List[Dict[str, Any]], keys: List[str], dtype=np.float64) -> np.ndarray:
-        if not rows:
-            return np.empty((0, len(keys)), dtype=dtype)
-        return np.asarray([[r.get(k, np.nan) for k in keys] for r in rows], dtype=dtype)
+MujocoCompactHDF5Recorder = MujocoHDF5Recorder

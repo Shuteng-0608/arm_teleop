@@ -200,9 +200,13 @@ class TeleopSystemMujoco:
             "hdf5_jpg_quality": self.config.get("hdf5_jpg_quality", 90),
 
             # 先自动记录，后面再升级成按键 start/stop
-            "hdf5_auto_start": self.config.get("hdf5_auto_start", True),
+            "hdf5_auto_start": self.config.get("hdf5_auto_start", False),
             "hdf5_episode_label": self.config.get("hdf5_episode_label", "teleop"),
             "hdf5_max_buffer_rows": self.config.get("hdf5_max_buffer_rows", 500000),
+
+            # ROS recording service
+            "enable_recording_service": self.config.get("enable_recording_service", True),
+            "recording_service_name": self.config.get("recording_service_name", "/mujoco_hdf5_recording/set_recording")
 
 
         }

@@ -7,7 +7,7 @@ record_all_500hz: true
 
 
 # HDF5 recording
-record_hdf5: false
+record_hdf5: true
 hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5"
 
 hdf5_force_hz: 500.0
@@ -21,12 +21,16 @@ hdf5_camera_names:
 
 hdf5_image_width: 640
 hdf5_image_height: 480
-hdf5_image_format: "jpg"
+hdf5_image_format: "hdf5_rgb"
 hdf5_jpg_quality: 90
 
-hdf5_auto_start: true
+hdf5_auto_start: false
 hdf5_episode_label: "teleop"
 hdf5_max_buffer_rows: 500000
+
+# ROS service for data recording
+enable_recording_service: true
+recording_service_name: "/mujoco_hdf5_recording/set_recording"
 
 # Mujoco配置
 # mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"

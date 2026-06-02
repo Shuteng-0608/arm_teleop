@@ -30,9 +30,13 @@ import cv2
 import mujoco
 import mujoco.viewer
 import h5py
+import shutil
 
 from utils.mujoco_data_recorder import MujocoDataRecorder
-from utils.mujoco_hdf5_recorder import MujocoHDF5Recorder
+from vptele.utils.mujoco_hdf5_recorder import MujocoHDF5Recorder
+
+import rospy
+from arm_teleop.srv import SetRecording, SetRecordingResponse
 
 
 class RobotControllerMuJoCoPegTool:
@@ -233,10 +237,36 @@ class RobotControllerMuJoCoPegTool:
                 max_buffer_rows=int(self.config.get("hdf5_max_buffer_rows", 500000)),
             )
 
-            if bool(self.config.get("hdf5_auto_start", True)):
+            if bool(self.config.get("hdf5_auto_start", False)):
                 self.hdf5_recorder.start_episode(
                     label=self.config.get("hdf5_episode_label", "teleop")
                 )
+
+
+        
+
+        # ############################################################# #
+        # ---------------- ROS Data Recording Service ----------------- #
+        # ############################################################# #
+        self.recording_service = None
+
+        self.enable_recording_service = bool(
+            self.config.get("enable_recording_service", True)
+        )
+
+        self.recording_service_name = self.config.get(
+            "recording_service_name",
+            "/mujoco_hdf5_recording/set_recording"
+        )
+
+        if self.enable_recording_service and self.hdf5_recorder is not None:
+            self.recording_service = rospy.Service(
+                self.recording_service_name,
+                SetRecording,
+                self._handle_recording_service,
+            )
+
+            print(f"[Recording Service] Ready: {self.recording_service_name}")
 
 
 
@@ -288,6 +318,104 @@ class RobotControllerMuJoCoPegTool:
             print("启动 MuJoCo 仿真线程...")
             self.start_simulation()
 
+    
+    def _handle_recording_service(self, req):
+        """
+        ROS service callback for starting/stopping HDF5 episode recording.
+
+        req.record = True:
+            start a new episode
+
+        req.record = False:
+            stop current episode
+            if req.keep is False, delete the generated episode folder
+        """
+        if self.hdf5_recorder is None:
+            return SetRecordingResponse(
+                success=False,
+                active=False,
+                message="HDF5 recorder is not initialized.",
+                episode_path="",
+            )
+
+        try:
+            # Start recording
+            if req.record:
+                if self.hdf5_recorder.active:
+                    current_path = ""
+                    if self.hdf5_recorder.hdf5_path is not None:
+                        current_path = str(self.hdf5_recorder.hdf5_path)
+
+                    return SetRecordingResponse(
+                        success=False,
+                        active=True,
+                        message="Recording is already active.",
+                        episode_path=current_path,
+                    )
+
+                label = req.label.strip() if req.label.strip() else "teleop"
+
+                hdf5_path = self.hdf5_recorder.start_episode(label=label)
+
+                return SetRecordingResponse(
+                    success=True,
+                    active=True,
+                    message=f"Started HDF5 recording: {label}",
+                    episode_path=str(hdf5_path) if hdf5_path is not None else "",
+                )
+
+            # Stop recording
+            else:
+                if not self.hdf5_recorder.active:
+                    last_path = ""
+                    if self.hdf5_recorder.hdf5_path is not None:
+                        last_path = str(self.hdf5_recorder.hdf5_path)
+
+                    return SetRecordingResponse(
+                        success=False,
+                        active=False,
+                        message="No active recording episode.",
+                        episode_path=last_path,
+                    )
+
+                hdf5_path = self.hdf5_recorder.stop_episode(
+                    status="manual_keep" if req.keep else "manual_discard"
+                )
+
+                episode_path = str(hdf5_path) if hdf5_path is not None else ""
+
+                if not req.keep:
+                    # Delete the entire episode folder.
+                    # hdf5_path = .../<episode_folder>/episode.hdf5
+                    if hdf5_path is not None:
+                        episode_dir = hdf5_path.parent
+                        if episode_dir.exists():
+                            shutil.rmtree(episode_dir)
+
+                    return SetRecordingResponse(
+                        success=True,
+                        active=False,
+                        message="Stopped recording and discarded this episode.",
+                        episode_path=episode_path,
+                    )
+
+                return SetRecordingResponse(
+                    success=True,
+                    active=False,
+                    message="Stopped recording and kept this episode.",
+                    episode_path=episode_path,
+                )
+
+        except Exception as e:
+            return SetRecordingResponse(
+                success=False,
+                active=bool(getattr(self.hdf5_recorder, "active", False)),
+                message=f"Recording service error: {e}",
+                episode_path="",
+            )
+    
+    
+    
     # ------------------------------------------------------------------
     # Model information
     # ------------------------------------------------------------------
