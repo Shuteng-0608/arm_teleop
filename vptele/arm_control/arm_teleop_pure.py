@@ -17,6 +17,10 @@ from utils.logger import get_logger
 from utils.filters import OneEuroFilter, PoseFilter7D
 from scipy.spatial.transform import Rotation as R
 import threading
+import os
+import csv
+from datetime import datetime
+from std_srvs.srv import SetBool, SetBoolResponse
 logger = get_logger()
 
 class ArmTeleopPure:
@@ -126,6 +130,178 @@ class ArmTeleopPure:
         # logger.info("启动 头部数据获取线程...")
         # self.head_thread = Thread(target=self.head_loop, daemon=True) 
         # self.head_thread.start()
+        # For data logging
+        self.vp_time = 0.0
+        self.mapping_time = 0.0
+        self.euro_time = 0.0
+        self.ik_time = 0.0
+        self.filter_time = 0.0
+        self.loop_cost_time = 0.0
+        self.last_target_pose_right_smooth = [0.0] * 7
+        self.last_target_pose_right = [0.0] * 7
+        self.last_target_pose_left_smooth = [0.0] * 7
+        self.last_target_pose_left = [0.0] * 7
+        self.last_target_pose_left_quat = [0.0] * 7
+        self.last_target_pose_right_quat = [0.0] * 7
+
+        # 线程锁，防止其他线程更新数据时在此处读取造成数据撕裂
+        self.data_lock = threading.Lock()
+        
+        # 2. 状态控制标志
+        self.is_recording = False
+        
+        # 3. 指定保存路径并生成完整的文件路径
+        save_directory = "/home/pangu/pangu/src/arm_teleop/data_log" 
+        # /home/pangu/pangu/src/arm_teleop/vptele/arm_control/arm_teleop_ros.py
+        
+        # 检查文件夹是否存在，如果不存在则自动创建
+        os.makedirs(save_directory, exist_ok=True)
+        
+        # 生成时间戳和完整的文件名
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.csv_filename = os.path.join(save_directory, f"pure_teleop_data_{timestamp_str}.csv") # <--- 核心修改点
+        
+        # 打开文件
+        self.file_handle = open(self.csv_filename, 'w', newline='')
+        self.csv_writer = csv.writer(self.file_handle)
+        
+        # 写入 CSV 表头
+        self._write_csv_header()
+        
+        # 注册 rospy 退出时的回调，确保程序结束时文件安全关闭
+        rospy.on_shutdown(self._shutdown_hook)
+
+        # 4. 创建 ROS 服务，用于控制记录的启停
+        """
+        rosservice call /toggle_data_recording "data: true"
+        rosservice call /toggle_data_recording "data: false"
+        """
+        self.record_srv = rospy.Service(
+            '/toggle_data_recording', 
+            SetBool, 
+            self._handle_record_srv
+        )
+        rospy.loginfo(f"数据记录节点已就绪。文件保存至: {self.csv_filename}")
+
+
+        self.logging_thread = Thread(target=self.logging_loop, daemon=True)
+        self.logging_thread.start()
+
+    def logging_loop(self):
+        """
+        记录遥操作数据的循环函数,将数据保存为csv文件
+        """
+        rate = rospy.Rate(25)
+        
+        while not rospy.is_shutdown():
+            if self.is_recording:
+                # current_timestamp = rospy.get_time()
+                current_timestamp = time.time()
+                row_data = [current_timestamp]
+                
+                # 使用锁安全地复制所有当前数据
+                with self.data_lock:
+                    # 1. 写入位姿数据
+                    row_data.extend(self.last_target_pose_right_smooth)
+                    row_data.extend(self.last_target_pose_right_quat)
+                    # row_data.extend(self.last_target_pose_left_smooth)
+                    # row_data.extend(self.last_target_pose_left_quat)
+                    # 28列位姿数据: 右臂平滑(7) + 右臂原始(7) + 左臂平滑(7) + 左臂原始(7)
+                    
+                    # # 2. 写入臂角数据 (标量，用 append)
+                    # row_data.append(self.current_arm_angle_left)
+                    # row_data.append(self.current_arm_angle_right)
+                    # # 30-31列: 左臂臂角 + 右臂臂角
+                    
+                    # # 3. 写入关节角度数据 (列表，用 extend)
+                    # row_data.extend(self.last_left_joint_angles)
+                    # row_data.extend(self.last_smooth_joints_left)
+                    # row_data.extend(self.last_right_joint_angles)
+                    # row_data.extend(self.last_smooth_joints_right)
+                    # # 32-45列: 左臂原始7个关节角 + 左臂平滑7个关节角 + 右臂原始7个关节角 + 右臂平滑7个关节角
+
+                    # 4. 耗时
+                    row_data.append(self.vp_time)
+                    row_data.append(self.mapping_time - self.vp_time) 
+                    row_data.append(self.euro_time - self.mapping_time)
+                    # row_data.append(self.ik_time - self.euro_time)
+                    # row_data.append(self.filter_time - self.ik_time)
+                    row_data.append(self.loop_cost_time)
+
+                
+                # 一次性写入这一行的所有数据
+                self.csv_writer.writerow(row_data)
+                
+            rate.sleep()
+    
+    def _write_csv_header(self):
+        """生成并写入CSV表头"""
+        header = ['timestamp']
+        prefixes = ['r_smooth', 'r_raw']
+        suffixes = ['px', 'py', 'pz', 'qw', 'qx', 'qy', 'qz']
+        
+        for p in prefixes:
+            for s in suffixes:
+                header.append(f"{p}_{s}")
+        
+        # # 2. 新增：臂角表头 (2列)
+        # header.extend(['arm_angle_left', 'arm_angle_right'])
+        
+        # # 3. 新增：关节角度表头 (4 * num_joints 列)
+        # for i in range(7):
+        #     header.append(f"l_joint_{i}")
+        # for i in range(7):
+        #     header.append(f"l_smooth_joint_{i}")
+        # for i in range(7):
+        #     header.append(f"r_joint_{i}")
+        # for i in range(7):
+        #     header.append(f"r_smooth_joint_{i}")
+        
+        header.append('vp_time')
+        header.append('mapping_time')
+        header.append('euro_time')
+        # header.append('ik_time')
+        # header.append('filter_time')
+        header.append('loop_cost_time')
+
+
+
+
+        self.csv_writer.writerow(header)
+        self.file_handle.flush() # 确保表头立即写入
+
+    def _handle_record_srv(self, req):
+        """ROS 服务回调函数：处理开始/停止记录的请求"""
+        if req.data:
+            if not self.is_recording:
+                self.is_recording = True
+                rospy.loginfo("已开始记录遥操作数据...")
+                return SetBoolResponse(success=True, message="Recording Started")
+            else:
+                return SetBoolResponse(success=False, message="Already Recording")
+        else:
+            if self.is_recording:
+                self.is_recording = False
+                self.file_handle.flush() # 停止记录时强制刷入硬盘
+                rospy.loginfo("已停止记录遥操作数据。")
+                return SetBoolResponse(success=True, message="Recording Stopped")
+            else:
+                return SetBoolResponse(success=False, message="Not Recording Currently")
+
+    def _shutdown_hook(self):
+        """节点关闭时触发，安全释放文件资源"""
+        self.is_recording = False
+        if self.file_handle and not self.file_handle.closed:
+            self.file_handle.flush()
+            self.file_handle.close()
+            rospy.loginfo(f"CSV文件已安全保存: {self.csv_filename}")
+
+
+
+
+
+
+
 
     def arm_angle_callback(self, msg: ArmAngle):
         """接收机械臂当前臂角的回调函数"""
@@ -357,7 +533,8 @@ class ArmTeleopPure:
         max_record_time = 0.0
         recorded_time = 0.0
         while self.running:
-            loop_start_time = time.time()
+            # loop_start_time = time.time()
+            loop_start_time = time.time() # TIMEPOINT
             try:
                 # 增加帧计数
                 frame_count += 1
@@ -373,6 +550,7 @@ class ArmTeleopPure:
                 # 获取最新的手部数据
                 hand_data = self.vp_streamer.latest
                 hand_data = self.vp_streamer.get_hand_position(hand=arm_side)
+                self.vp_time = time.time() - loop_start_time # TIMEPOINT
                 # 只有当遥操作激活时才执行控制
                 if self.teleop_active:
                     # 提取右手腕的完整变换矩阵
@@ -385,11 +563,13 @@ class ArmTeleopPure:
                     # 应用平滑过滤到位置
                     target_pose_in_quat = self.euler_to_quaternion(target_pose) # 转为四元数形式 [x, y, z, qx, qy, qz, qw]
                     current_timestamp = time.time()
-
+                    self.mapping_time = time.time() - loop_start_time # TIMEPOINT
                     if arm_side == 'right':
                         # 对[姿态]进行 1Euro 滤波
                         smooth_target_in_quat = self.pose_filter_right.process(target_pose_in_quat, current_timestamp)
                         self.last_target_pose_right = smooth_target_in_quat.tolist()
+                        self.last_target_pose_right_quat = target_pose_in_quat.copy()
+                        self.last_target_pose_right_smooth = smooth_target_in_quat.copy()
                         # smooth_target, self.position_buffer_right = smooth_values(
                         #     target_pose, 
                         #     self.last_target_pose_right, 
@@ -401,6 +581,8 @@ class ArmTeleopPure:
                     elif arm_side == 'left':
                         smooth_target_in_quat = self.pose_filter_left.process(target_pose_in_quat, current_timestamp)
                         self.last_target_pose_left = smooth_target_in_quat.tolist()
+                        self.last_target_pose_left_quat = target_pose_in_quat.copy()
+                        self.last_target_pose_left_smooth = smooth_target_in_quat.copy()
                         # smooth_target, self.position_buffer_left = smooth_values(
                         #     target_pose, 
                         #     self.last_target_pose_left, 
@@ -423,16 +605,18 @@ class ArmTeleopPure:
                     if not hasattr(self, 'last_log_time') or current_time - self.last_log_time > 0.1:
                         # logger.info(f"目标位置: {[round(x, 4) for x in smooth_target]}")
                         self.last_log_time = current_time
+                    self.euro_time = time.time() - loop_start_time # TIMEPOINT
                     
                     
                     
                 
                 # 等待一段时间再更新
-                loop_cost_time = loop_start_time - time.time()
-                if loop_cost_time > 0.01:
+                # loop_cost_time = time.time() - loop_start_time
+                self.loop_cost_time = time.time() - loop_start_time # TIMEPOINT
+                if self.loop_cost_time > 0.01:
                     continue
                 else:
-                    diff_time = 0.01 - loop_cost_time
+                    diff_time = 0.01 - self.loop_cost_time
                     time.sleep(diff_time)
                 
             except Exception as e:
