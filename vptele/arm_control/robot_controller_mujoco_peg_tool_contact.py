@@ -282,6 +282,72 @@ class RobotControllerMuJoCoPegTool:
 
 
 
+
+        # ######################################################### #
+        # -------------------- Hole randomization ----------------- #
+        # ######################################################### #
+
+        self.enable_hole_randomization = bool(
+            self.config.get("enable_hole_randomization", False)
+        )
+
+        self.randomize_hole_on_record_start = bool(
+            self.config.get("randomize_hole_on_record_start", True)
+        )
+
+        self.hole_random_body_name = self.config.get(
+            "hole_random_body_name",
+            "wall_task",
+        )
+
+        self.hole_random_body_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            self.hole_random_body_name,
+        )
+
+        if self.enable_hole_randomization and self.hole_random_body_id == -1:
+            print(
+                f"[Hole Randomization] Cannot find body: "
+                f"{self.hole_random_body_name}. Disable randomization."
+            )
+            self.enable_hole_randomization = False
+
+        if self.hole_random_body_id != -1:
+            self.hole_nominal_body_pos = self.model.body_pos[
+                self.hole_random_body_id
+            ].copy()
+        else:
+            self.hole_nominal_body_pos = np.zeros(3, dtype=float)
+
+        self.hole_random_x_range = self.config.get(
+            "hole_random_x_range",
+            [-0.01, 0.01],
+        )
+        self.hole_random_y_range = self.config.get(
+            "hole_random_y_range",
+            [0.0, 0.0],
+        )
+        self.hole_random_z_range = self.config.get(
+            "hole_random_z_range",
+            [-0.01, 0.01],
+        )
+
+        self.hole_random_seed = self.config.get("hole_random_seed", None)
+        self.hole_rng = np.random.default_rng(self.hole_random_seed)
+
+        self.last_hole_randomization = {
+            "enabled": False,
+            "body_name": self.hole_random_body_name,
+            "nominal_body_pos": self.hole_nominal_body_pos.tolist(),
+            "offset_xyz": [0.0, 0.0, 0.0],
+            "body_pos": self.hole_nominal_body_pos.tolist(),
+        }
+
+
+
+
+
         # #################################### #
         # ----- Launching Initialization ----- #
         # #################################### #
@@ -354,6 +420,10 @@ class RobotControllerMuJoCoPegTool:
                     )
 
                 label = req.label.strip() if req.label.strip() else "teleop"
+
+                # Randomize hole position before starting recording
+                if self.randomize_hole_on_record_start:
+                    self.randomize_hole_position()
 
                 hdf5_path = self.hdf5_recorder.start_episode(label=label)
 
@@ -802,6 +872,68 @@ class RobotControllerMuJoCoPegTool:
         )
 
         scene.ngeom += 1
+    
+
+    def randomize_hole_position(self):
+        """
+        Randomize the wall_task body position once before starting a new episode.
+
+        For current pangu_all_right.xml:
+            body name = wall_task
+            nominal pos = [-0.25, -0.5, 1.0]
+
+        Recommended:
+            randomize x and z only;
+            keep y fixed because y is insertion-depth direction.
+        """
+        if not self.enable_hole_randomization:
+            return self.last_hole_randomization
+
+        if self.hole_random_body_id == -1:
+            return self.last_hole_randomization
+
+        dx = float(
+            self.hole_rng.uniform(
+                float(self.hole_random_x_range[0]),
+                float(self.hole_random_x_range[1]),
+            )
+        )
+        dy = float(
+            self.hole_rng.uniform(
+                float(self.hole_random_y_range[0]),
+                float(self.hole_random_y_range[1]),
+            )
+        )
+        dz = float(
+            self.hole_rng.uniform(
+                float(self.hole_random_z_range[0]),
+                float(self.hole_random_z_range[1]),
+            )
+        )
+
+        offset = np.array([dx, dy, dz], dtype=float)
+        new_pos = self.hole_nominal_body_pos + offset
+
+        with self.lock:
+            self.model.body_pos[self.hole_random_body_id] = new_pos
+            mujoco.mj_forward(self.model, self.data)
+
+        self.last_hole_randomization = {
+            "enabled": True,
+            "body_name": self.hole_random_body_name,
+            "nominal_body_pos": self.hole_nominal_body_pos.tolist(),
+            "offset_xyz": offset.tolist(),
+            "body_pos": new_pos.tolist(),
+        }
+
+        print(
+            "[Hole Randomization] "
+            f"body={self.hole_random_body_name}, "
+            f"offset={offset.tolist()}, "
+            f"new_pos={new_pos.tolist()}"
+        )
+
+        return self.last_hole_randomization
 
 
     def draw_insertion_guides(self, viewer):

@@ -111,3 +111,17 @@ logging:
   max_file_size: 104857600  # 最大日志文件大小 (100MB)
   backup_count: 5  # 备份日志文件数量
   log_prefix: "mujoco" # pangu or mujoco
+
+# hole randomization
+enable_hole_randomization: true
+randomize_hole_on_record_start: true
+
+# 当前 pangu_all_right.xml 中实际存在的任务 body
+hole_random_body_name: "wall_task"
+
+# 第一阶段建议只随机墙面平面内的 x 和 z
+hole_random_x_range: [-0.020, 0.020]
+hole_random_y_range: [0.010, 0.010]
+hole_random_z_range: [-0.020, 0.020]
+
+hole_random_seed: null

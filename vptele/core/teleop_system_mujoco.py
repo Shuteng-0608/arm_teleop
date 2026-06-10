@@ -206,7 +206,18 @@ class TeleopSystemMujoco:
 
             # ROS recording service
             "enable_recording_service": self.config.get("enable_recording_service", True),
-            "recording_service_name": self.config.get("recording_service_name", "/mujoco_hdf5_recording/set_recording")
+            "recording_service_name": self.config.get("recording_service_name", "/mujoco_hdf5_recording/set_recording"),
+
+            # Hole randomization
+            "enable_hole_randomization": self.config.get("enable_hole_randomization", False),
+            "randomize_hole_on_record_start": self.config.get(
+                "randomize_hole_on_record_start", True
+            ),
+            "hole_random_body_name": self.config.get("hole_random_body_name", "wall_task"),
+            "hole_random_x_range": self.config.get("hole_random_x_range", [-0.01, 0.01]),
+            "hole_random_y_range": self.config.get("hole_random_y_range", [0.0, 0.0]),
+            "hole_random_z_range": self.config.get("hole_random_z_range", [-0.01, 0.01]),
+            "hole_random_seed": self.config.get("hole_random_seed", None),
 
 
         }
