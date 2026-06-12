@@ -37,6 +37,7 @@ from vptele.utils.mujoco_hdf5_recorder import MujocoHDF5Recorder
 
 import rospy
 from arm_teleop.srv import SetRecording, SetRecordingResponse
+from std_srvs.srv import Trigger, TriggerResponse
 
 
 class RobotControllerMuJoCoPegTool:
@@ -44,6 +45,10 @@ class RobotControllerMuJoCoPegTool:
 
         self.config = config or {}
         self.model_path = model_path
+
+
+
+        
 
         
 
@@ -83,6 +88,40 @@ class RobotControllerMuJoCoPegTool:
 
         # Sign convention kept from your original controller.
         self.arm_sign = self.config.get("arm_sign", [-1, 1, 1, -1, 1, 1, 1])
+
+
+
+
+
+        # ################################################################## #
+        # ================== Episode-level teleop control ================== #
+        # ################################################################## #
+        self.teleop_controlled_by_recording = bool(
+            self.config.get("teleop_controlled_by_recording", True)
+        )
+
+        self.accept_teleop_commands = bool(
+            self.config.get("accept_teleop_when_not_recording", False)
+        )
+
+        self.teleop_stop_service_name = self.config.get(
+            "teleop_stop_service_name",
+            "/arm_teleop_mujoco/stop",
+        )
+
+        self.teleop_recalibrate_service_name = self.config.get(
+            "teleop_recalibrate_service_name",
+            "/arm_teleop_mujoco/recalibrate",
+        )
+
+        self.teleop_start_service_name = self.config.get(
+            "teleop_start_service_name",
+            "/arm_teleop_mujoco/start",
+        )
+
+        self.reset_arm_on_record_stop = bool(
+            self.config.get("reset_arm_on_record_stop", True)
+        )
 
 
 
@@ -365,12 +404,42 @@ class RobotControllerMuJoCoPegTool:
         self.command_joints = [0.0] * len(self.joint_names)
 
         # Initial pose.
-        initial_arm_joints = self.config.get(
-            "initial_arm_joints",
-            [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+        # initial_arm_joints = self.config.get(
+        #     "initial_arm_joints",
+        #     [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+        # )
+        # initial_internal = self._convert_arm_command_to_internal(initial_arm_joints)
+        # self._set_internal_joint_targets(initial_internal, immediate=True)
+        # self._hard_set_qpos(self.command_joints)
+        # self._apply_actuator_targets(self.command_joints)
+        # mujoco.mj_forward(self.model, self.data)
+        # Initial pose.
+        self.initial_arm_joints_external = list(
+            self.config.get(
+                "initial_arm_joints",
+                [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+            )
         )
-        initial_internal = self._convert_arm_command_to_internal(initial_arm_joints)
-        self._set_internal_joint_targets(initial_internal, immediate=True)
+
+        self.initial_arm_joints_internal = self._convert_arm_command_to_internal(
+            self.initial_arm_joints_external
+        )
+
+        self.reset_arm_on_record_start = bool(
+            self.config.get("reset_arm_on_record_start", True)
+        )
+
+        self.reset_ignore_teleop_duration = float(
+            self.config.get("reset_ignore_teleop_duration", 0.5)
+        )
+
+        self.ignore_teleop_until_wall_time = 0.0
+
+        self._set_internal_joint_targets(
+            self.initial_arm_joints_internal,
+            immediate=True,
+        )
+
         self._hard_set_qpos(self.command_joints)
         self._apply_actuator_targets(self.command_joints)
         mujoco.mj_forward(self.model, self.data)
@@ -383,6 +452,39 @@ class RobotControllerMuJoCoPegTool:
         if self.config.get("auto_start", True):
             print("启动 MuJoCo 仿真线程...")
             self.start_simulation()
+    
+
+    def _call_teleop_trigger_service(self, service_name: str, description: str) -> bool:
+        """
+        Call an arm_teleop Trigger service.
+
+        Used to stop/recalibrate/start arm teleoperation around each recording episode.
+        """
+        if not getattr(self, "teleop_controlled_by_recording", True):
+            return True
+
+        try:
+            rospy.wait_for_service(service_name, timeout=3.0)
+            proxy = rospy.ServiceProxy(service_name, Trigger)
+            resp = proxy()
+
+            if not resp.success:
+                print(
+                    f"[Episode Teleop] {description} failed: {resp.message}"
+                )
+                return False
+
+            print(
+                f"[Episode Teleop] {description} success: {resp.message}"
+            )
+            return True
+
+        except Exception as e:
+            print(
+                f"[Episode Teleop] {description} service error "
+                f"({service_name}): {e}"
+            )
+            return False
 
     
     def _handle_recording_service(self, req):
@@ -421,19 +523,74 @@ class RobotControllerMuJoCoPegTool:
 
                 label = req.label.strip() if req.label.strip() else "teleop"
 
-                # Randomize hole position before starting recording
-                if self.randomize_hole_on_record_start:
+                # 0. episode 准备阶段，拒绝任何旧的遥操作命令
+                self.accept_teleop_commands = False
+
+                # 1. 停止旧遥操作线程
+                ok = self._call_teleop_trigger_service(
+                    self.teleop_stop_service_name,
+                    "stop teleoperation before record start",
+                )
+                if not ok:
+                    return SetRecordingResponse(
+                        success=False,
+                        active=False,
+                        message="Failed to stop old teleoperation before recording.",
+                        episode_path="",
+                    )
+
+                # 2. reset MuJoCo 机械臂到默认初始位置
+                if getattr(self, "reset_arm_on_record_start", True):
+                    self.reset_arm_to_initial_pose()
+
+                # 3. 每条 episode 开始前随机孔洞位置
+                if getattr(self, "randomize_hole_on_record_start", False):
                     self.randomize_hole_position()
 
+                # 4. 重新标定当前 Vision Pro 手部参考
+                ok = self._call_teleop_trigger_service(
+                    self.teleop_recalibrate_service_name,
+                    "recalibrate teleoperation reference",
+                )
+                if not ok:
+                    return SetRecordingResponse(
+                        success=False,
+                        active=False,
+                        message="Failed to recalibrate teleoperation.",
+                        episode_path="",
+                    )
+
+                # 5. 开始 HDF5 记录
                 hdf5_path = self.hdf5_recorder.start_episode(label=label)
+
+                # 6. 开启 controller 命令入口
+                self.accept_teleop_commands = True
+
+                # 7. 启动新一轮遥操作线程
+                ok = self._call_teleop_trigger_service(
+                    self.teleop_start_service_name,
+                    "start teleoperation for new episode",
+                )
+
+                if not ok:
+                    self.accept_teleop_commands = False
+
+                    if self.hdf5_recorder.active:
+                        self.hdf5_recorder.stop_episode(status="teleop_start_failed")
+
+                    return SetRecordingResponse(
+                        success=False,
+                        active=False,
+                        message="Failed to start teleoperation after recording started.",
+                        episode_path=str(hdf5_path) if hdf5_path is not None else "",
+                    )
 
                 return SetRecordingResponse(
                     success=True,
                     active=True,
-                    message=f"Started HDF5 recording: {label}",
+                    message=f"Started HDF5 recording and teleoperation: {label}",
                     episode_path=str(hdf5_path) if hdf5_path is not None else "",
                 )
-
             # Stop recording
             else:
                 if not self.hdf5_recorder.active:
@@ -448,15 +605,28 @@ class RobotControllerMuJoCoPegTool:
                         episode_path=last_path,
                     )
 
+                # 0. 立刻拒绝新的遥操作命令
+                self.accept_teleop_commands = False
+
+                # 1. 停止遥操作线程
+                self._call_teleop_trigger_service(
+                    self.teleop_stop_service_name,
+                    "stop teleoperation before record stop",
+                )
+
+                # 2. 停止 HDF5 记录
                 hdf5_path = self.hdf5_recorder.stop_episode(
                     status="manual_keep" if req.keep else "manual_discard"
                 )
 
                 episode_path = str(hdf5_path) if hdf5_path is not None else ""
 
+                # 3. reset 机械臂回默认位置。这个动作不进入 HDF5 数据。
+                if getattr(self, "reset_arm_on_record_stop", True):
+                    self.reset_arm_to_initial_pose()
+
+                # 4. 不保留则删除 episode 文件夹
                 if not req.keep:
-                    # Delete the entire episode folder.
-                    # hdf5_path = .../<episode_folder>/episode.hdf5
                     if hdf5_path is not None:
                         episode_dir = hdf5_path.parent
                         if episode_dir.exists():
@@ -465,16 +635,85 @@ class RobotControllerMuJoCoPegTool:
                     return SetRecordingResponse(
                         success=True,
                         active=False,
-                        message="Stopped recording and discarded this episode.",
+                        message="Stopped recording, stopped teleoperation, reset arm, and discarded this episode.",
                         episode_path=episode_path,
                     )
 
                 return SetRecordingResponse(
                     success=True,
                     active=False,
-                    message="Stopped recording and kept this episode.",
+                    message="Stopped recording, stopped teleoperation, reset arm, and kept this episode.",
                     episode_path=episode_path,
                 )
+            # if req.record:
+            #     if self.hdf5_recorder.active:
+            #         current_path = ""
+            #         if self.hdf5_recorder.hdf5_path is not None:
+            #             current_path = str(self.hdf5_recorder.hdf5_path)
+
+            #         return SetRecordingResponse(
+            #             success=False,
+            #             active=True,
+            #             message="Recording is already active.",
+            #             episode_path=current_path,
+            #         )
+
+            #     label = req.label.strip() if req.label.strip() else "teleop"
+
+            #     # Randomize hole position before starting recording
+            #     if self.randomize_hole_on_record_start:
+            #         self.randomize_hole_position()
+
+            #     hdf5_path = self.hdf5_recorder.start_episode(label=label)
+
+            #     return SetRecordingResponse(
+            #         success=True,
+            #         active=True,
+            #         message=f"Started HDF5 recording: {label}",
+            #         episode_path=str(hdf5_path) if hdf5_path is not None else "",
+            #     )
+
+            # # Stop recording
+            # else:
+            #     if not self.hdf5_recorder.active:
+            #         last_path = ""
+            #         if self.hdf5_recorder.hdf5_path is not None:
+            #             last_path = str(self.hdf5_recorder.hdf5_path)
+
+            #         return SetRecordingResponse(
+            #             success=False,
+            #             active=False,
+            #             message="No active recording episode.",
+            #             episode_path=last_path,
+            #         )
+
+            #     hdf5_path = self.hdf5_recorder.stop_episode(
+            #         status="manual_keep" if req.keep else "manual_discard"
+            #     )
+
+            #     episode_path = str(hdf5_path) if hdf5_path is not None else ""
+
+            #     if not req.keep:
+            #         # Delete the entire episode folder.
+            #         # hdf5_path = .../<episode_folder>/episode.hdf5
+            #         if hdf5_path is not None:
+            #             episode_dir = hdf5_path.parent
+            #             if episode_dir.exists():
+            #                 shutil.rmtree(episode_dir)
+
+            #         return SetRecordingResponse(
+            #             success=True,
+            #             active=False,
+            #             message="Stopped recording and discarded this episode.",
+            #             episode_path=episode_path,
+            #         )
+
+            #     return SetRecordingResponse(
+            #         success=True,
+            #         active=False,
+            #         message="Stopped recording and kept this episode.",
+            #         episode_path=episode_path,
+            #     )
 
         except Exception as e:
             return SetRecordingResponse(
@@ -630,26 +869,86 @@ class RobotControllerMuJoCoPegTool:
             if immediate:
                 self.command_joints[:7] = list(internal_arm_joints)
 
+    # def set_arm_positions(self, arm_target_joints: List[float]):
+    #     """
+    #     Public teleoperation interface.
+
+    #     Input:
+    #         arm_target_joints: 7 joint angles from IK / teleoperation.
+
+    #     In actuator mode:
+    #         This function only updates target_joints.
+    #         The simulation thread rate-limits command_joints and sends them to actuators.
+
+    #     In qpos mode:
+    #         It also updates target_joints, and update_positions() will directly write qpos.
+    #     """
+    #     if len(arm_target_joints) != 7:
+    #         print(f"错误: 机械臂目标关节数({len(arm_target_joints)})应为7个")
+    #         return
+
+    #     internal = self._convert_arm_command_to_internal(arm_target_joints)
+    #     self._set_internal_joint_targets(internal, immediate=False)
+    
     def set_arm_positions(self, arm_target_joints: List[float]):
         """
         Public teleoperation interface.
-
-        Input:
-            arm_target_joints: 7 joint angles from IK / teleoperation.
-
-        In actuator mode:
-            This function only updates target_joints.
-            The simulation thread rate-limits command_joints and sends them to actuators.
-
-        In qpos mode:
-            It also updates target_joints, and update_positions() will directly write qpos.
         """
+        if not getattr(self, "accept_teleop_commands", True):
+            return
+
         if len(arm_target_joints) != 7:
             print(f"错误: 机械臂目标关节数({len(arm_target_joints)})应为7个")
             return
 
         internal = self._convert_arm_command_to_internal(arm_target_joints)
         self._set_internal_joint_targets(internal, immediate=False)
+    
+    def reset_arm_to_initial_pose(self):
+        """
+        Reset the arm to the configured initial pose before starting a new episode.
+
+        This reset is intended to happen before hdf5_recorder.start_episode(),
+        so the recorded first frame is already the reset state.
+        """
+        if not hasattr(self, "initial_arm_joints_internal"):
+            print("[Arm Reset] initial_arm_joints_internal not found, skip reset.")
+            return
+
+        with self.lock:
+            self._set_internal_joint_targets(
+                self.initial_arm_joints_internal,
+                immediate=True,
+            )
+
+            self._hard_set_qpos(self.command_joints)
+            self._apply_actuator_targets(self.command_joints)
+
+            # Clear residual dynamics from the previous episode.
+            if hasattr(self.data, "qacc"):
+                self.data.qacc[:] = 0.0
+
+            if hasattr(self.data, "qacc_warmstart"):
+                self.data.qacc_warmstart[:] = 0.0
+
+            if hasattr(self.data, "qfrc_applied"):
+                self.data.qfrc_applied[:] = 0.0
+
+            if hasattr(self.data, "xfrc_applied"):
+                self.data.xfrc_applied[:] = 0.0
+
+            mujoco.mj_forward(self.model, self.data)
+
+            # Temporarily ignore stale teleoperation commands.
+            self.ignore_teleop_until_wall_time = (
+                time.time() + self.reset_ignore_teleop_duration
+            )
+
+        print(
+            "[Arm Reset] Reset arm to initial pose: "
+            f"{self.initial_arm_joints_external}"
+        )
+
 
     def set_hand_positions(self, hand_target_joints: List[float]):
         """
@@ -738,8 +1037,17 @@ class RobotControllerMuJoCoPegTool:
         if self.data_recorder is not None:
             self.data_recorder.record_if_needed(self)
 
+        # if self.hdf5_recorder is not None:
+        #     self.hdf5_recorder.record_if_needed(self)
         if self.hdf5_recorder is not None:
-            self.hdf5_recorder.record_if_needed(self)
+            try:
+                self.hdf5_recorder.record_if_needed(self)
+            except Exception as e:
+                print(f"[HDF5Recorder] record_if_needed failed: {e}")
+                try:
+                    self.hdf5_recorder.active = False
+                except Exception:
+                    pass
 
         # Camera Streaming
         if self.show_camera_streams:

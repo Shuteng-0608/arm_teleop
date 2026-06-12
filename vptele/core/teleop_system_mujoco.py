@@ -123,7 +123,11 @@ class TeleopSystemMujoco:
             "max_joint_velocity": 0.5,
 
             # 初始机械臂姿态，仍然用你现在这组
-            "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+            # "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+            "initial_arm_joints": self.config.get(
+                "initial_arm_joints",
+                [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+            ),
 
             # 机械臂关节名称
             # 注意：我的 contact controller 里读取的是 arm_joints，不是 arm_joint_names
@@ -219,6 +223,10 @@ class TeleopSystemMujoco:
             "hole_random_z_range": self.config.get("hole_random_z_range", [-0.01, 0.01]),
             "hole_random_seed": self.config.get("hole_random_seed", None),
 
+            # Reset arm before each recording episode
+            "reset_arm_on_record_start": self.config.get("reset_arm_on_record_start", True),
+            "reset_ignore_teleop_duration": self.config.get("reset_ignore_teleop_duration", 0.5),            
+
 
         }
 
@@ -262,23 +270,40 @@ class TeleopSystemMujoco:
         
 
     
-    def start(self):
-        """启动遥操控系统"""
-        # 先启动机械臂遥控
-        self.arm_teleop.start()
-        # self.arm_teleop.multi_start()
+    # def start(self):
+    #     """启动遥操控系统"""
+    #     # 先启动机械臂遥控
+    #     self.arm_teleop.start()
+    #     # self.arm_teleop.multi_start()
         
-        # 如果配置了末端执行器，启动对应的遥控
-        if self.end_effector:
-            self.end_effector.start()
-        enable_hand = self.config.get("enable_hand", False)
+    #     # 如果配置了末端执行器，启动对应的遥控
+    #     if self.end_effector:
+    #         self.end_effector.start()
+    #     enable_hand = self.config.get("enable_hand", False)
 
-        if enable_hand:
-            self.end_effector.start()
+    #     if enable_hand:
+    #         self.end_effector.start()
+    #     else:
+    #         logger.info("已禁用手部遥操作模块，当前使用 peg-tool 模型。")
+
+    #     logger.info("遥操控系统已启动")
+    
+    def start(self):
+        """启动遥控系统"""
+
+        if self.config.get("teleop_controlled_by_recording", True):
+            logger.info(
+                "teleop_controlled_by_recording=True: "
+                "系统启动后不立即启动 arm_teleop，等待 recording service 开始 episode。"
+            )
         else:
-            logger.info("已禁用手部遥操作模块，当前使用 peg-tool 模型。")
+            if self.arm_teleop:
+                self.arm_teleop.start()
 
-        logger.info("遥操控系统已启动")
+            if self.end_effector:
+                self.end_effector.start()
+
+        logger.info("遥控系统已启动")
             
 
     def stop(self):

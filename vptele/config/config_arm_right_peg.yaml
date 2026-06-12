@@ -8,7 +8,7 @@ record_all_500hz: true
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5"
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5_fix"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -54,6 +54,10 @@ end_effector: "peg"
 arm_config:
   leftright: "right" # 指定使用人的哪只手的位姿来操控
   # move: false
+
+  enable_episode_services: true
+  teleop_service_ns: "/arm_teleop_mujoco"
+
   
   scaling_factor: 1.5
   smoothing_factor: 0.99
@@ -112,16 +116,50 @@ logging:
   backup_count: 5  # 备份日志文件数量
   log_prefix: "mujoco" # pangu or mujoco
 
-# hole randomization
-enable_hole_randomization: true
-randomize_hole_on_record_start: true
+# # hole randomization
+# enable_hole_randomization: true
+# randomize_hole_on_record_start: true
 
-# 当前 pangu_all_right.xml 中实际存在的任务 body
-hole_random_body_name: "wall_task"
+# # 当前 pangu_all_right.xml 中实际存在的任务 body
+# hole_random_body_name: "wall_task"
 
-# 第一阶段建议只随机墙面平面内的 x 和 z
-hole_random_x_range: [-0.020, 0.020]
-hole_random_y_range: [0.010, 0.010]
-hole_random_z_range: [-0.020, 0.020]
+# # 第一阶段建议只随机墙面平面内的 x 和 z
+# hole_random_x_range: [-0.020, 0.020]
+# hole_random_y_range: [0.010, 0.010]
+# hole_random_z_range: [-0.020, 0.020]
 
 hole_random_seed: null
+
+# Episode-level teleoperation lifecycle
+teleop_controlled_by_recording: true
+accept_teleop_when_not_recording: false
+
+teleop_stop_service_name: "/arm_teleop_mujoco/stop"
+teleop_recalibrate_service_name: "/arm_teleop_mujoco/recalibrate"
+teleop_start_service_name: "/arm_teleop_mujoco/start"
+
+# Arm reset
+reset_arm_on_record_start: true
+reset_arm_on_record_stop: true
+
+initial_arm_joints:
+  - -0.046
+  - -0.2
+  - 0.0
+  - 1.6
+  - -1.32
+  - 0.005
+  - 0.005
+
+# Hole randomization
+enable_hole_randomization: true
+randomize_hole_on_record_start: true
+hole_random_body_name: "wall_task"
+hole_random_x_range: [-0.010, 0.010]
+hole_random_y_range: [0.000, 0.000]
+hole_random_z_range: [-0.010, 0.010]
+
+# HDF5
+hdf5_auto_start: false
+enable_recording_service: true
+recording_service_name: "/mujoco_hdf5_recording/set_recording"

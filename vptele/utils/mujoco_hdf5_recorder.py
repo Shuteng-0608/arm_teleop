@@ -16,6 +16,7 @@ Public API is compatible with the previous recorder:
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -91,6 +92,7 @@ class MujocoHDF5Recorder:
         self.chunk_size_image = int(chunk_size_image)
 
         self.active = False
+        self._io_lock = threading.RLock()
         self.session_dir: Optional[Path] = None
         self.hdf5_path: Optional[Path] = None
         self.h5: Optional[h5py.File] = None
@@ -145,101 +147,224 @@ class MujocoHDF5Recorder:
     # ------------------------------------------------------------------
     # Public lifecycle API
     # ------------------------------------------------------------------
+    # def start_episode(self, label: str = "teleop") -> Optional[Path]:
+    #     if self.active:
+    #         print("[CompactHDF5Recorder] Episode already active.")
+    #         return self.hdf5_path
+
+    #     safe_label = self._safe_name(label)
+    #     timestamp = time.strftime("%Y%m%d_%H%M%S")
+    #     self.session_dir = self.output_dir / f"{timestamp}_{safe_label}"
+    #     self.session_dir.mkdir(parents=True, exist_ok=True)
+    #     self.hdf5_path = self.session_dir / "episode.hdf5"
+
+    #     self.episode_label = safe_label
+    #     self.episode_start_sim_time = float(self.data.time)
+    #     self.episode_start_wall_time = time.time()
+    #     self.next_state_t = float(self.data.time)
+    #     self.next_force_t = float(self.data.time)
+    #     self.next_image_t = float(self.data.time)
+    #     self.n_state = 0
+    #     self.n_force = 0
+    #     self.n_image = 0
+    #     self.event_rows = []
+
+    #     self.h5 = h5py.File(self.hdf5_path, "w")
+    #     self._create_file_structure()
+    #     self._write_initial_metadata()
+
+    #     self.active = True
+    #     self.add_event("record_start")
+    #     print(f"[CompactHDF5Recorder] Started: {self.session_dir}")
+    #     return self.hdf5_path
+    
     def start_episode(self, label: str = "teleop") -> Optional[Path]:
-        if self.active:
-            print("[CompactHDF5Recorder] Episode already active.")
+        with self._io_lock:
+            if self.active:
+                print("[CompactHDF5Recorder] Episode already active.")
+                return self.hdf5_path
+
+            safe_label = self._safe_name(label)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+            self.session_dir = self.output_dir / f"{timestamp}_{safe_label}"
+            self.session_dir.mkdir(parents=True, exist_ok=True)
+            self.hdf5_path = self.session_dir / "episode.hdf5"
+
+            self.episode_label = safe_label
+            self.episode_start_sim_time = float(self.data.time)
+            self.episode_start_wall_time = time.time()
+
+            self.next_state_t = float(self.data.time)
+            self.next_force_t = float(self.data.time)
+            self.next_image_t = float(self.data.time)
+
+            self.n_state = 0
+            self.n_force = 0
+            self.n_image = 0
+            self.event_rows = []
+
+            self.h5 = h5py.File(self.hdf5_path, "w")
+            self._create_file_structure()
+            self._write_initial_metadata()
+
+            self.active = True
+            self.add_event("record_start")
+
+            print(f"[CompactHDF5Recorder] Started: {self.session_dir}")
             return self.hdf5_path
 
-        safe_label = self._safe_name(label)
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self.session_dir = self.output_dir / f"{timestamp}_{safe_label}"
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.hdf5_path = self.session_dir / "episode.hdf5"
+    # def stop_episode(self, status: str = "manual_stop") -> Optional[Path]:
+    #     if not self.active:
+    #         print("[CompactHDF5Recorder] No active episode.")
+    #         return self.hdf5_path
 
-        self.episode_label = safe_label
-        self.episode_start_sim_time = float(self.data.time)
-        self.episode_start_wall_time = time.time()
-        self.next_state_t = float(self.data.time)
-        self.next_force_t = float(self.data.time)
-        self.next_image_t = float(self.data.time)
-        self.n_state = 0
-        self.n_force = 0
-        self.n_image = 0
-        self.event_rows = []
+    #     self.add_event(status)
+    #     self._write_final_metadata(status=status)
+    #     self._write_events()
 
-        self.h5 = h5py.File(self.hdf5_path, "w")
-        self._create_file_structure()
-        self._write_initial_metadata()
+    #     if self.h5 is not None:
+    #         self.h5.flush()
+    #         self.h5.close()
+    #         self.h5 = None
 
-        self.active = True
-        self.add_event("record_start")
-        print(f"[CompactHDF5Recorder] Started: {self.session_dir}")
-        return self.hdf5_path
-
+    #     self.active = False
+    #     self._write_sidecar_json(status=status)
+    #     print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
+    #     return self.hdf5_path
+    
     def stop_episode(self, status: str = "manual_stop") -> Optional[Path]:
-        if not self.active:
-            print("[CompactHDF5Recorder] No active episode.")
+        with self._io_lock:
+            if not self.active:
+                print("[CompactHDF5Recorder] No active episode.")
+                return self.hdf5_path
+
+            # 先记录停止事件
+            self.add_event(status)
+
+            # 关键：先设置 inactive，阻止新的 record_if_needed 进入写入逻辑
+            self.active = False
+
+            self._write_final_metadata(status=status)
+            self._write_events()
+
+            if self.h5 is not None:
+                self.h5.flush()
+                self.h5.close()
+                self.h5 = None
+
+            self._write_sidecar_json(status=status)
+
+            print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
             return self.hdf5_path
 
-        self.add_event(status)
-        self._write_final_metadata(status=status)
-        self._write_events()
-
-        if self.h5 is not None:
-            self.h5.flush()
-            self.h5.close()
-            self.h5 = None
-
-        self.active = False
-        self._write_sidecar_json(status=status)
-        print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
-        return self.hdf5_path
-
+    # def close(self) -> None:
+    #     if self.active:
+    #         self.stop_episode(status="controller_shutdown")
+    #     if self.renderer is not None:
+    #         self.renderer.close()
+    #         self.renderer = None
+    
     def close(self) -> None:
-        if self.active:
-            self.stop_episode(status="controller_shutdown")
-        if self.renderer is not None:
-            self.renderer.close()
-            self.renderer = None
+        with self._io_lock:
+            if self.active:
+                self.stop_episode(status="controller_shutdown")
 
+            if self.renderer is not None:
+                self.renderer.close()
+                self.renderer = None
+
+    # def add_event(self, event: str, extra: Optional[Dict[str, Any]] = None) -> None:
+    #     if not self.active:
+    #         print(f"[CompactHDF5Recorder] Ignored event without active episode: {event}")
+    #         return
+    #     row: Dict[str, Any] = {
+    #         "event": str(event),
+    #         "t_sim": float(self.data.time),
+    #         "t_episode": float(self.data.time - self.episode_start_sim_time),
+    #         "t_wall": float(time.time()),
+    #         "t_wall_from_start": float(time.time() - self.episode_start_wall_time),
+    #     }
+    #     if extra:
+    #         row.update(extra)
+    #     self.event_rows.append(row)
+    #     print(f"[CompactHDF5Recorder] Event: {event} @ {row['t_episode']:.3f}s")
+    
     def add_event(self, event: str, extra: Optional[Dict[str, Any]] = None) -> None:
-        if not self.active:
-            print(f"[CompactHDF5Recorder] Ignored event without active episode: {event}")
-            return
-        row: Dict[str, Any] = {
-            "event": str(event),
-            "t_sim": float(self.data.time),
-            "t_episode": float(self.data.time - self.episode_start_sim_time),
-            "t_wall": float(time.time()),
-            "t_wall_from_start": float(time.time() - self.episode_start_wall_time),
-        }
-        if extra:
-            row.update(extra)
-        self.event_rows.append(row)
-        print(f"[CompactHDF5Recorder] Event: {event} @ {row['t_episode']:.3f}s")
+        with self._io_lock:
+            if not self.active and event != "record_start":
+                print(f"[CompactHDF5Recorder] Ignored event without active episode: {event}")
+                return
 
+            row: Dict[str, Any] = {
+                "event": str(event),
+                "t_sim": float(self.data.time),
+                "t_episode": float(self.data.time - self.episode_start_sim_time),
+                "t_wall": float(time.time()),
+                "t_wall_from_start": float(time.time() - self.episode_start_wall_time),
+            }
+
+            if extra:
+                row.update(extra)
+
+            self.event_rows.append(row)
+
+            print(f"[CompactHDF5Recorder] Event: {event} @ {row['t_episode']:.3f}s")
+
+    # def record_if_needed(self, controller) -> None:
+    #     if not self.active or self.h5 is None:
+    #         return
+
+    #     t = float(self.data.time)
+    #     if t + 1e-12 >= self.next_force_t:
+    #         self._append_force_sample()
+    #         while self.next_force_t <= t + 1e-12:
+    #             self.next_force_t += self.force_period
+
+    #     if t + 1e-12 >= self.next_state_t:
+    #         self._append_state_sample()
+    #         while self.next_state_t <= t + 1e-12:
+    #             self.next_state_t += self.state_period
+
+    #     if self.record_images and t + 1e-12 >= self.next_image_t:
+    #         self._append_image_sample()
+    #         while self.next_image_t <= t + 1e-12:
+    #             self.next_image_t += self.image_period
+
+    #     if max(self.n_state, self.n_force, self.n_image) > self.max_buffer_rows:
+    #         self.stop_episode(status="buffer_limit")
+    
     def record_if_needed(self, controller) -> None:
-        if not self.active or self.h5 is None:
-            return
+        """
+        Call immediately after mujoco.mj_step().
 
-        t = float(self.data.time)
-        if t + 1e-12 >= self.next_force_t:
-            self._append_force_sample()
-            while self.next_force_t <= t + 1e-12:
-                self.next_force_t += self.force_period
+        This function may be called from the MuJoCo simulation thread, while
+        start_episode()/stop_episode() may be called from a ROS service thread.
+        Therefore all HDF5 access must be protected by self._io_lock.
+        """
+        with self._io_lock:
+            if not self.active or self.h5 is None:
+                return
 
-        if t + 1e-12 >= self.next_state_t:
-            self._append_state_sample()
-            while self.next_state_t <= t + 1e-12:
-                self.next_state_t += self.state_period
+            t = float(self.data.time)
 
-        if self.record_images and t + 1e-12 >= self.next_image_t:
-            self._append_image_sample()
-            while self.next_image_t <= t + 1e-12:
-                self.next_image_t += self.image_period
+            if t + 1e-12 >= self.next_force_t:
+                self._append_force_sample()
+                while self.next_force_t <= t + 1e-12:
+                    self.next_force_t += self.force_period
 
-        if max(self.n_state, self.n_force, self.n_image) > self.max_buffer_rows:
-            self.stop_episode(status="buffer_limit")
+            if t + 1e-12 >= self.next_state_t:
+                self._append_state_sample()
+                while self.next_state_t <= t + 1e-12:
+                    self.next_state_t += self.state_period
+
+            if self.record_images and t + 1e-12 >= self.next_image_t:
+                self._append_image_sample()
+                while self.next_image_t <= t + 1e-12:
+                    self.next_image_t += self.image_period
+
+            if max(self.n_state, self.n_force, self.n_image) > self.max_buffer_rows:
+                self.stop_episode(status="buffer_limit")
 
     # ------------------------------------------------------------------
     # File structure

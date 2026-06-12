@@ -1,5 +1,7 @@
 import rospy
 from arm_teleop.srv import ArmIK, ArmIKRequest
+from std_srvs.srv import Trigger, TriggerResponse
+
 import time
 import numpy as np
 from threading import Thread
@@ -75,6 +77,161 @@ class ArmTeleopMujoco:
 
         # self.lastest_head_z_rotation = 0.0
         # self.calibrate_head_position()
+        # ================== Episode-level ROS services ==================
+        self.teleop_service_ns = self.config.get(
+            "teleop_service_ns",
+            "/arm_teleop_mujoco",
+        )
+
+        self.enable_episode_services = bool(
+            self.config.get("enable_episode_services", True)
+        )
+
+        if self.enable_episode_services:
+            self.srv_stop_teleop = rospy.Service(
+                f"{self.teleop_service_ns}/stop",
+                Trigger,
+                self._handle_stop_teleop_service,
+            )
+
+            self.srv_recalibrate_teleop = rospy.Service(
+                f"{self.teleop_service_ns}/recalibrate",
+                Trigger,
+                self._handle_recalibrate_teleop_service,
+            )
+
+            self.srv_start_teleop = rospy.Service(
+                f"{self.teleop_service_ns}/start",
+                Trigger,
+                self._handle_start_teleop_service,
+            )
+
+            logger.info(
+                f"ArmTeleop episode services ready under {self.teleop_service_ns}"
+            )
+    
+    def recalibrate_for_new_episode(self):
+        """
+        Recalibrate hand reference and reset teleoperation internal states.
+
+        This should be called after MuJoCo arm reset and before starting
+        a new recording episode.
+        """
+        logger.info("开始重新标定新 episode 的遥操作参考...")
+
+        # 先禁止控制循环输出
+        self.teleop_active = False
+
+        # 重新标定当前 Vision Pro 右手位置和姿态
+        self.calibrate_right_hand_position()
+
+        # 同步关节初值到 MuJoCo 的默认初始关节
+        if hasattr(self.robot_controller, "initial_arm_joints_external"):
+            self.last_right_joint_angles = list(
+                self.robot_controller.initial_arm_joints_external
+            )
+        else:
+            self.last_right_joint_angles = [
+                -0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005
+            ]
+
+        self.last_right_joint_angles = [
+            round(float(x), 4) for x in self.last_right_joint_angles
+        ]
+
+        self.last_smooth_joints_right = self.last_right_joint_angles.copy()
+        self.joints_buffer_right = []
+
+        # 重置臂角搜索参考
+        self.current_arm_angle_right = 0.0
+
+        # 重置滤波器，避免上一条 episode 的平滑状态污染下一条
+        t_now = time.time()
+
+        self.pose_filter_right = PoseFilter7D(
+            min_cutoff=0.1,
+            beta=0.1,
+        )
+
+        self.joints_filter_right = OneEuroFilter(
+            t_now,
+            np.array(self.last_right_joint_angles),
+            min_cutoff=0.1,
+            beta=0.1,
+        )
+
+        # 重新允许遥操作逻辑，但此时线程是否运行由 start() 控制
+        self.teleop_active = True
+
+        logger.info(
+            "新 episode 遥操作参考已重置，初始关节: "
+            f"{[round(x, 4) for x in self.last_right_joint_angles]}"
+        )
+    
+    def _handle_stop_teleop_service(self, req):
+        """
+        Stop arm teleoperation thread.
+        """
+        try:
+            self.teleop_active = False
+            self.stop()
+
+            return TriggerResponse(
+                success=True,
+                message="Arm teleoperation stopped.",
+            )
+
+        except Exception as e:
+            logger.error(f"停止遥操作失败: {e}", exc_info=True)
+            return TriggerResponse(
+                success=False,
+                message=f"Failed to stop teleoperation: {e}",
+            )
+
+
+    def _handle_recalibrate_teleop_service(self, req):
+        """
+        Recalibrate hand reference for a new episode.
+        Does not start the control thread.
+        """
+        try:
+            if self.running:
+                self.stop()
+
+            self.recalibrate_for_new_episode()
+
+            return TriggerResponse(
+                success=True,
+                message="Arm teleoperation recalibrated for new episode.",
+            )
+
+        except Exception as e:
+            logger.error(f"重新标定遥操作失败: {e}", exc_info=True)
+            return TriggerResponse(
+                success=False,
+                message=f"Failed to recalibrate teleoperation: {e}",
+            )
+
+
+    def _handle_start_teleop_service(self, req):
+        """
+        Start arm teleoperation thread.
+        """
+        try:
+            self.teleop_active = True
+            self.start()
+
+            return TriggerResponse(
+                success=True,
+                message="Arm teleoperation started.",
+            )
+
+        except Exception as e:
+            logger.error(f"启动遥操作失败: {e}", exc_info=True)
+            return TriggerResponse(
+                success=False,
+                message=f"Failed to start teleoperation: {e}",
+            )
     
     def calibrate_head_position(self):
         """校准头部位置，记录初始位置作为参考点"""

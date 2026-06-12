@@ -18,9 +18,18 @@
     <mesh name="link_6" file="link_6.STL" />
     <mesh name="link_7" file="link_7.STL" />
     <material name="mat_table" rgba="0.45 0.45 0.45 1" />
-    <material name="mat_hole" rgba="0.68 0.68 0.68 1" />
+    <material name="mat_hole" rgba="0.32 0.32 0.34 1" />
     <material name="mat_peg" rgba="0.90 0.18 0.10 1" />
     <material name="mat_goal" rgba="0.10 0.80 0.20 0.45" />
+    <material name="mat_room_floor"
+              rgba="0.42 0.42 0.42 1"
+              specular="0.03"
+              shininess="0.15" />
+
+    <material name="mat_room_wall"
+              rgba="0.58 0.58 0.58 1"
+              specular="0.02"
+              shininess="0.10" />
   </asset>
   <worldbody>
     <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="base_link" />
@@ -65,7 +74,7 @@
                   <body name="peg_tool" pos="0 -0.0125 0.0025" quat="0.707107 -0.707107 0 0">
                     <!-- END-EFFECTOR CAMERA: attached near the flange-peg connection; camera optical axis follows local -Z, aligned with the peg direction -->
                     <camera name="ee_cam" pos="0.06 0.000 0.018" fovy="80" />
-                    <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.010000 0.045000" material="mat_peg" mass="0.08" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.012000 0.045000" material="mat_peg" mass="0.08" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
                     <!-- <site name="peg_tip_site" pos="0 0 -0.090000" size="0.007" rgba="0 1 0 1" />
                     <site name="peg_base_site" pos="0 0 0" size="0.006" rgba="0 0.3 1 1" /> -->
                     <site name="ft_sensor_site" pos="0 0 0" size="0.006" rgba="0 0 1 0.35" />
@@ -77,7 +86,39 @@
         </body>
       </body>
     </body>
-    <light name="task_key_light" pos="0.6 -1.0 2.2" dir="-0.4 0.7 -1" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" />
+    <!-- <light name="task_key_light" pos="0.6 -1.0 2.2" dir="-0.4 0.7 -1" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" /> -->
+    <!-- Soft top fill light: reduce shadows around peg and hole -->
+    <light name="task_top_fill_light"
+          mode="fixed"
+          directional="false"
+          pos="-0.250 -0.500 2.100"
+          dir="0.000 0.000 -1.000"
+          diffuse="0.75 0.75 0.75"
+          ambient="0.30 0.30 0.30"
+          specular="0.04 0.04 0.04"
+          castshadow="false" />
+
+    <!-- Front/camera-side fill light: illuminate the peg before insertion -->
+    <light name="task_front_fill_light"
+          mode="fixed"
+          directional="false"
+          pos="-0.250 0.150 1.350"
+          dir="0.000 -1.000 -0.250"
+          diffuse="0.35 0.35 0.35"
+          ambient="0.15 0.15 0.15"
+          specular="0.03 0.03 0.03"
+          castshadow="false" />
+
+    <!-- Weak side key light: keep some 3D structure and edge contrast -->
+    <light name="task_side_key_light"
+          mode="fixed"
+          directional="false"
+          pos="0.350 -0.150 1.600"
+          dir="-0.650 -0.650 -0.350"
+          diffuse="0.35 0.35 0.35"
+          ambient="0.10 0.10 0.10"
+          specular="0.05 0.05 0.05"
+          castshadow="false" />
     <geom name="floor" type="plane" pos="0 0 0" size="2.0 2.0 0.02" rgba="0.80 0.82 0.85 1" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
     <!-- Center of Table -->
     <!-- Pos of Round Hole Fixture -->
@@ -115,6 +156,17 @@
       <geom name="wall_hole_ring_21" type="box" pos="0.013435 0 -0.013435" size="0.005000 0.002487 0.022500" xyaxes="0.707107 0.000000 -0.707107 0.707107 0.000000 0.707107" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
       <geom name="wall_hole_ring_22" type="box" pos="0.016454 0 -0.009500" size="0.005000 0.002487 0.022500" xyaxes="0.866025 0.000000 -0.500000 0.500000 0.000000 0.866025" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
       <geom name="wall_hole_ring_23" type="box" pos="0.018353 0 -0.004918" size="0.005000 0.002487 0.022500" xyaxes="0.965926 0.000000 -0.258819 0.258819 0.000000 0.965926" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+      <geom name="hole_back_stop"
+          type="box"
+          pos="0 -0.025 0"
+          size="0.030 0.004 0.030"
+          rgba="0.55 0.55 0.55 1"
+          contype="1"
+          conaffinity="1"
+          condim="4"
+          friction="1.0 0.005 0.0001"
+          solref="0.004 1"
+          solimp="0.90 0.95 0.001" />
       <!-- <site name="hole_center_site" pos="0 0 0" size="0.001" rgba="0 1 0 0" /> -->
       <!-- <site name="hole_center_marker" type="sphere" pos="0 0.026 0" size="0.012" rgba="0 1 0 0.65" /> -->
       <!-- Invisible task-state site: used for computing peg-hole error -->
@@ -123,6 +175,43 @@
       <!-- <site name="hole_center_marker" type="sphere" pos="0 0.026 0" size="0.012" rgba="0 1 0 0.65" /> -->
       <!-- Slightly larger transparent alignment area -->
       <!-- <site name="hole_alignment_zone" type="sphere" pos="0 0.026 0" size="0.025" rgba="0 1 0 0.18" /> -->
+    </body>
+    <body name="visual_room_background" pos="0 0 0">
+        <!-- Larger visual-only floor -->
+        <geom name="room_floor"
+              type="box"
+              pos="0.000 -0.300 0.000"
+              size="2.200 2.000 0.015"
+              material="mat_room_floor"
+              contype="0"
+              conaffinity="0" />
+
+        <!-- Back wall, farther behind the task area -->
+        <geom name="room_back_wall"
+              type="box"
+              pos="0.000 -2.300 1.100"
+              size="2.200 0.020 1.100"
+              material="mat_room_wall"
+              contype="0"
+              conaffinity="0" />
+
+        <!-- Left wall -->
+        <geom name="room_left_wall"
+              type="box"
+              pos="-2.200 -0.300 1.100"
+              size="0.020 2.000 1.100"
+              material="mat_room_wall"
+              contype="0"
+              conaffinity="0" />
+
+        <!-- Right wall -->
+        <geom name="room_right_wall"
+              type="box"
+              pos="2.200 -0.300 1.100"
+              size="0.020 2.000 1.100"
+              material="mat_room_wall"
+              contype="0"
+              conaffinity="0" />
     </body>
   </worldbody>
   <actuator>
