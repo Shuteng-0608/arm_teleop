@@ -275,7 +275,7 @@ class RobotControllerMuJoCoPegTool:
                 jpg_quality=int(self.config.get("hdf5_jpg_quality", 90)),
                 max_buffer_rows=int(self.config.get("hdf5_max_buffer_rows", 500000)),
 
-                enable_ft_tare=bool(self.config.get("hdf5_enable_ft_tare", True)),
+                enable_ft_tare=bool(self.config.get("hdf5_enable_ft_tare", False)),
                 # record_ft_wrench_raw=bool(self.config.get("hdf5_record_ft_wrench_raw", True)),
 
                 ft_compensation_mode=self.config.get(

@@ -764,9 +764,21 @@ class MujocoHDF5Recorder:
 
         g.attrs["enable_ft_tare"] = int(self.enable_ft_tare)
         g.attrs["record_ft_wrench_raw"] = int(self.record_ft_wrench_raw)
-        g.attrs["ft_wrench_convention"] = (
-            "observations/ft_wrench = observations/ft_wrench_raw - episode_metadata/ft_wrench_bias_raw"
-        )
+        # g.attrs["ft_wrench_convention"] = (
+        #     "observations/ft_wrench = observations/ft_wrench_raw - episode_metadata/ft_wrench_bias_raw"
+        # )
+        if self.ft_compensation_mode == "gravity":
+            g.attrs["ft_wrench_convention"] = (
+                "observations/ft_wrench = observations/ft_wrench_raw - observations/ft_wrench_gravity"
+            )
+        elif self.ft_compensation_mode == "none":
+            g.attrs["ft_wrench_convention"] = (
+                "observations/ft_wrench = observations/ft_wrench_raw"
+            )
+        else:
+            g.attrs["ft_wrench_convention"] = (
+                f"ft_compensation_mode={self.ft_compensation_mode}"
+            )
 
         g.create_dataset("initial_peg_tip_pos", data=initial_peg_tip)
         g.create_dataset("initial_hole_center_pos", data=initial_hole_center)
@@ -796,7 +808,7 @@ class MujocoHDF5Recorder:
             
             # "final_ft_wrench": self._ft_wrench(),
             # "final_ft_wrench_raw": self._ft_wrench_raw(),
-            
+
             "final_ft_wrench": self._ft_wrench(),
             "final_ft_wrench_raw": self._ft_wrench_raw(),
             "final_ft_wrench_gravity": self._ft_gravity_wrench(),
