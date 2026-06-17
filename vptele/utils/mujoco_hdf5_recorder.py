@@ -43,6 +43,17 @@ class MujocoHDF5Recorder:
         image_format: str = "hdf5_rgb",   # compatibility only; images are stored in HDF5
         jpg_quality: int = 90,            # compatibility only; unused
         max_buffer_rows: int = 500000,
+
+        enable_ft_tare: bool = True,
+        # record_ft_wrench_raw: bool = True,
+
+        ft_compensation_mode: str = "gravity",
+        record_ft_wrench_raw: bool = True,
+        record_ft_wrench_gravity: bool = True,
+        ft_gravity_tool_body_names: Optional[List[str]] = None,
+        ft_gravity_world: Optional[List[float]] = None,
+        ft_gravity_sensor_sign: float = -1.0,
+
         joint_names: Optional[List[str]] = None,
         actuator_names: Optional[List[str]] = None,
         ee_body_name: str = "peg_tool",
@@ -75,6 +86,26 @@ class MujocoHDF5Recorder:
         self.image_width = int(image_width)
         self.image_height = int(image_height)
         self.max_buffer_rows = int(max_buffer_rows)
+
+        self.enable_ft_tare = bool(enable_ft_tare)
+        # self.record_ft_wrench_raw = bool(record_ft_wrench_raw)
+        self.ft_wrench_bias_raw = np.zeros(6, dtype=np.float64)
+
+        self.ft_compensation_mode = str(ft_compensation_mode).lower()
+        self.record_ft_wrench_raw = bool(record_ft_wrench_raw)
+        self.record_ft_wrench_gravity = bool(record_ft_wrench_gravity)
+
+        self.ft_gravity_tool_body_names = list(
+            ft_gravity_tool_body_names or ["peg_tool"]
+        )
+
+        self.ft_gravity_world = np.asarray(
+            ft_gravity_world if ft_gravity_world is not None else [0.0, 0.0, -9.81],
+            dtype=np.float64,
+        )
+
+        self.ft_gravity_sensor_sign = float(ft_gravity_sensor_sign)
+
 
         self.joint_names = list(joint_names or [f"joint_{i}" for i in range(1, 8)])
         self.actuator_names = list(actuator_names or [f"motor_joint_{i}" for i in range(1, 8)])
@@ -118,8 +149,44 @@ class MujocoHDF5Recorder:
             for name in self.actuator_names
         ]
         self.ee_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, self.ee_body_name)
+
         self.ft_force_sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, self.ft_force_sensor_name)
         self.ft_torque_sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, self.ft_torque_sensor_name)
+        # The force sensor object is the site used by the sensor.
+        self.ft_sensor_site_id = -1
+
+        if self.ft_force_sensor_id != -1:
+            self.ft_sensor_site_id = int(
+                self.model.sensor_objid[self.ft_force_sensor_id]
+            )
+        elif self.ft_torque_sensor_id != -1:
+            self.ft_sensor_site_id = int(
+                self.model.sensor_objid[self.ft_torque_sensor_id]
+            )
+
+        self.ft_gravity_tool_body_ids = []
+        for body_name in self.ft_gravity_tool_body_names:
+            bid = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                body_name,
+            )
+
+            if bid == -1:
+                print(
+                    f"[CompactHDF5Recorder] Warning: gravity compensation body "
+                    f"not found: {body_name}"
+                )
+            else:
+                self.ft_gravity_tool_body_ids.append(bid)
+
+        if self.ft_compensation_mode == "gravity":
+            print("[CompactHDF5Recorder] FT compensation mode: gravity")
+            print(f"  tool bodies = {self.ft_gravity_tool_body_names}")
+            print(f"  gravity     = {self.ft_gravity_world.tolist()}")
+            print(f"  sign        = {self.ft_gravity_sensor_sign}")
+
+
         self.peg_tip_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.peg_tip_site_name)
         self.hole_center_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.hole_center_site_name)
 
@@ -203,6 +270,19 @@ class MujocoHDF5Recorder:
             self.n_force = 0
             self.n_image = 0
             self.event_rows = []
+
+            # self.h5 = h5py.File(self.hdf5_path, "w")
+            # self._create_file_structure()
+            # self._write_initial_metadata()
+
+            # self.active = True
+            # self.add_event("record_start")
+            # 每条 episode 开始时，读取当前六维力作为 tare bias。
+            # 注意：这里发生在 reset arm / randomize hole 之后、teleop 开始之前。
+            if self.enable_ft_tare:
+                self.ft_wrench_bias_raw = self._ft_wrench_raw()
+            else:
+                self.ft_wrench_bias_raw = np.zeros(6, dtype=np.float64)
 
             self.h5 = h5py.File(self.hdf5_path, "w")
             self._create_file_structure()
@@ -389,7 +469,15 @@ class MujocoHDF5Recorder:
                 "observations/joint_pos": "[N_state,7] joint angles",
                 "observations/joint_vel": "[N_state,7] joint velocities",
                 "observations/joint_torque": "[N_state,7] qfrc_actuator at joint dofs",
-                "observations/ft_wrench": "[N_force,6] Fx Fy Fz Tx Ty Tz",
+                # "observations/ft_wrench": "[N_force,6] Fx Fy Fz Tx Ty Tz",
+
+                # "observations/ft_wrench": "[N_force,6] tare-compensated Fx Fy Fz Tx Ty Tz",
+                # "observations/ft_wrench_raw": "[N_force,6] raw Fx Fy Fz Tx Ty Tz",
+
+                "observations/ft_wrench": "[N_force,6] compensated Fx Fy Fz Tx Ty Tz",
+                "observations/ft_wrench_raw": "[N_force,6] raw MuJoCo FT sensor reading",
+                "observations/ft_wrench_gravity": "[N_force,6] predicted gravity wrench in sensor frame",
+
                 "observations/images/<camera>": "[N_image,H,W,3] uint8 RGB",
                 "timebase": "MuJoCo data.time",
             },
@@ -413,7 +501,43 @@ class MujocoHDF5Recorder:
         self._create_resizable_2d("observations/joint_pos", width=len(self.joint_names), chunk=self.chunk_size_state)
         self._create_resizable_2d("observations/joint_vel", width=len(self.joint_names), chunk=self.chunk_size_state)
         self._create_resizable_2d("observations/joint_torque", width=len(self.joint_names), chunk=self.chunk_size_state)
-        self._create_resizable_2d("observations/ft_wrench", width=6, chunk=self.chunk_size_force)
+        # self._create_resizable_2d("observations/ft_wrench", width=6, chunk=self.chunk_size_force)
+        # compensated wrench, used by default for learning
+        # self._create_resizable_2d(
+        #     "observations/ft_wrench",
+        #     width=6,
+        #     chunk=self.chunk_size_force,
+        # )
+
+        # # raw wrench, optional but strongly recommended for debugging
+        # if self.record_ft_wrench_raw:
+        #     self._create_resizable_2d(
+        #         "observations/ft_wrench_raw",
+        #         width=6,
+        #         chunk=self.chunk_size_force,
+        #     )
+        # Default compensated wrench used for learning.
+        self._create_resizable_2d(
+            "observations/ft_wrench",
+            width=6,
+            chunk=self.chunk_size_force,
+        )
+
+        # Raw MuJoCo FT sensor reading.
+        if self.record_ft_wrench_raw:
+            self._create_resizable_2d(
+                "observations/ft_wrench_raw",
+                width=6,
+                chunk=self.chunk_size_force,
+            )
+
+        # Predicted gravity wrench.
+        if self.record_ft_wrench_gravity:
+            self._create_resizable_2d(
+                "observations/ft_wrench_gravity",
+                width=6,
+                chunk=self.chunk_size_force,
+            )
 
         if self.record_images:
             str_dtype = h5py.string_dtype(encoding="utf-8")
@@ -469,11 +593,47 @@ class MujocoHDF5Recorder:
     # ------------------------------------------------------------------
     # Append samples
     # ------------------------------------------------------------------
+    # def _append_force_sample(self) -> None:
+    #     i = self.n_force
+    #     self._append_1d("timestamps/force", i, float(self.data.time))
+    #     self._append_1d("timestamps/force_episode", i, self._t_episode())
+    #     self._append_2d("observations/ft_wrench", i, self._ft_wrench())
+    #     self.n_force += 1
+
+    # def _append_force_sample(self) -> None:
+    #     i = self.n_force
+
+    #     raw = self._ft_wrench_raw()
+    #     compensated = self._compensate_ft_wrench(raw)
+
+    #     self._append_1d("timestamps/force", i, float(self.data.time))
+    #     self._append_1d("timestamps/force_episode", i, self._t_episode())
+
+    #     if self.record_ft_wrench_raw:
+    #         self._append_2d("observations/ft_wrench_raw", i, raw)
+
+    #     self._append_2d("observations/ft_wrench", i, compensated)
+
+    #     self.n_force += 1
+
     def _append_force_sample(self) -> None:
         i = self.n_force
+
+        raw = self._ft_wrench_raw()
+        gravity = self._ft_gravity_wrench()
+        compensated = self._compensate_ft_wrench(raw, gravity)
+
         self._append_1d("timestamps/force", i, float(self.data.time))
         self._append_1d("timestamps/force_episode", i, self._t_episode())
-        self._append_2d("observations/ft_wrench", i, self._ft_wrench())
+
+        if self.record_ft_wrench_raw:
+            self._append_2d("observations/ft_wrench_raw", i, raw)
+
+        if self.record_ft_wrench_gravity:
+            self._append_2d("observations/ft_wrench_gravity", i, gravity)
+
+        self._append_2d("observations/ft_wrench", i, compensated)
+
         self.n_force += 1
 
     def _append_state_sample(self) -> None:
@@ -548,12 +708,36 @@ class MujocoHDF5Recorder:
         self._write_string_dataset("episode_metadata/joint_names", self.joint_names)
         self._write_string_dataset("episode_metadata/actuator_names", self.actuator_names)
         self._write_string_dataset("episode_metadata/camera_names", list(self.camera_ids.keys()))
+        self._write_string_dataset(
+            "episode_metadata/ft_gravity_tool_body_names",
+            self.ft_gravity_tool_body_names,
+        )
 
         initial_joint_pos = self._joint_pos()
         initial_joint_vel = self._joint_vel()
         initial_joint_torque = self._joint_torque()
         initial_ee_pose = self._ee_pose()
-        initial_ft = self._ft_wrench()
+
+        # initial_ft = self._ft_wrench()
+
+        # initial_ft_raw = self._ft_wrench_raw()
+        # initial_ft = self._compensate_ft_wrench(initial_ft_raw)
+
+        initial_ft_raw = self._ft_wrench_raw()
+        initial_ft_gravity = self._ft_gravity_wrench()
+        initial_ft = self._compensate_ft_wrench(
+            initial_ft_raw,
+            initial_ft_gravity,
+        )
+
+        tool_mass, tool_com_w = self._tool_mass_and_com_world()
+        sensor_pos_w, R_ws = self._ft_sensor_pose_world()
+
+        if tool_mass > 1e-12 and not np.any(np.isnan(tool_com_w)):
+            tool_com_s = R_ws.T @ (tool_com_w - sensor_pos_w)
+        else:
+            tool_com_s = np.full(3, np.nan, dtype=np.float64)
+
         initial_peg_tip = self._site_pos(self.peg_tip_site_id)
         initial_hole_center = self._site_pos(self.hole_center_site_id)
         initial_err_xyz = initial_peg_tip - initial_hole_center
@@ -562,7 +746,28 @@ class MujocoHDF5Recorder:
         g.create_dataset("initial_joint_vel", data=initial_joint_vel)
         g.create_dataset("initial_joint_torque", data=initial_joint_torque)
         g.create_dataset("initial_ee_pose", data=initial_ee_pose)
+
+        # g.create_dataset("initial_ft_wrench", data=initial_ft)
         g.create_dataset("initial_ft_wrench", data=initial_ft)
+        # g.create_dataset("initial_ft_wrench_raw", data=initial_ft_raw)
+        # g.create_dataset("ft_wrench_bias_raw", data=self.ft_wrench_bias_raw)
+        g.create_dataset("initial_ft_wrench_raw", data=initial_ft_raw)
+        g.create_dataset("initial_ft_wrench_gravity", data=initial_ft_gravity)
+
+        g.create_dataset("ft_gravity_world", data=self.ft_gravity_world)
+        g.create_dataset("ft_gravity_tool_com_world_initial", data=tool_com_w)
+        g.create_dataset("ft_gravity_tool_com_sensor_initial", data=tool_com_s)
+
+        g.attrs["ft_compensation_mode"] = self.ft_compensation_mode
+        g.attrs["ft_gravity_sensor_sign"] = self.ft_gravity_sensor_sign
+        g.attrs["ft_gravity_tool_mass_initial"] = float(tool_mass)
+
+        g.attrs["enable_ft_tare"] = int(self.enable_ft_tare)
+        g.attrs["record_ft_wrench_raw"] = int(self.record_ft_wrench_raw)
+        g.attrs["ft_wrench_convention"] = (
+            "observations/ft_wrench = observations/ft_wrench_raw - episode_metadata/ft_wrench_bias_raw"
+        )
+
         g.create_dataset("initial_peg_tip_pos", data=initial_peg_tip)
         g.create_dataset("initial_hole_center_pos", data=initial_hole_center)
         g.create_dataset("initial_task_error_xyz", data=initial_err_xyz)
@@ -586,7 +791,16 @@ class MujocoHDF5Recorder:
             "final_joint_vel": self._joint_vel(),
             "final_joint_torque": self._joint_torque(),
             "final_ee_pose": self._ee_pose(),
+
+            # "final_ft_wrench": self._ft_wrench(),
+            
+            # "final_ft_wrench": self._ft_wrench(),
+            # "final_ft_wrench_raw": self._ft_wrench_raw(),
+            
             "final_ft_wrench": self._ft_wrench(),
+            "final_ft_wrench_raw": self._ft_wrench_raw(),
+            "final_ft_wrench_gravity": self._ft_gravity_wrench(),
+
             "final_peg_tip_pos": self._site_pos(self.peg_tip_site_id),
             "final_hole_center_pos": self._site_pos(self.hole_center_site_id),
         }
@@ -708,10 +922,186 @@ class MujocoHDF5Recorder:
             return padded
         return values[:dim_expected]
 
-    def _ft_wrench(self) -> np.ndarray:
+    # def _ft_wrench(self) -> np.ndarray:
+    #     force = self._sensor_vec(self.ft_force_sensor_id, 3)
+    #     torque = self._sensor_vec(self.ft_torque_sensor_id, 3)
+    #     return np.concatenate([force, torque]).astype(np.float64)
+    # def _ft_wrench_raw(self) -> np.ndarray:
+    #     """
+    #     Raw 6D force/torque sensor reading from MuJoCo.
+
+    #     Output:
+    #         [Fx, Fy, Fz, Tx, Ty, Tz]
+    #     """
+    #     force = self._sensor_vec(self.ft_force_sensor_id, 3)
+    #     torque = self._sensor_vec(self.ft_torque_sensor_id, 3)
+    #     return np.concatenate([force, torque]).astype(np.float64)
+
+
+    # def _compensate_ft_wrench(self, raw: np.ndarray) -> np.ndarray:
+    #     """
+    #     Episode-start tare compensation.
+
+    #     This is not a full pose-dependent gravity compensation model.
+    #     It removes the static bias measured at the beginning of the episode.
+    #     """
+    #     raw = np.asarray(raw, dtype=np.float64)
+
+    #     if self.enable_ft_tare:
+    #         return raw - self.ft_wrench_bias_raw
+
+    #     return raw
+
+
+    # def _ft_wrench(self) -> np.ndarray:
+    #     """
+    #     Default wrench used by the dataset.
+
+    #     If enable_ft_tare=True, this returns tare-compensated wrench.
+    #     Otherwise, it returns raw wrench.
+    #     """
+    #     raw = self._ft_wrench_raw()
+    #     return self._compensate_ft_wrench(raw)
+    def _ft_wrench_raw(self) -> np.ndarray:
+        """
+        Raw 6D force/torque sensor reading from MuJoCo.
+
+        Output:
+            [Fx, Fy, Fz, Tx, Ty, Tz]
+        """
         force = self._sensor_vec(self.ft_force_sensor_id, 3)
         torque = self._sensor_vec(self.ft_torque_sensor_id, 3)
         return np.concatenate([force, torque]).astype(np.float64)
+
+
+    def _tool_mass_and_com_world(self):
+        """
+        Compute total mass and world COM of the configured tool bodies.
+
+        This uses MuJoCo compiled body masses and body inertial COM positions.
+        For your current peg task, the usual body list is ["peg_tool"].
+        """
+        if not self.ft_gravity_tool_body_ids:
+            return 0.0, np.full(3, np.nan, dtype=np.float64)
+
+        total_mass = 0.0
+        weighted_com = np.zeros(3, dtype=np.float64)
+
+        for bid in self.ft_gravity_tool_body_ids:
+            m = float(self.model.body_mass[bid])
+
+            if m <= 0.0:
+                continue
+
+            # data.xipos[bid] is the world position of the body inertial frame.
+            com_w = self.data.xipos[bid].copy().astype(np.float64)
+
+            total_mass += m
+            weighted_com += m * com_w
+
+        if total_mass <= 1e-12:
+            return 0.0, np.full(3, np.nan, dtype=np.float64)
+
+        return total_mass, weighted_com / total_mass
+
+
+    def _ft_sensor_pose_world(self):
+        """
+        Return sensor site world position and rotation.
+
+        R_WS maps sensor-frame vectors to world-frame vectors.
+        """
+        if self.ft_sensor_site_id == -1:
+            return (
+                np.full(3, np.nan, dtype=np.float64),
+                np.eye(3, dtype=np.float64),
+            )
+
+        p_ws = self.data.site_xpos[self.ft_sensor_site_id].copy().astype(np.float64)
+
+        R_ws = self.data.site_xmat[self.ft_sensor_site_id].copy().reshape(3, 3)
+        R_ws = R_ws.astype(np.float64)
+
+        return p_ws, R_ws
+
+
+    def _ft_gravity_wrench(self) -> np.ndarray:
+        """
+        Predict the wrench measured by the FT sensor due to tool gravity.
+
+        The result is expressed in the sensor site frame:
+            [Fx, Fy, Fz, Tx, Ty, Tz]
+
+        The sign convention is controlled by self.ft_gravity_sensor_sign.
+        For MuJoCo force sensors attached to a child body, -1.0 is often the
+        correct default for removing the tool's static load from the sensor output.
+        """
+        if self.ft_compensation_mode not in {"gravity", "gravity_tare"}:
+            return np.zeros(6, dtype=np.float64)
+
+        if self.ft_sensor_site_id == -1:
+            return np.zeros(6, dtype=np.float64)
+
+        tool_mass, tool_com_w = self._tool_mass_and_com_world()
+
+        if tool_mass <= 1e-12 or np.any(np.isnan(tool_com_w)):
+            return np.zeros(6, dtype=np.float64)
+
+        sensor_pos_w, R_ws = self._ft_sensor_pose_world()
+
+        if np.any(np.isnan(sensor_pos_w)):
+            return np.zeros(6, dtype=np.float64)
+
+        # world -> sensor
+        R_sw = R_ws.T
+
+        # Force of gravity on the tool, expressed in world frame.
+        force_g_w = tool_mass * self.ft_gravity_world
+
+        # Express gravity force in sensor frame.
+        force_g_s = R_sw @ force_g_w
+
+        # COM position relative to sensor origin, expressed in sensor frame.
+        r_com_s = R_sw @ (tool_com_w - sensor_pos_w)
+
+        # Gravity torque about sensor origin.
+        torque_g_s = np.cross(r_com_s, force_g_s)
+
+        gravity_wrench = np.concatenate([force_g_s, torque_g_s]).astype(np.float64)
+
+        # Convert physical gravity wrench to the MuJoCo sensor sign convention.
+        return self.ft_gravity_sensor_sign * gravity_wrench
+
+
+    def _compensate_ft_wrench(
+        self,
+        raw: np.ndarray,
+        gravity: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Apply selected FT compensation mode.
+        """
+        raw = np.asarray(raw, dtype=np.float64)
+        gravity = np.asarray(gravity, dtype=np.float64)
+
+        if self.ft_compensation_mode == "none":
+            return raw
+
+        if self.ft_compensation_mode == "gravity":
+            return raw - gravity
+
+        raise ValueError(
+            f"Unknown ft_compensation_mode: {self.ft_compensation_mode}"
+        )
+
+
+    def _ft_wrench(self) -> np.ndarray:
+        """
+        Default wrench used by the dataset.
+        """
+        raw = self._ft_wrench_raw()
+        gravity = self._ft_gravity_wrench()
+        return self._compensate_ft_wrench(raw, gravity)
 
     @staticmethod
     def _safe_name(text: str) -> str:

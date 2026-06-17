@@ -274,6 +274,31 @@ class RobotControllerMuJoCoPegTool:
                 image_format=self.config.get("hdf5_image_format", "jpg"),
                 jpg_quality=int(self.config.get("hdf5_jpg_quality", 90)),
                 max_buffer_rows=int(self.config.get("hdf5_max_buffer_rows", 500000)),
+
+                enable_ft_tare=bool(self.config.get("hdf5_enable_ft_tare", True)),
+                # record_ft_wrench_raw=bool(self.config.get("hdf5_record_ft_wrench_raw", True)),
+
+                ft_compensation_mode=self.config.get(
+                    "hdf5_ft_compensation_mode",
+                    "gravity",
+                ),
+                record_ft_wrench_raw=bool(
+                    self.config.get("hdf5_record_ft_wrench_raw", True)
+                ),
+                record_ft_wrench_gravity=bool(
+                    self.config.get("hdf5_record_ft_wrench_gravity", True)
+                ),
+                ft_gravity_tool_body_names=self.config.get(
+                    "hdf5_ft_gravity_tool_body_names",
+                    ["peg_tool"],
+                ),
+                ft_gravity_world=self.config.get(
+                    "hdf5_ft_gravity_world",
+                    [0.0, 0.0, -9.81],
+                ),
+                ft_gravity_sensor_sign=float(
+                    self.config.get("hdf5_ft_gravity_sensor_sign", -1.0)
+                ),
             )
 
             if bool(self.config.get("hdf5_auto_start", False)):

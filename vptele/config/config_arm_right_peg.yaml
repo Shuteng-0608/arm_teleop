@@ -8,7 +8,7 @@ record_all_500hz: true
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole_hdf5_fix"
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_fixed_insertion_tare"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -27,6 +27,27 @@ hdf5_jpg_quality: 90
 hdf5_auto_start: false
 hdf5_episode_label: "teleop"
 hdf5_max_buffer_rows: 500000
+
+# Force/torque sensor recording
+hdf5_enable_ft_tare: false
+# hdf5_record_ft_wrench_raw: true
+# Force/torque gravity compensation
+hdf5_ft_compensation_mode: "gravity"
+
+# Keep diagnostic streams
+hdf5_record_ft_wrench_raw: true
+hdf5_record_ft_wrench_gravity: true
+
+# Tool body downstream of the FT sensor
+hdf5_ft_gravity_tool_body_names:
+  - "peg_tool"
+
+# World gravity
+hdf5_ft_gravity_world: [0.0, 0.0, -9.81]
+
+# MuJoCo FT sensor sign convention.
+# If static compensation becomes worse, change this to 1.0.
+hdf5_ft_gravity_sensor_sign: -1.0
 
 # ROS service for data recording
 enable_recording_service: true
@@ -152,8 +173,8 @@ initial_arm_joints:
   - 0.005
 
 # Hole randomization
-enable_hole_randomization: true
-randomize_hole_on_record_start: true
+enable_hole_randomization: false
+randomize_hole_on_record_start: false
 hole_random_body_name: "wall_task"
 hole_random_x_range: [-0.010, 0.010]
 hole_random_y_range: [0.000, 0.000]
