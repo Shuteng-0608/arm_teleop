@@ -1,5 +1,11 @@
 """MH6 dry-run end-effector integration."""
 
+from .mh6_backend import (
+    DisabledHardwareBackend,
+    DryRunBackend,
+    MH6Backend,
+    create_backend,
+)
 from .mh6_controller import (
     ActuatorCommand,
     CommandRateLimiter,
@@ -8,16 +14,32 @@ from .mh6_controller import (
     low_dim_to_actuator_command,
 )
 from .mh6_mapping import MH6HandMapper, MappingCalibration, validate_points
+from .mh6_safety import (
+    REQUIRED_HARDWARE_CONFIRM,
+    HardwareSafetyConfig,
+    HardwareSafetyDecision,
+    evaluate_hardware_safety,
+    validate_actuator_command,
+)
 
 __all__ = [
     "ActuatorCommand",
     "CommandRateLimiter",
+    "DisabledHardwareBackend",
+    "DryRunBackend",
     "LowDimHandCommand",
+    "MH6Backend",
     "MH6HandMapper",
     "MH6HandTeleopROS",
     "MappingCalibration",
+    "HardwareSafetyConfig",
+    "HardwareSafetyDecision",
+    "REQUIRED_HARDWARE_CONFIRM",
     "TeleopCalibration",
+    "create_backend",
+    "evaluate_hardware_safety",
     "low_dim_to_actuator_command",
+    "validate_actuator_command",
     "validate_points",
 ]
 

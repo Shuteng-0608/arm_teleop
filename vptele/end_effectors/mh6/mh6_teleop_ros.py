@@ -5,6 +5,7 @@ import rospy
 
 from arm_teleop.msg import MH6Command
 from end_effectors.end_effector_base import EndEffectorBase
+from end_effectors.mh6.mh6_backend import create_backend
 from end_effectors.mh6.mh6_controller import (
     CommandRateLimiter,
     LowDimHandCommand,
@@ -12,6 +13,10 @@ from end_effectors.mh6.mh6_controller import (
     low_dim_to_actuator_command,
 )
 from end_effectors.mh6.mh6_mapping import MH6HandMapper, MappingCalibration
+from end_effectors.mh6.mh6_safety import (
+    evaluate_hardware_safety,
+    validate_actuator_command,
+)
 from end_effectors.mh6.visionpro_adapter import extract_canonical_hand_data
 from utils.logger import get_logger
 
@@ -38,6 +43,8 @@ class MH6HandTeleopROS(EndEffectorBase):
         self.palm_times = self.config.get('palm_times', None)
         self.command_topic = self.config.get('command_topic', '/arm_teleop/mh6_command')
         self.publish_debug_topic = bool(self.config.get('publish_debug_topic', True))
+        self.requested_backend = str(self.config.get('backend', 'dry_run')).strip().lower()
+        self.requested_hardware = bool(self.config.get('enable_hardware', False))
 
         # This milestone is intentionally dry-run only. Hardware output is blocked
         # even when a YAML file accidentally enables it.
@@ -52,6 +59,8 @@ class MH6HandTeleopROS(EndEffectorBase):
         self.valid_frame_count = 0
         self.last_debug_time = 0.0
         self.command_publisher = None
+        self.hardware_safety_decision = evaluate_hardware_safety(self.config)
+        self.backend = create_backend(self.config, self.hardware_safety_decision)
 
         self.calibration = self._load_calibration()
         self.mapper = MH6HandMapper(self._make_mapping_calibration(self.calibration))
@@ -62,12 +71,23 @@ class MH6HandTeleopROS(EndEffectorBase):
         )
 
         requested_dry_run = self.config.get('dry_run', True)
-        requested_hardware = self.config.get('enable_hardware', False)
-        if requested_dry_run is not True or requested_hardware:
+        if requested_dry_run is not True or self.requested_hardware:
             rospy.logwarn(
                 "MH6 milestone is dry-run only; forcing dry_run=True and "
                 "enable_hardware=False"
             )
+        if self.hardware_safety_decision.requested:
+            rospy.logwarn(
+                "MH6 hardware safety decision: requested=%s eligible=%s reason=%s",
+                self.hardware_safety_decision.requested,
+                self.hardware_safety_decision.eligible,
+                self.hardware_safety_decision.reason,
+            )
+            if self.hardware_safety_decision.eligible:
+                rospy.logwarn(
+                    "Hardware configuration is eligible, but ModbusHardwareBackend "
+                    "is not implemented in this milestone. Commands will be suppressed."
+                )
 
         if self.publish_debug_topic:
             self.command_publisher = rospy.Publisher(
@@ -76,22 +96,29 @@ class MH6HandTeleopROS(EndEffectorBase):
                 queue_size=100,
             )
 
+        self.backend.start()
         self.initialize()
 
     def initialize(self):
         rospy.loginfo(
             "MH6 dry-run end-effector initialized: hand=%s, "
+            "backend=%s (%s), dry_run=%s, "
             "update_frequency=%.3fs, prefer_full_skeleton=%s, "
             "allow_legacy_25_fingers=%s, rate_limit_enabled=%s, "
-            "hardware_enabled=%s, publish_debug_topic=%s, command_topic=%s",
+            "hardware_enabled=%s, command_topic=%s, hardware_requested=%s, "
+            "hardware_eligible=%s",
             self.hand,
+            self.requested_backend,
+            self.backend.__class__.__name__,
+            self.dry_run,
             self.update_frequency,
             self.prefer_full_skeleton,
             self.allow_legacy_25_fingers,
             self.rate_limit_enabled,
             self.enable_hardware,
-            self.publish_debug_topic,
             self.command_topic,
+            self.hardware_safety_decision.requested,
+            self.hardware_safety_decision.eligible,
         )
 
     def process_vp_data(self, vp_data):
@@ -121,6 +148,17 @@ class MH6HandTeleopROS(EndEffectorBase):
             palm_times=self.palm_times,
         )
         limited_command = self.rate_limiter.apply(actuator_command)
+        valid_command, validation_reason = validate_actuator_command(
+            limited_command,
+            self.calibration,
+        )
+        if not valid_command:
+            rospy.logwarn_throttle(
+                5.0,
+                "MH6 dry-run: dropping invalid actuator command: %s",
+                validation_reason,
+            )
+            return
 
         self.latest_points = points
         self.latest_mapping_result = mapping_result
@@ -128,6 +166,17 @@ class MH6HandTeleopROS(EndEffectorBase):
         self.latest_source_type = canonical.source_type
         self.latest_joint_count = points.shape[0]
         self.valid_frame_count += 1
+
+        self.backend.send(
+            limited_command,
+            context={
+                "hand": self.hand,
+                "source": canonical.source_type,
+                "frame": self.valid_frame_count,
+                "dry_run": self.dry_run,
+                "hardware_enabled": self.enable_hardware,
+            },
+        )
 
         if self.command_publisher is not None:
             self.command_publisher.publish(
@@ -256,3 +305,7 @@ class MH6HandTeleopROS(EndEffectorBase):
         while len(fixed) < size:
             fixed.append(default)
         return fixed
+
+    def stop(self):
+        super().stop()
+        self.backend.stop()

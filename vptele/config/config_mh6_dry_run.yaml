@@ -78,8 +78,24 @@ hand_config:
 mh6_config:
   hand: "left"
   update_frequency: 0.05
+  backend: "dry_run"
   dry_run: true
   enable_hardware: false
+
+  # Hardware must remain disabled in this dry-run config.
+  # A future hardware config must explicitly set:
+  # backend: "modbus"
+  # enable_hardware: true
+  # dry_run: false
+  # hardware_confirm: "I_UNDERSTAND_MH6_HARDWARE_RISK"
+  hardware_backend: "modbus"
+  hardware_confirm: ""
+  port: "/dev/ttyUSB0"
+  baudrate: 115200
+  hardware_update_hz: 20
+  command_timeout_sec: 0.5
+  max_consecutive_failures: 3
+
   prefer_full_skeleton: true
   allow_legacy_25_fingers: true
   print_debug: true
