@@ -83,11 +83,6 @@ class MH6HandTeleopROS(EndEffectorBase):
                 self.hardware_safety_decision.eligible,
                 self.hardware_safety_decision.reason,
             )
-            if self.hardware_safety_decision.eligible:
-                rospy.logwarn(
-                    "Hardware configuration is eligible, but ModbusHardwareBackend "
-                    "is not implemented in this milestone. Commands will be suppressed."
-                )
 
         if self.publish_debug_topic:
             self.command_publisher = rospy.Publisher(
@@ -97,6 +92,8 @@ class MH6HandTeleopROS(EndEffectorBase):
             )
 
         self.backend.start()
+        self.enable_hardware = bool(self.backend.hardware_enabled)
+        self.dry_run = not self.enable_hardware
         self.initialize()
 
     def initialize(self):

@@ -4,6 +4,8 @@ from .mh6_backend import (
     DisabledHardwareBackend,
     DryRunBackend,
     MH6Backend,
+    ModbusHardwareBackend,
+    build_mh6_register_block,
     create_backend,
 )
 from .mh6_controller import (
@@ -31,11 +33,13 @@ __all__ = [
     "MH6Backend",
     "MH6HandMapper",
     "MH6HandTeleopROS",
+    "ModbusHardwareBackend",
     "MappingCalibration",
     "HardwareSafetyConfig",
     "HardwareSafetyDecision",
     "REQUIRED_HARDWARE_CONFIRM",
     "TeleopCalibration",
+    "build_mh6_register_block",
     "create_backend",
     "evaluate_hardware_safety",
     "low_dim_to_actuator_command",
