@@ -104,6 +104,7 @@ add_message_files(
   ArmJoints.msg
   DualArmMovej.msg
   DualHandTele.msg
+  MH6Command.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -160,7 +161,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES arm
- CATKIN_DEPENDS roscpp rospy std_msgs sensor_msgs trajectory_msgs
+ CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs sensor_msgs trajectory_msgs message_runtime
 #  DEPENDS system_lib
 )
 

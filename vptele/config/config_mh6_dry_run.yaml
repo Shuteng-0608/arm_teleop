@@ -1,0 +1,102 @@
+# VisionPro配置
+vp_ip: "192.168.8.145"
+vp_record: false
+vuer: false
+
+# 机械臂配置
+robot_ip: "169.254.128.19"
+robot_port: 8080
+robot_level: 3
+robot_thread_mode: 2
+arm_model: "RM_75"
+
+# 机械臂算法控制器配置
+algo_config:
+  install_angle: [0, 0, 0]
+  workframe: [0, 0, 0, 0, -0.785, 0]
+  toolframe:
+    pose: [0, 0, 0, 0, 0, 0]
+    payload: 0.0
+    center_of_mass: [0, 0, 0]
+
+# 机械臂实时控制参数
+robot_control:
+  max_line_speed: 0.1
+  max_line_acc: 1.0
+  collision_level: 3
+  initial_pose: [0.26, 0.35, 0.15, 3.14, 0, -1.4]
+
+# 轨迹记录与回放配置
+trajectory_config:
+  save_dir: "trajectories/right"
+  trajectory_dir: "trajectories/right"
+  record_frequency: 0.01
+  record_joint_angles: true
+  record_cartesian_pose: true
+  speed_factor: 1.0
+  use_joint_control: true
+
+# 末端执行器选择: none, hand, mh6
+end_effector: "mh6"
+
+# 机械臂遥控参数
+arm_config:
+  leftright: "right"
+  scaling_factor: 1.0
+  smoothing_factor: 0.99
+  update_frequency: 0.01
+  position_logging_interval: 0.1
+  use_adaptive_control: false
+  adaptive_config:
+    leftright: "right"
+    window_size: 10
+    velocity_threshold: 0.15
+    precision_threshold: 0.005
+    smoothing_range: [0.5, 0.5]
+    scaling_range: [1.0, 1.0]
+  x_range: [-0.5, 0.3]
+  y_range: [0.25, 1.4]
+  z_range: [-0.5, 0.5]
+  limit_rotation: true
+  rx_range: [2, 3.14]
+  ry_range: [0, 1.5]
+  rz_range: [-2.7, 0]
+
+# VisionPro手部控制配置
+hand_control:
+  use_right_hand: true
+
+# Existing DH hand parameters remain available when end_effector: "hand".
+hand_config:
+  smoothing_factor: 0.6
+  update_frequency: 0.01
+  max_hand_range: 65535
+  hand_speed: 1000
+
+# MH6 dry-run validation parameters. Hardware output is forcibly disabled in
+# this milestone even if these values are changed.
+mh6_config:
+  hand: "left"
+  update_frequency: 0.05
+  dry_run: true
+  enable_hardware: false
+  prefer_full_skeleton: true
+  allow_legacy_25_fingers: true
+  print_debug: true
+  command_topic: "/arm_teleop/mh6_command"
+  publish_debug_topic: true
+  calibration_path: "vptele/config/mh6_teleop_default_calibration.json"
+  actuator_debug: true
+  rate_limit_enabled: true
+  max_delta_per_update: 80
+  palm_times: [50, 50, 50]
+
+  # Inspect dry-run commands without enabling hardware:
+  #   rostopic echo /arm_teleop/mh6_command
+
+# 日志配置
+logging:
+  console_level: "info"
+  file_level: "info"
+  max_file_size: 104857600
+  backup_count: 5

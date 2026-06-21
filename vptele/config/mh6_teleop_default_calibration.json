@@ -1,0 +1,105 @@
+{
+  "curl_closed": {
+    "index": 2.5,
+    "little": 2.4,
+    "middle": 2.6,
+    "ring": 2.55,
+    "thumb": 1.4
+  },
+  "curl_open": {
+    "index": 0.2,
+    "little": 0.2,
+    "middle": 0.2,
+    "ring": 0.2,
+    "thumb": 0.1
+  },
+  "finger_closed_positions": {
+    "index": 1950,
+    "little": 1950,
+    "middle": 1950,
+    "ring": 1950,
+    "thumb": 1200
+  },
+  "finger_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "finger_open_positions": {
+    "index": 20,
+    "little": 20,
+    "middle": 20,
+    "ring": 20,
+    "thumb": 20
+  },
+  "grasp_weights": {
+    "index": 0.2,
+    "little": 0.2,
+    "middle": 0.3,
+    "ring": 0.3
+  },
+  "horizontal_from_grasp": 0.55,
+  "horizontal_from_opposition": 0.35,
+  "horizontal_from_tripod": 0.2,
+  "max_finger_delta_per_sec": 800.0,
+  "max_palm_delta_per_sec": 400.0,
+  "opposition_closed_dist": {
+    "index": 0.018,
+    "little": 0.03,
+    "middle": 0.02,
+    "ring": 0.025
+  },
+  "opposition_horizontal_weights": {
+    "index": 0.2,
+    "little": 1.0,
+    "middle": 0.35,
+    "ring": 0.7
+  },
+  "opposition_open_dist": {
+    "index": 0.095,
+    "little": 0.135,
+    "middle": 0.105,
+    "ring": 0.12
+  },
+  "opposition_threshold": 0.35,
+  "opposition_vertical_weights": {
+    "index": -0.25,
+    "little": 1.0,
+    "middle": -0.45,
+    "ring": 0.75
+  },
+  "palm_servos": [
+    {
+      "closed_position": 650,
+      "id": 1,
+      "name": "palm_1",
+      "open_position": 500,
+      "source": "thumbSide",
+      "time": 80
+    },
+    {
+      "closed_position": 600,
+      "id": 2,
+      "name": "palm_2",
+      "open_position": 500,
+      "time": 80,
+      "weights": {
+        "LR": 0.5,
+        "UR": 0.5
+      }
+    },
+    {
+      "closed_position": 560,
+      "id": 3,
+      "name": "palm_3",
+      "open_position": 500,
+      "source": "littleSide",
+      "time": 80
+    }
+  ],
+  "thumb_curl_gain": 0.7,
+  "vertical_from_finger_bias": 0.3,
+  "vertical_from_opposition": 0.7
+}

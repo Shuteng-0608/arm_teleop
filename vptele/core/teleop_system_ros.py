@@ -83,13 +83,39 @@ class TeleopSystemROS:
     
     def _initialize_end_effector(self):
         """初始化末端执行器"""
-        
-        logger.info("正在初始化灵巧手末端执行器...")
-        from end_effectors.hand.hand_teleop_ros import HandTeleopROS
-        self.end_effector = HandTeleopROS(
-            self.vp_streamer,
-            self.robot_controller,
-            self.config.get('hand_config', {})
+        end_effector_type = self.config.get('end_effector', 'none')
+        if end_effector_type is None:
+            end_effector_type = 'none'
+        end_effector_type = str(end_effector_type).strip().lower()
+
+        if end_effector_type == 'none':
+            logger.info("末端执行器已禁用")
+            self.end_effector = None
+            return
+
+        if end_effector_type == 'hand':
+            logger.info("正在初始化灵巧手末端执行器...")
+            from end_effectors.hand.hand_teleop_ros import HandTeleopROS
+            self.end_effector = HandTeleopROS(
+                self.vp_streamer,
+                self.robot_controller,
+                self.config.get('hand_config', {})
+            )
+            return
+
+        if end_effector_type == 'mh6':
+            logger.info("正在初始化MH6干运行末端执行器...")
+            from end_effectors.mh6.mh6_teleop_ros import MH6HandTeleopROS
+            self.end_effector = MH6HandTeleopROS(
+                self.vp_streamer,
+                self.robot_controller,
+                self.config.get('mh6_config', {})
+            )
+            return
+
+        raise ValueError(
+            f"未知末端执行器类型: {end_effector_type!r}. "
+            "支持的类型: 'none', 'hand', 'mh6'"
         )
         
 
@@ -123,5 +149,4 @@ class TeleopSystemROS:
         if self.robot_controller:
             self.robot_controller.disconnect()
     
-
 
