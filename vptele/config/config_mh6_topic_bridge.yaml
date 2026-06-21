@@ -1,0 +1,49 @@
+# VisionPro configuration
+vp_ip: "192.168.8.145"
+vp_record: false
+vuer: false
+
+# Robot arm fields remain present so main_ros.py and ArmTeleopROS can initialize normally.
+robot_ip: "192.168.1.18"
+robot_port: 8080
+robot_level: 3
+robot_thread_mode: 2
+arm_model: "RM_65"
+
+end_effector: "mh6_topic_bridge"
+
+arm_config:
+  scaling_factor: 1.0
+  smoothing_factor: 0.5
+  update_frequency: 0.01
+  position_logging_interval: 0.1
+  use_adaptive_control: false
+  adaptive_config:
+    window_size: 10
+    velocity_threshold: 0.15
+    precision_threshold: 0.005
+    smoothing_range: [0.2, 0.9]
+    scaling_range: [0.5, 1.5]
+  x_range: [-0.5, -0.3]
+  y_range: [-0.2, 0.2]
+  z_range: [0.2, 0.5]
+  limit_rotation: true
+  rx_range: [2.6, 3.0]
+  ry_range: [-0.7, -0.3]
+  rz_range: [-2.8, -2.5]
+
+mh6_config:
+  hand: "left"
+  topic: "/arm_teleop/mh6_normalized_cmd"
+  update_frequency: 0.05
+  calibrate_seconds: 2.0
+  filter_tau: 0.24
+  palm_times: [50, 50, 50]
+  queue_size: 1
+  allow_legacy_25_fingers: true
+
+logging:
+  console_level: "info"
+  file_level: "debug"
+  max_file_size: 104857600
+  backup_count: 5
