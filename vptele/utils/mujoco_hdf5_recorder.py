@@ -50,6 +50,10 @@ class MujocoHDF5Recorder:
         ft_compensation_mode: str = "gravity",
         record_ft_wrench_raw: bool = True,
         record_ft_wrench_gravity: bool = True,
+
+        record_actions: bool = True,
+        record_action_alias: bool = True,
+
         ft_gravity_tool_body_names: Optional[List[str]] = None,
         ft_gravity_world: Optional[List[float]] = None,
         ft_gravity_sensor_sign: float = -1.0,
@@ -105,6 +109,9 @@ class MujocoHDF5Recorder:
         )
 
         self.ft_gravity_sensor_sign = float(ft_gravity_sensor_sign)
+
+        self.record_actions = bool(record_actions)
+        self.record_action_alias = bool(record_action_alias)
 
 
         self.joint_names = list(joint_names or [f"joint_{i}" for i in range(1, 8)])
@@ -479,6 +486,10 @@ class MujocoHDF5Recorder:
                 "observations/ft_wrench_gravity": "[N_force,6] predicted gravity wrench in sensor frame",
 
                 "observations/images/<camera>": "[N_image,H,W,3] uint8 RGB",
+
+                "actions/joint_pos_command": "[N_state,7] actual actuator position command from data.ctrl[actuator_ids]",
+                "action": "[N_state,7] ACT-compatible alias of actions/joint_pos_command",
+
                 "timebase": "MuJoCo data.time",
             },
             ensure_ascii=False,
@@ -489,6 +500,8 @@ class MujocoHDF5Recorder:
         f.require_group("observations")
         f["observations"].require_group("images")
         f.require_group("events")
+        if self.record_actions:
+            f.require_group("actions")
 
         self._create_resizable_1d("timestamps/state", dtype=np.float64, chunk=self.chunk_size_state)
         self._create_resizable_1d("timestamps/state_episode", dtype=np.float64, chunk=self.chunk_size_state)
@@ -501,6 +514,20 @@ class MujocoHDF5Recorder:
         self._create_resizable_2d("observations/joint_pos", width=len(self.joint_names), chunk=self.chunk_size_state)
         self._create_resizable_2d("observations/joint_vel", width=len(self.joint_names), chunk=self.chunk_size_state)
         self._create_resizable_2d("observations/joint_torque", width=len(self.joint_names), chunk=self.chunk_size_state)
+
+        if self.record_actions:
+            self._create_resizable_2d(
+                "actions/joint_pos_command",
+                width=len(self.actuator_names),
+                chunk=self.chunk_size_state,
+            )
+
+            if self.record_action_alias:
+                self._create_resizable_2d(
+                    "action",
+                    width=len(self.actuator_names),
+                    chunk=self.chunk_size_state,
+                )
         # self._create_resizable_2d("observations/ft_wrench", width=6, chunk=self.chunk_size_force)
         # compensated wrench, used by default for learning
         # self._create_resizable_2d(
@@ -636,14 +663,42 @@ class MujocoHDF5Recorder:
 
         self.n_force += 1
 
+    # def _append_state_sample(self) -> None:
+    #     i = self.n_state
+    #     self._append_1d("timestamps/state", i, float(self.data.time))
+    #     self._append_1d("timestamps/state_episode", i, self._t_episode())
+    #     self._append_2d("observations/ee_pose", i, self._ee_pose())
+    #     self._append_2d("observations/joint_pos", i, self._joint_pos())
+    #     self._append_2d("observations/joint_vel", i, self._joint_vel())
+    #     self._append_2d("observations/joint_torque", i, self._joint_torque())
+    #     self.n_state += 1
     def _append_state_sample(self) -> None:
         i = self.n_state
+
         self._append_1d("timestamps/state", i, float(self.data.time))
         self._append_1d("timestamps/state_episode", i, self._t_episode())
+
         self._append_2d("observations/ee_pose", i, self._ee_pose())
         self._append_2d("observations/joint_pos", i, self._joint_pos())
         self._append_2d("observations/joint_vel", i, self._joint_vel())
         self._append_2d("observations/joint_torque", i, self._joint_torque())
+
+        if self.record_actions:
+            joint_pos_command = self._joint_pos_command()
+
+            self._append_2d(
+                "actions/joint_pos_command",
+                i,
+                joint_pos_command,
+            )
+
+            if self.record_action_alias:
+                self._append_2d(
+                    "action",
+                    i,
+                    joint_pos_command,
+                )
+
         self.n_state += 1
 
     def _append_image_sample(self) -> None:
@@ -717,6 +772,7 @@ class MujocoHDF5Recorder:
         initial_joint_vel = self._joint_vel()
         initial_joint_torque = self._joint_torque()
         initial_ee_pose = self._ee_pose()
+        initial_joint_pos_command = self._joint_pos_command()
 
         # initial_ft = self._ft_wrench()
 
@@ -746,6 +802,11 @@ class MujocoHDF5Recorder:
         g.create_dataset("initial_joint_vel", data=initial_joint_vel)
         g.create_dataset("initial_joint_torque", data=initial_joint_torque)
         g.create_dataset("initial_ee_pose", data=initial_ee_pose)
+        if self.record_actions:
+            g.create_dataset(
+                "initial_joint_pos_command",
+                data=initial_joint_pos_command,
+            )
 
         # g.create_dataset("initial_ft_wrench", data=initial_ft)
         g.create_dataset("initial_ft_wrench", data=initial_ft)
@@ -797,12 +858,17 @@ class MujocoHDF5Recorder:
         g.attrs["n_state"] = int(self.n_state)
         g.attrs["n_force"] = int(self.n_force)
         g.attrs["n_image"] = int(self.n_image)
+        g.attrs["record_actions"] = int(self.record_actions)
+        g.attrs["action_convention"] = (
+            "action = actions/joint_pos_command = data.ctrl[actuator_ids]"
+        )
 
         final_values = {
             "final_joint_pos": self._joint_pos(),
             "final_joint_vel": self._joint_vel(),
             "final_joint_torque": self._joint_torque(),
             "final_ee_pose": self._ee_pose(),
+            "final_joint_pos_command": self._joint_pos_command(),
 
             # "final_ft_wrench": self._ft_wrench(),
             
@@ -933,6 +999,26 @@ class MujocoHDF5Recorder:
             padded[:len(values)] = values
             return padded
         return values[:dim_expected]
+
+    def _joint_pos_command(self) -> np.ndarray:
+        """
+        Actual position command sent to MuJoCo actuators.
+
+        For position actuators, data.ctrl[actuator_id] is the actuator's
+        current position target. This is the best ACT-style action label.
+        """
+        out = np.full(len(self.actuator_ids), np.nan, dtype=np.float64)
+
+        for i, aid in enumerate(self.actuator_ids):
+            if aid == -1:
+                continue
+
+            if aid < 0 or aid >= self.data.ctrl.shape[0]:
+                continue
+
+            out[i] = float(self.data.ctrl[aid])
+
+        return out
 
     # def _ft_wrench(self) -> np.ndarray:
     #     force = self._sensor_vec(self.ft_force_sensor_id, 3)

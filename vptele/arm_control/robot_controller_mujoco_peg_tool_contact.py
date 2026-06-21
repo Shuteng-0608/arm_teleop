@@ -288,6 +288,14 @@ class RobotControllerMuJoCoPegTool:
                 record_ft_wrench_gravity=bool(
                     self.config.get("hdf5_record_ft_wrench_gravity", True)
                 ),
+
+                record_actions=bool(
+                    self.config.get("hdf5_record_actions", True)
+                ),
+                record_action_alias=bool(
+                    self.config.get("hdf5_record_action_alias", True)
+                ),
+
                 ft_gravity_tool_body_names=self.config.get(
                     "hdf5_ft_gravity_tool_body_names",
                     ["peg_tool"],
@@ -340,7 +348,7 @@ class RobotControllerMuJoCoPegTool:
         # ---------------- Target smoothing / safety ----------------- #
         # ############################################################ #
 
-        self.max_joint_velocity = float(self.config.get("max_joint_velocity", 1.2))  # rad/s
+        self.max_joint_velocity = float(self.config.get("max_joint_velocity", 0.5))  # rad/s
         self.max_joint_step_qpos = float(self.config.get("max_joint_step_qpos", 0.015))  # rad/frame for qpos debug mode
 
 
@@ -1479,7 +1487,7 @@ if __name__ == "__main__":
         "auto_start": True,
         "viewer_rate": 60,
         "realtime": True,
-        "max_joint_velocity": 1.2,
+        "max_joint_velocity": 0.5,
         "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
         "enable_visual_guides": False,
 

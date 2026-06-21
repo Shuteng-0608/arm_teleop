@@ -73,7 +73,7 @@
                   <!-- PEG TOOL -->
                   <body name="peg_tool" pos="0 -0.0125 0.0025" quat="0.707107 -0.707107 0 0">
                     <!-- END-EFFECTOR CAMERA: attached near the flange-peg connection; camera optical axis follows local -Z, aligned with the peg direction -->
-                    <camera name="ee_cam" pos="0.06 0.000 0.018" fovy="80" />
+                    <camera name="ee_cam" pos="0.15 0.000 0.05" quat="0.984808 0 0.173648 0" fovy="80" />
                     <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.012000 0.045000" material="mat_peg" mass="0.115" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
                     <!-- <site name="peg_tip_site" pos="0 0 -0.090000" size="0.007" rgba="0 1 0 1" />
                     <site name="peg_base_site" pos="0 0 0" size="0.006" rgba="0 0.3 1 1" /> -->
@@ -125,8 +125,8 @@
     <camera name="wall_task_cam" pos="0.55 -1.20 1.15" xyaxes="1 0 0 0 0.55 0.84" />
     <camera name="wall_side_cam" pos="-0.40 -0.95 1.00" xyaxes="1 0 0 0 0.45 0.89" />
     <!-- BASE-TOP GLOBAL CAMERA: fixed camera near the robot base top, looking at the wall task region -->
-    <camera name="base_top_cam" pos="0.00000 -0.10000 1.50000" xyaxes="-0.847998 0.529999 0.000000 -0.385518 -0.616828 0.686221" fovy="60" />
-    <camera name="cctv_cam" pos="-0.10000 -0.30000 1.10000" xyaxes="-0.800000 0.600000 0.000000 -0.222834 -0.297113 0.928477" fovy="99" />
+    <camera name="base_top_cam" pos="0.00000 -0.10000 1.50000" xyaxes="-0.847998 0.529999 0.000000 -0.385518 -0.616828 0.686221" fovy="75" />
+    <camera name="cctv_cam" pos="-0.10000 -0.30000 1.10000" xyaxes="-0.800000 0.600000 0.000000 -0.222834 -0.297113 0.928477" fovy="75" />
     <body name="wall_task" pos="-0.250 -0.500 1.000">
       <geom name="wall_top" type="box" pos="0 0 0.140000" size="0.180000 0.020000 0.020000" material="mat_table" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
       <geom name="wall_bottom" type="box" pos="0 0 -0.140000" size="0.180000 0.020000 0.020000" material="mat_table" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />

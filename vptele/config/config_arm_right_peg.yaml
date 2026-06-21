@@ -8,11 +8,15 @@ record_all_500hz: true
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_fixed_insertion_tare"
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_playback_test"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
 hdf5_image_hz: 30.0
+
+# ACT-style action recording
+hdf5_record_actions: true
+hdf5_record_action_alias: true
 
 hdf5_record_images: true
 hdf5_camera_names:
