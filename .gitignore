@@ -112,6 +112,7 @@ logs/
 *.txt
 data/
 bagfiles/
+data_log/
 
 # ===== 环境变量和配置文件 =====
 # Environment variables
