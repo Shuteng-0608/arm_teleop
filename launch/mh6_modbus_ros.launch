@@ -1,0 +1,28 @@
+<launch>
+    <arg name="command_topic" default="/arm_teleop/mh6_normalized_cmd" />
+    <arg name="port" default="/dev/ttyUSB0" />
+    <arg name="baudrate" default="115200" />
+    <arg name="wait_status" default="false" />
+    <arg name="free_on_start" default="true" />
+    <arg name="free_on_shutdown" default="false" />
+    <arg name="command_timeout_sec" default="0.5" />
+    <arg name="send_rate_hz" default="20" />
+    <arg name="require_calibrated" default="true" />
+
+    <node
+        pkg="arm_teleop"
+        type="mh6_modbus_ros.py"
+        name="mh6_modbus_ros"
+        output="screen"
+    >
+        <param name="command_topic" value="$(arg command_topic)" />
+        <param name="port" value="$(arg port)" />
+        <param name="baudrate" type="int" value="$(arg baudrate)" />
+        <param name="wait_status" type="bool" value="$(arg wait_status)" />
+        <param name="free_on_start" type="bool" value="$(arg free_on_start)" />
+        <param name="free_on_shutdown" type="bool" value="$(arg free_on_shutdown)" />
+        <param name="command_timeout_sec" type="double" value="$(arg command_timeout_sec)" />
+        <param name="send_rate_hz" type="double" value="$(arg send_rate_hz)" />
+        <param name="require_calibrated" type="bool" value="$(arg require_calibrated)" />
+    </node>
+</launch>
