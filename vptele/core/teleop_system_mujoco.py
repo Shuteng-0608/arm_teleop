@@ -225,7 +225,33 @@ class TeleopSystemMujoco:
 
             # Reset arm before each recording episode
             "reset_arm_on_record_start": self.config.get("reset_arm_on_record_start", True),
-            "reset_ignore_teleop_duration": self.config.get("reset_ignore_teleop_duration", 0.5),            
+            "reset_ignore_teleop_duration": self.config.get("reset_ignore_teleop_duration", 0.5), 
+
+            # Joint torque quality alarm
+            "enable_joint_torque_alarm": self.config.get(
+                "enable_joint_torque_alarm",
+                True,
+            ),
+            "joint_torque_alarm_only_when_recording": self.config.get(
+                "joint_torque_alarm_only_when_recording",
+                True,
+            ),
+            "joint_torque_alarm_latched": self.config.get(
+                "joint_torque_alarm_latched",
+                True,
+            ),
+            "joint_torque_limits": self.config.get(
+                "joint_torque_limits",
+                20.0,
+            ),
+            "joint_torque_alarm_peg_rgba": self.config.get(
+                "joint_torque_alarm_peg_rgba",
+                [0.0, 1.0, 0.0, 1.0],
+            ),
+            "reset_joint_torque_alarm_on_record_start": self.config.get(
+                "reset_joint_torque_alarm_on_record_start",
+                True,
+            ),           
 
 
         }

@@ -8,7 +8,7 @@ record_all_500hz: true
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_playback_test"
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_joints_torque_test"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -188,3 +188,30 @@ hole_random_z_range: [-0.010, 0.010]
 hdf5_auto_start: false
 enable_recording_service: true
 recording_service_name: "/mujoco_hdf5_recording/set_recording"
+
+
+# Joint torque quality alarm
+enable_joint_torque_alarm: true
+
+# 只在 HDF5 recording active 时检查，避免非采集状态误报警
+joint_torque_alarm_only_when_recording: true
+
+# 一旦超限，本条 episode 内 peg 一直保持绿色
+joint_torque_alarm_latched: true
+
+# 每条新 episode 开始前清除报警
+reset_joint_torque_alarm_on_record_start: true
+
+# 超限后 peg 变绿色
+joint_torque_alarm_peg_rgba: [0.0, 1.0, 0.0, 1.0]
+
+# 7 个关节力矩限制，单位 Nm
+# 这里先用占位值，后续根据你实际采集数据统计调整
+joint_torque_limits:
+  - 40.0
+  - 40.0
+  - 40.0
+  - 40.0
+  - 20.0
+  - 20.0
+  - 20.0

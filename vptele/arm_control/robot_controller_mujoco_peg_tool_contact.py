@@ -354,6 +354,61 @@ class RobotControllerMuJoCoPegTool:
 
 
 
+        # ############################################################
+        # # ---------------- Joint torque alarm ----------------------
+        # ############################################################
+        self.enable_joint_torque_alarm = bool(
+            self.config.get("enable_joint_torque_alarm", True)
+        )
+
+        self.joint_torque_alarm_only_when_recording = bool(
+            self.config.get("joint_torque_alarm_only_when_recording", True)
+        )
+
+        self.joint_torque_alarm_latched = bool(
+            self.config.get("joint_torque_alarm_latched", True)
+        )
+
+        raw_torque_limits = self.config.get("joint_torque_limits", 20.0)
+        n_arm_joints = len(self.arm_joint_names)
+
+        if isinstance(raw_torque_limits, (int, float)):
+            self.joint_torque_limits = np.full(
+                n_arm_joints,
+                float(raw_torque_limits),
+                dtype=float,
+            )
+        else:
+            self.joint_torque_limits = np.asarray(
+                raw_torque_limits,
+                dtype=float,
+            )
+
+        if self.joint_torque_limits.shape[0] != n_arm_joints:
+            raise ValueError(
+                "joint_torque_limits must be a scalar or a list with "
+                f"{n_arm_joints} values."
+            )
+
+        self.joint_torque_alarm_peg_rgba = np.asarray(
+            self.config.get("joint_torque_alarm_peg_rgba", [0.0, 1.0, 0.0, 1.0]),
+            dtype=float,
+        )
+
+        self.reset_joint_torque_alarm_on_record_start = bool(
+            self.config.get("reset_joint_torque_alarm_on_record_start", True)
+        )
+
+        self.joint_torque_alarm_active = False
+        self.joint_torque_alarm_first_time = None
+        self.joint_torque_alarm_first_joint = ""
+        self.joint_torque_alarm_first_value = 0.0
+        self.joint_torque_alarm_first_limit = 0.0
+        self.joint_torque_alarm_last_values = np.zeros(n_arm_joints, dtype=float)
+
+
+
+
 
         # ######################################################### #
         # -------------------- Hole randomization ----------------- #
@@ -575,6 +630,10 @@ class RobotControllerMuJoCoPegTool:
                 # 2. reset MuJoCo 机械臂到默认初始位置
                 if getattr(self, "reset_arm_on_record_start", True):
                     self.reset_arm_to_initial_pose()
+                
+                # 2.5 clear previous torque alarm before this episode
+                if self.reset_joint_torque_alarm_on_record_start:
+                    self.reset_joint_torque_alarm()
 
                 # 3. 每条 episode 开始前随机孔洞位置
                 if getattr(self, "randomize_hole_on_record_start", False):
@@ -648,6 +707,16 @@ class RobotControllerMuJoCoPegTool:
                 )
 
                 # 2. 停止 HDF5 记录
+
+                torque_alarm_msg = ""
+                if getattr(self, "joint_torque_alarm_active", False):
+                    torque_alarm_msg = (
+                        " Joint torque alarm was triggered: "
+                        f"{self.joint_torque_alarm_first_joint}, "
+                        f"{self.joint_torque_alarm_first_value:.3f} Nm > "
+                        f"{self.joint_torque_alarm_first_limit:.3f} Nm."
+                    )
+
                 hdf5_path = self.hdf5_recorder.stop_episode(
                     status="manual_keep" if req.keep else "manual_discard"
                 )
@@ -668,14 +737,24 @@ class RobotControllerMuJoCoPegTool:
                     return SetRecordingResponse(
                         success=True,
                         active=False,
-                        message="Stopped recording, stopped teleoperation, reset arm, and discarded this episode.",
+                        # message="Stopped recording, stopped teleoperation, reset arm, and discarded this episode.",
+                        message=(
+                            "Stopped recording, stopped teleoperation, reset arm, "
+                            "and discarded this episode."
+                            + torque_alarm_msg
+                        ),
                         episode_path=episode_path,
                     )
 
                 return SetRecordingResponse(
                     success=True,
                     active=False,
-                    message="Stopped recording, stopped teleoperation, reset arm, and kept this episode.",
+                    # message="Stopped recording, stopped teleoperation, reset arm, and kept this episode.",
+                    message=(
+                        "Stopped recording, stopped teleoperation, reset arm, "
+                        "and kept this episode."
+                        + torque_alarm_msg
+                    ),
                     episode_path=episode_path,
                 )
             # if req.record:
@@ -1066,6 +1145,12 @@ class RobotControllerMuJoCoPegTool:
 
         mujoco.mj_step(self.model, self.data)
 
+        # Online data-quality alarm.
+        # If any joint torque exceeds its limit during recording,
+        # turn the peg green and latch the alarm.
+        self._update_joint_torque_alarm_locked()
+
+
         # Data Recording
         if self.data_recorder is not None:
             self.data_recorder.record_if_needed(self)
@@ -1140,6 +1225,122 @@ class RobotControllerMuJoCoPegTool:
                 g2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom2)
                 if g1 == "cylindrical_peg" or g2 == "cylindrical_peg":
                     print(f"[contact {i}] {g1} <-> {g2}, dist={c.dist:.6f}")
+    
+    def _is_hdf5_recording_active(self) -> bool:
+        """
+        Return whether an HDF5 episode is currently being recorded.
+        """
+        return (
+            self.hdf5_recorder is not None
+            and bool(getattr(self.hdf5_recorder, "active", False))
+        )
+
+
+    def _get_arm_joint_torques_locked(self) -> np.ndarray:
+        """
+        Return actuator generalized torques for the arm joints.
+
+        For hinge joints in MuJoCo, data.qfrc_actuator[dof_addr] is in Nm.
+        The order follows self.arm_joint_names.
+        """
+        torques = np.full(len(self.arm_joint_names), np.nan, dtype=float)
+
+        for i, joint_name in enumerate(self.arm_joint_names):
+            joint_id = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                joint_name,
+            )
+
+            if joint_id == -1:
+                continue
+
+            dof_addr = int(self.model.jnt_dofadr[joint_id])
+
+            if 0 <= dof_addr < self.data.qfrc_actuator.shape[0]:
+                torques[i] = float(self.data.qfrc_actuator[dof_addr])
+
+        return torques
+
+
+    def reset_joint_torque_alarm(self):
+        """
+        Clear latched joint torque alarm.
+
+        This should be called before starting a new recording episode.
+        """
+        with self.lock:
+            self.joint_torque_alarm_active = False
+            self.joint_torque_alarm_first_time = None
+            self.joint_torque_alarm_first_joint = ""
+            self.joint_torque_alarm_first_value = 0.0
+            self.joint_torque_alarm_first_limit = 0.0
+            self.joint_torque_alarm_last_values = np.zeros(
+                len(self.arm_joint_names),
+                dtype=float,
+            )
+
+            self.set_peg_color(self.default_peg_rgba)
+
+
+    def _update_joint_torque_alarm_locked(self):
+        """
+        Check joint torque limits and update peg color.
+
+        Call this inside self.lock, after mujoco.mj_step().
+        """
+        if not self.enable_joint_torque_alarm:
+            return
+
+        if (
+            self.joint_torque_alarm_only_when_recording
+            and not self._is_hdf5_recording_active()
+        ):
+            return
+
+        torques = self._get_arm_joint_torques_locked()
+        self.joint_torque_alarm_last_values = torques.copy()
+
+        abs_torques = np.abs(torques)
+        over_margin = abs_torques - self.joint_torque_limits
+
+        # Ignore NaN joints.
+        over_margin = np.where(np.isfinite(over_margin), over_margin, -np.inf)
+
+        if not np.any(over_margin > 0.0):
+            if not self.joint_torque_alarm_latched:
+                self.joint_torque_alarm_active = False
+                self.set_peg_color(self.default_peg_rgba)
+            return
+
+        first_idx = int(np.argmax(over_margin))
+
+        if not self.joint_torque_alarm_active:
+            self.joint_torque_alarm_active = True
+            self.joint_torque_alarm_first_time = float(self.data.time)
+            self.joint_torque_alarm_first_joint = self.arm_joint_names[first_idx]
+            self.joint_torque_alarm_first_value = float(torques[first_idx])
+            self.joint_torque_alarm_first_limit = float(
+                self.joint_torque_limits[first_idx]
+            )
+
+            print(
+                "[JointTorqueAlarm] Over limit: "
+                f"joint={self.joint_torque_alarm_first_joint}, "
+                f"torque={self.joint_torque_alarm_first_value:.4f} Nm, "
+                f"limit={self.joint_torque_alarm_first_limit:.4f} Nm, "
+                f"t={self.joint_torque_alarm_first_time:.4f}"
+            )
+
+            if self.hdf5_recorder is not None:
+                try:
+                    if getattr(self.hdf5_recorder, "active", False):
+                        self.hdf5_recorder.add_event("joint_torque_over_limit")
+                except Exception as e:
+                    print(f"[JointTorqueAlarm] Failed to add HDF5 event: {e}")
+
+        # Highest-priority visual alarm.
+        self.set_peg_color(self.joint_torque_alarm_peg_rgba)
     
     def set_peg_color(self, rgba):
         """
