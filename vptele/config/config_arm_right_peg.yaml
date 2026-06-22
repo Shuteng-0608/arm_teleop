@@ -8,7 +8,7 @@ record_all_500hz: true
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_joints_torque_test"
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_auto_test"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -208,10 +208,38 @@ joint_torque_alarm_peg_rgba: [0.0, 1.0, 0.0, 1.0]
 # 7 个关节力矩限制，单位 Nm
 # 这里先用占位值，后续根据你实际采集数据统计调整
 joint_torque_limits:
-  - 40.0
-  - 40.0
-  - 40.0
-  - 40.0
-  - 20.0
-  - 20.0
-  - 20.0
+  - 30.0
+  - 30.0
+  - 30.0
+  - 30.0
+  - 10.0
+  - 10.0
+  - 10.0
+
+# Task success auto-stop by task sites
+enable_task_success_auto_stop: true
+
+task_success_peg_site_name: "peg_tip_site"
+task_success_hole_site_name: "hole_goal_site"
+
+# 两个 site 的距离小于该阈值，认为到达成功区域
+# 初期建议稍微宽松，确认稳定后再收紧到 0.005
+task_success_distance: 0.008
+
+# 连续满足距离阈值多久才算成功，避免单帧误触发
+task_success_dwell_time: 0.10
+
+# 成功后停止接收新的遥操作命令
+task_success_stop_accepting_teleop: true
+
+# 成功后继续记录 terminal hold
+task_success_terminal_hold_time: 1.0
+
+# 触发成功后，用 0.2 秒从当前 command 平滑切到当前 qpos
+task_success_blend_to_qpos_time: 0.2
+
+# 只在 HDF5 recording active 时检查成功条件
+task_success_only_when_recording: true
+
+# 自动 stop 后先暂存，等待 keyboard client 人工 keep/discard
+task_success_pending_manual_review: true

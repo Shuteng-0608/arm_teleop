@@ -410,6 +410,109 @@ class RobotControllerMuJoCoPegTool:
 
 
 
+        # ############################################################ #
+        # # ---------------- Task success auto-stop ---------------- # #
+        # ############################################################ #
+        self.enable_task_success_auto_stop = bool(
+            self.config.get("enable_task_success_auto_stop", True)
+        )
+
+        self.task_success_only_when_recording = bool(
+            self.config.get("task_success_only_when_recording", True)
+        )
+
+        self.task_success_pending_manual_review = bool(
+            self.config.get("task_success_pending_manual_review", True)
+        )
+
+        self.task_success_stop_accepting_teleop = bool(
+            self.config.get("task_success_stop_accepting_teleop", True)
+        )
+
+        self.task_success_peg_site_name = self.config.get(
+            "task_success_peg_site_name",
+            "peg_tip_site",
+        )
+
+        self.task_success_hole_site_name = self.config.get(
+            "task_success_hole_site_name",
+            "hole_goal_site",
+        )
+
+        self.task_success_distance = float(
+            self.config.get("task_success_distance", 0.006)
+        )
+
+        self.task_success_dwell_time = float(
+            self.config.get("task_success_dwell_time", 0.15)
+        )
+
+        self.task_success_terminal_hold_time = float(
+            self.config.get("task_success_terminal_hold_time", 1.0)
+        )
+
+        self.task_success_blend_to_qpos_time = float(
+            self.config.get("task_success_blend_to_qpos_time", 0.2)
+        )
+
+        self.task_success_peg_site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            self.task_success_peg_site_name,
+        )
+
+        self.task_success_hole_site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            self.task_success_hole_site_name,
+        )
+
+        if self.enable_task_success_auto_stop:
+            print("[TaskSuccessAutoStop] enable:", self.enable_task_success_auto_stop)
+            print(
+                "[TaskSuccessAutoStop] peg site:",
+                self.task_success_peg_site_name,
+                self.task_success_peg_site_id,
+            )
+            print(
+                "[TaskSuccessAutoStop] hole site:",
+                self.task_success_hole_site_name,
+                self.task_success_hole_site_id,
+            )
+            print("[TaskSuccessAutoStop] distance:", self.task_success_distance)
+            print("[TaskSuccessAutoStop] dwell time:", self.task_success_dwell_time)
+            print("[TaskSuccessAutoStop] terminal hold:", self.task_success_terminal_hold_time)
+            print("[TaskSuccessAutoStop] blend to qpos:", self.task_success_blend_to_qpos_time)
+
+            if self.task_success_peg_site_id == -1:
+                raise ValueError(
+                    f"Task success peg site not found: {self.task_success_peg_site_name}"
+                )
+
+            if self.task_success_hole_site_id == -1:
+                raise ValueError(
+                    f"Task success hole site not found: {self.task_success_hole_site_name}"
+                )
+
+        self.task_success_accumulated_time = 0.0
+        self.task_success_last_check_time = None
+        self.task_success_triggered = False
+
+        self.terminal_hold_active = False
+        self.terminal_hold_start_time = None
+        self.terminal_hold_command_start = None
+        self.terminal_hold_command_goal = None
+        self.terminal_hold_stop_started = False
+
+        self.pending_auto_completed_review = False
+        self.pending_auto_completed_episode_path = ""
+        self.pending_auto_completed_episode_dir = ""
+        
+
+
+
+
+
         # ######################################################### #
         # -------------------- Hole randomization ----------------- #
         # ######################################################### #
@@ -573,6 +676,64 @@ class RobotControllerMuJoCoPegTool:
                 f"({service_name}): {e}"
             )
             return False
+    
+    def _auto_stop_recording_for_task_success(self):
+        """
+        Stop HDF5 recording after terminal hold.
+
+        The episode is temporarily kept, then keyboard client can request
+        keep/discard through the normal stop service.
+        """
+        try:
+            if self.hdf5_recorder is None:
+                print("[TaskSuccessAutoStop] HDF5 recorder is None.")
+                return
+
+            if not getattr(self.hdf5_recorder, "active", False):
+                print("[TaskSuccessAutoStop] No active HDF5 recording.")
+                return
+
+            try:
+                self.hdf5_recorder.add_event("auto_stop_task_success")
+            except Exception as e:
+                print(f"[TaskSuccessAutoStop] Failed to add auto-stop event: {e}")
+
+            hdf5_path = self.hdf5_recorder.stop_episode(
+                status="auto_stop_task_success"
+            )
+
+            episode_path = str(hdf5_path) if hdf5_path is not None else ""
+            episode_dir = str(hdf5_path.parent) if hdf5_path is not None else ""
+
+            self.pending_auto_completed_review = True
+            self.pending_auto_completed_episode_path = episode_path
+            self.pending_auto_completed_episode_dir = episode_dir
+
+            print(
+                "[TaskSuccessAutoStop] Recording auto-stopped and temporarily kept.\n"
+                f"  episode_path = {episode_path}\n"
+                "  Press Enter in the keyboard client, then choose keep/discard."
+            )
+
+        except Exception as e:
+            print(f"[TaskSuccessAutoStop] Auto-stop failed: {e}")
+
+    def _reset_after_episode_stop(self):
+        """
+        Reset controller state and arm pose after an episode has stopped.
+
+        Important:
+        Call this only after HDF5 recording is inactive,
+        so reset motion will not be recorded into the dataset.
+        """
+        self.accept_teleop_commands = False
+
+        # Clear terminal-hold / task-success state first.
+        with self.lock:
+            self._reset_task_success_state_locked()
+
+        if getattr(self, "reset_arm_on_record_stop", True):
+            self.reset_arm_to_initial_pose()
 
     
     def _handle_recording_service(self, req):
@@ -634,6 +795,10 @@ class RobotControllerMuJoCoPegTool:
                 # 2.5 clear previous torque alarm before this episode
                 if self.reset_joint_torque_alarm_on_record_start:
                     self.reset_joint_torque_alarm()
+                
+                # 2.6 reset task success / terminal hold state
+                with self.lock:
+                    self._reset_task_success_state_locked()
 
                 # 3. 每条 episode 开始前随机孔洞位置
                 if getattr(self, "randomize_hole_on_record_start", False):
@@ -685,17 +850,124 @@ class RobotControllerMuJoCoPegTool:
                 )
             # Stop recording
             else:
+                # If task-success auto-stop has already stopped and temporarily kept
+                # the episode, this stop request is treated as manual review.
+                if (
+                    not self.hdf5_recorder.active
+                    and getattr(self, "pending_auto_completed_review", False)
+                ):
+                    episode_path = self.pending_auto_completed_episode_path
+                    episode_dir = self.pending_auto_completed_episode_dir
+
+                    if req.keep:
+                        # HDF5 已经 inactive，reset 不会污染数据。
+                        self._reset_after_episode_stop()
+
+                        return SetRecordingResponse(
+                            success=True,
+                            active=False,
+                            message=(
+                                "Auto-completed episode kept after manual review."
+                            ),
+                            episode_path=episode_path,
+                        )
+
+                    # discard pending auto-completed episode
+                    try:
+                        # 先 reset，让机械臂立刻回初始位姿。
+                        self._reset_after_episode_stop()
+
+                        # 再删除 episode 文件夹，避免删除大文件导致 reset 延迟。
+                        if episode_dir:
+                            shutil.rmtree(episode_dir, ignore_errors=True)
+
+                        return SetRecordingResponse(
+                            success=True,
+                            active=False,
+                            message=(
+                                "Auto-completed episode discarded after manual review."
+                            ),
+                            episode_path=episode_path,
+                        )
+
+                    except Exception as e:
+                        return SetRecordingResponse(
+                            success=False,
+                            active=False,
+                            message=f"Failed to discard auto-completed episode: {e}",
+                            episode_path=episode_path,
+                        )
+                # if (
+                #     not self.hdf5_recorder.active
+                #     and getattr(self, "pending_auto_completed_review", False)
+                # ):
+                #     episode_path = self.pending_auto_completed_episode_path
+                #     episode_dir = self.pending_auto_completed_episode_dir
+
+                #     if req.keep:
+                #         self.pending_auto_completed_review = False
+                #         self.pending_auto_completed_episode_path = ""
+                #         self.pending_auto_completed_episode_dir = ""
+
+                #         # After review, reset arm if configured.
+                #         if getattr(self, "reset_arm_on_record_stop", True):
+                #             self.reset_arm_to_initial_pose()
+
+                #         return SetRecordingResponse(
+                #             success=True,
+                #             active=False,
+                #             message=(
+                #                 "Auto-completed episode kept after manual review."
+                #             ),
+                #             episode_path=episode_path,
+                #         )
+
+                #     # discard pending auto-completed episode
+                #     try:
+                #         if episode_dir:
+                #             shutil.rmtree(episode_dir, ignore_errors=True)
+
+                #         self.pending_auto_completed_review = False
+                #         self.pending_auto_completed_episode_path = ""
+                #         self.pending_auto_completed_episode_dir = ""
+
+                #         if getattr(self, "reset_arm_on_record_stop", True):
+                #             self.reset_arm_to_initial_pose()
+
+                #         return SetRecordingResponse(
+                #             success=True,
+                #             active=False,
+                #             message=(
+                #                 "Auto-completed episode discarded after manual review."
+                #             ),
+                #             episode_path=episode_path,
+                #         )
+
+                #     except Exception as e:
+                #         return SetRecordingResponse(
+                #             success=False,
+                #             active=False,
+                #             message=f"Failed to discard auto-completed episode: {e}",
+                #             episode_path=episode_path,
+                #         )
+
                 if not self.hdf5_recorder.active:
                     last_path = ""
                     if self.hdf5_recorder.hdf5_path is not None:
                         last_path = str(self.hdf5_recorder.hdf5_path)
-
                     return SetRecordingResponse(
                         success=False,
                         active=False,
                         message="No active recording episode.",
                         episode_path=last_path,
+
                     )
+                
+                # Normal active-recording stop path.
+                # 到这里说明：
+                #   1. 不是 pending auto-completed review
+                #   2. hdf5_recorder.active == True
+                # 所以这是普通手动停止 recording。
 
                 # 0. 立刻拒绝新的遥操作命令
                 self.accept_teleop_commands = False
@@ -706,8 +978,7 @@ class RobotControllerMuJoCoPegTool:
                     "stop teleoperation before record stop",
                 )
 
-                # 2. 停止 HDF5 记录
-
+                # 2. 生成力矩报警信息
                 torque_alarm_msg = ""
                 if getattr(self, "joint_torque_alarm_active", False):
                     torque_alarm_msg = (
@@ -717,39 +988,56 @@ class RobotControllerMuJoCoPegTool:
                         f"{self.joint_torque_alarm_first_limit:.3f} Nm."
                     )
 
+                # 3. 先保存 stop 前的路径，避免 stop_episode 返回 None 时丢失路径
+                hdf5_path_before_stop = self.hdf5_recorder.hdf5_path
+
                 hdf5_path = self.hdf5_recorder.stop_episode(
                     status="manual_keep" if req.keep else "manual_discard"
                 )
 
+                if hdf5_path is None:
+                    hdf5_path = hdf5_path_before_stop
+
                 episode_path = str(hdf5_path) if hdf5_path is not None else ""
 
-                # 3. reset 机械臂回默认位置。这个动作不进入 HDF5 数据。
-                if getattr(self, "reset_arm_on_record_stop", True):
-                    self.reset_arm_to_initial_pose()
+                # 4. reset 机械臂回默认位置。这个动作不进入 HDF5 数据。
+                # if getattr(self, "reset_arm_on_record_stop", True):
+                #     self.reset_arm_to_initial_pose()
+                self._reset_after_episode_stop()
 
-                # 4. 不保留则删除 episode 文件夹
+                # 5. 不保留则删除 episode 文件夹
                 if not req.keep:
-                    if hdf5_path is not None:
-                        episode_dir = hdf5_path.parent
-                        if episode_dir.exists():
-                            shutil.rmtree(episode_dir)
+                    try:
+                        if hdf5_path is not None:
+                            episode_dir = hdf5_path.parent
+                            if episode_dir.exists():
+                                shutil.rmtree(episode_dir, ignore_errors=True)
 
-                    return SetRecordingResponse(
-                        success=True,
-                        active=False,
-                        # message="Stopped recording, stopped teleoperation, reset arm, and discarded this episode.",
-                        message=(
-                            "Stopped recording, stopped teleoperation, reset arm, "
-                            "and discarded this episode."
-                            + torque_alarm_msg
-                        ),
-                        episode_path=episode_path,
-                    )
+                        return SetRecordingResponse(
+                            success=True,
+                            active=False,
+                            message=(
+                                "Stopped recording, stopped teleoperation, reset arm, "
+                                "and discarded this episode."
+                                + torque_alarm_msg
+                            ),
+                            episode_path=episode_path,
+                        )
 
+                    except Exception as e:
+                        return SetRecordingResponse(
+                            success=False,
+                            active=False,
+                            message=(
+                                f"Stopped recording, but failed to discard episode: {e}"
+                            ),
+                            episode_path=episode_path,
+                        )
+
+                # 6. 保留 episode
                 return SetRecordingResponse(
                     success=True,
                     active=False,
-                    # message="Stopped recording, stopped teleoperation, reset arm, and kept this episode.",
                     message=(
                         "Stopped recording, stopped teleoperation, reset arm, "
                         "and kept this episode."
@@ -757,6 +1045,80 @@ class RobotControllerMuJoCoPegTool:
                     ),
                     episode_path=episode_path,
                 )
+            # Stop recording
+            # else:
+            #     if not self.hdf5_recorder.active:
+            #         last_path = ""
+            #         if self.hdf5_recorder.hdf5_path is not None:
+            #             last_path = str(self.hdf5_recorder.hdf5_path)
+
+            #         return SetRecordingResponse(
+            #             success=False,
+            #             active=False,
+            #             message="No active recording episode.",
+            #             episode_path=last_path,
+            #         )
+
+            #     # 0. 立刻拒绝新的遥操作命令
+            #     self.accept_teleop_commands = False
+
+            #     # 1. 停止遥操作线程
+            #     self._call_teleop_trigger_service(
+            #         self.teleop_stop_service_name,
+            #         "stop teleoperation before record stop",
+            #     )
+
+            #     # 2. 停止 HDF5 记录
+
+            #     torque_alarm_msg = ""
+            #     if getattr(self, "joint_torque_alarm_active", False):
+            #         torque_alarm_msg = (
+            #             " Joint torque alarm was triggered: "
+            #             f"{self.joint_torque_alarm_first_joint}, "
+            #             f"{self.joint_torque_alarm_first_value:.3f} Nm > "
+            #             f"{self.joint_torque_alarm_first_limit:.3f} Nm."
+            #         )
+
+            #     hdf5_path = self.hdf5_recorder.stop_episode(
+            #         status="manual_keep" if req.keep else "manual_discard"
+            #     )
+
+            #     episode_path = str(hdf5_path) if hdf5_path is not None else ""
+
+            #     # 3. reset 机械臂回默认位置。这个动作不进入 HDF5 数据。
+            #     if getattr(self, "reset_arm_on_record_stop", True):
+            #         self.reset_arm_to_initial_pose()
+
+            #     # 4. 不保留则删除 episode 文件夹
+            #     if not req.keep:
+            #         if hdf5_path is not None:
+            #             episode_dir = hdf5_path.parent
+            #             if episode_dir.exists():
+            #                 shutil.rmtree(episode_dir)
+
+            #         return SetRecordingResponse(
+            #             success=True,
+            #             active=False,
+            #             # message="Stopped recording, stopped teleoperation, reset arm, and discarded this episode.",
+            #             message=(
+            #                 "Stopped recording, stopped teleoperation, reset arm, "
+            #                 "and discarded this episode."
+            #                 + torque_alarm_msg
+            #             ),
+            #             episode_path=episode_path,
+            #         )
+
+            #     return SetRecordingResponse(
+            #         success=True,
+            #         active=False,
+            #         # message="Stopped recording, stopped teleoperation, reset arm, and kept this episode.",
+            #         message=(
+            #             "Stopped recording, stopped teleoperation, reset arm, "
+            #             "and kept this episode."
+            #             + torque_alarm_msg
+            #         ),
+            #         episode_path=episode_path,
+            #     )
             # if req.record:
             #     if self.hdf5_recorder.active:
             #         current_path = ""
@@ -1002,11 +1364,29 @@ class RobotControllerMuJoCoPegTool:
     #     internal = self._convert_arm_command_to_internal(arm_target_joints)
     #     self._set_internal_joint_targets(internal, immediate=False)
     
+    # def set_arm_positions(self, arm_target_joints: List[float]):
+    #     """
+    #     Public teleoperation interface.
+    #     """
+    #     if not getattr(self, "accept_teleop_commands", True):
+    #         return
+
+    #     if len(arm_target_joints) != 7:
+    #         print(f"错误: 机械臂目标关节数({len(arm_target_joints)})应为7个")
+    #         return
+
+    #     internal = self._convert_arm_command_to_internal(arm_target_joints)
+    #     self._set_internal_joint_targets(internal, immediate=False)
+
     def set_arm_positions(self, arm_target_joints: List[float]):
         """
         Public teleoperation interface.
         """
         if not getattr(self, "accept_teleop_commands", True):
+            return
+
+        # Ignore stale teleoperation commands immediately after reset.
+        if time.time() < getattr(self, "ignore_teleop_until_wall_time", 0.0):
             return
 
         if len(arm_target_joints) != 7:
@@ -1140,7 +1520,10 @@ class RobotControllerMuJoCoPegTool:
 
     def _physics_step(self):
         with self.lock:
-            self._step_command_toward_target_locked(self.sim_timestep)
+            # self._step_command_toward_target_locked(self.sim_timestep)
+            if not getattr(self, "terminal_hold_active", False):
+                self._step_command_toward_target_locked(self.sim_timestep)
+
             self._apply_actuator_targets(self.command_joints)
 
         mujoco.mj_step(self.model, self.data)
@@ -1149,6 +1532,9 @@ class RobotControllerMuJoCoPegTool:
         # If any joint torque exceeds its limit during recording,
         # turn the peg green and latch the alarm.
         self._update_joint_torque_alarm_locked()
+
+        # Task success auto-stop and terminal hold
+        self._update_task_success_auto_stop_locked()
 
 
         # Data Recording
@@ -1341,6 +1727,199 @@ class RobotControllerMuJoCoPegTool:
 
         # Highest-priority visual alarm.
         self.set_peg_color(self.joint_torque_alarm_peg_rgba)
+    
+    def _reset_task_success_state_locked(self):
+        """
+        Reset task-success and terminal-hold state for a new episode.
+        Call inside self.lock.
+        """
+        self.task_success_accumulated_time = 0.0
+        self.task_success_last_check_time = None
+        self.task_success_triggered = False
+
+        self.terminal_hold_active = False
+        self.terminal_hold_start_time = None
+        self.terminal_hold_command_start = None
+        self.terminal_hold_command_goal = None
+        self.terminal_hold_stop_started = False
+
+        self.pending_auto_completed_review = False
+        self.pending_auto_completed_episode_path = ""
+        self.pending_auto_completed_episode_dir = ""
+
+
+    def _get_site_distance_locked(self, site_a_id: int, site_b_id: int) -> float:
+        if site_a_id == -1 or site_b_id == -1:
+            return float("inf")
+
+        pa = self.data.site_xpos[site_a_id]
+        pb = self.data.site_xpos[site_b_id]
+
+        return float(np.linalg.norm(pa - pb))
+
+
+    def _get_current_arm_qpos_locked(self) -> np.ndarray:
+        """
+        Current actual qpos of arm joints in internal MuJoCo sign convention.
+        Order follows self.arm_joint_names.
+        """
+        q = np.zeros(len(self.arm_joint_names), dtype=float)
+
+        for i, joint_name in enumerate(self.arm_joint_names):
+            joint_id = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                joint_name,
+            )
+
+            if joint_id == -1:
+                continue
+
+            qpos_addr = int(self.model.jnt_qposadr[joint_id])
+
+            if 0 <= qpos_addr < self.data.qpos.shape[0]:
+                q[i] = float(self.data.qpos[qpos_addr])
+
+        return q
+
+
+    def _start_terminal_hold_locked(self, distance: float, now: float):
+        """
+        Enter terminal hold:
+        - block new teleop commands
+        - blend command_joints to current qpos
+        - keep recording for terminal hold duration
+        """
+        if self.terminal_hold_active:
+            return
+
+        self.task_success_triggered = True
+        self.terminal_hold_active = True
+        self.terminal_hold_start_time = float(now)
+        self.terminal_hold_stop_started = False
+
+        if self.task_success_stop_accepting_teleop:
+            self.accept_teleop_commands = False
+
+        qpos_now = self._get_current_arm_qpos_locked()
+
+        self.terminal_hold_command_start = np.asarray(
+            self.command_joints[:len(self.arm_joint_names)],
+            dtype=float,
+        ).copy()
+
+        self.terminal_hold_command_goal = qpos_now.copy()
+
+        print(
+            "[TaskSuccessAutoStop] Site success reached. "
+            f"distance={distance:.6f} m, "
+            f"t={now:.3f}. Enter terminal hold."
+        )
+
+        if self.hdf5_recorder is not None:
+            try:
+                if getattr(self.hdf5_recorder, "active", False):
+                    self.hdf5_recorder.add_event("task_success_site_reached")
+                    self.hdf5_recorder.add_event("terminal_hold_start")
+            except Exception as e:
+                print(f"[TaskSuccessAutoStop] Failed to add HDF5 event: {e}")
+
+
+    def _update_terminal_hold_locked(self, now: float):
+        """
+        During terminal hold, overwrite target/command with a safe hold command.
+        The command blends from previous command to current qpos, then stays there.
+        """
+        if not self.terminal_hold_active:
+            return
+
+        if self.terminal_hold_start_time is None:
+            self.terminal_hold_start_time = float(now)
+
+        elapsed = float(now - self.terminal_hold_start_time)
+
+        blend_time = max(self.task_success_blend_to_qpos_time, 1e-6)
+        alpha = min(1.0, max(0.0, elapsed / blend_time))
+
+        q_start = self.terminal_hold_command_start
+        q_goal = self.terminal_hold_command_goal
+
+        if q_start is None or q_goal is None:
+            q_goal = self._get_current_arm_qpos_locked()
+            q_start = q_goal.copy()
+            self.terminal_hold_command_start = q_start
+            self.terminal_hold_command_goal = q_goal
+
+        hold_cmd = (1.0 - alpha) * q_start + alpha * q_goal
+
+        n = len(self.arm_joint_names)
+        self.target_joints[:n] = hold_cmd.tolist()
+        self.command_joints[:n] = hold_cmd.tolist()
+
+        self._apply_actuator_targets(self.command_joints)
+
+        if elapsed >= self.task_success_terminal_hold_time:
+            if not self.terminal_hold_stop_started:
+                self.terminal_hold_stop_started = True
+
+                print(
+                    "[TaskSuccessAutoStop] Terminal hold finished. "
+                    "Auto-stopping HDF5 recording."
+                )
+
+                threading.Thread(
+                    target=self._auto_stop_recording_for_task_success,
+                    daemon=True,
+                ).start()
+
+
+    def _update_task_success_auto_stop_locked(self):
+        """
+        Check site-distance success condition and update terminal hold.
+        Call inside self.lock after mujoco.mj_step().
+        """
+        if not self.enable_task_success_auto_stop:
+            return
+
+        now = float(self.data.time)
+
+        if self.terminal_hold_active:
+            self._update_terminal_hold_locked(now)
+            return
+
+        if self.task_success_triggered:
+            return
+
+        if (
+            self.task_success_only_when_recording
+            and not self._is_hdf5_recording_active()
+        ):
+            self.task_success_accumulated_time = 0.0
+            self.task_success_last_check_time = now
+            return
+
+        if self.task_success_last_check_time is None:
+            dt = float(self.model.opt.timestep)
+        else:
+            dt = max(0.0, now - self.task_success_last_check_time)
+
+        self.task_success_last_check_time = now
+
+        dist = self._get_site_distance_locked(
+            self.task_success_peg_site_id,
+            self.task_success_hole_site_id,
+        )
+
+        if dist <= self.task_success_distance:
+            self.task_success_accumulated_time += dt
+        else:
+            self.task_success_accumulated_time = 0.0
+            return
+
+        if self.task_success_accumulated_time < self.task_success_dwell_time:
+            return
+
+        self._start_terminal_hold_locked(distance=dist, now=now)
     
     def set_peg_color(self, rgba):
         """

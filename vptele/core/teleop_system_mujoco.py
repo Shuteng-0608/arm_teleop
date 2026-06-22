@@ -120,7 +120,7 @@ class TeleopSystemMujoco:
 
             # 关节目标速度限制，单位 rad/s
             # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
-            "max_joint_velocity": 0.5,
+            "max_joint_velocity": 0.25,
 
             # 初始机械臂姿态，仍然用你现在这组
             # "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
@@ -251,7 +251,49 @@ class TeleopSystemMujoco:
             "reset_joint_torque_alarm_on_record_start": self.config.get(
                 "reset_joint_torque_alarm_on_record_start",
                 True,
-            ),           
+            ),   
+
+            # Task success auto-stop by task sites
+            "enable_task_success_auto_stop": self.config.get(
+                "enable_task_success_auto_stop",
+                True,
+            ),
+            "task_success_peg_site_name": self.config.get(
+                "task_success_peg_site_name",
+                "peg_tip_site",
+            ),
+            "task_success_hole_site_name": self.config.get(
+                "task_success_hole_site_name",
+                "hole_goal_site",
+            ),
+            "task_success_distance": self.config.get(
+                "task_success_distance",
+                0.006,
+            ),
+            "task_success_dwell_time": self.config.get(
+                "task_success_dwell_time",
+                0.15,
+            ),
+            "task_success_stop_accepting_teleop": self.config.get(
+                "task_success_stop_accepting_teleop",
+                True,
+            ),
+            "task_success_terminal_hold_time": self.config.get(
+                "task_success_terminal_hold_time",
+                1.0,
+            ),
+            "task_success_blend_to_qpos_time": self.config.get(
+                "task_success_blend_to_qpos_time",
+                0.2,
+            ),
+            "task_success_only_when_recording": self.config.get(
+                "task_success_only_when_recording",
+                True,
+            ),
+            "task_success_pending_manual_review": self.config.get(
+                "task_success_pending_manual_review",
+                True,
+            ),        
 
 
         }

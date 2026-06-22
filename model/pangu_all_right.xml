@@ -174,7 +174,7 @@
           solimp="0.90 0.95 0.001" />
       <site name="hole_goal_site"
             type="sphere"
-            pos="0 -0.012 0"
+            pos="0 -0.016 0"
             size="0.006"
             rgba="0.0 0.0 0.0 0.0" />
       <!-- <site name="hole_center_site" pos="0 0 0" size="0.001" rgba="0 1 0 0" /> -->
