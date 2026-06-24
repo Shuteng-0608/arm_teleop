@@ -54,7 +54,7 @@ class ArmTeleopMujoco:
         self.update_frequency = self.config.get('update_frequency', 0.01)  # 更新频率 (秒)
         self.control_thread = None # single arm control thread
         self.control_thread_right = None # right arm control thread
-        self.scaling_factor = float(self.config.get("scaling_factor", 1.5)) # 手部运动到机械臂运动的缩放因子
+        self.scaling_factor = float(self.config.get("scaling_factor", 1.1)) # 手部运动到机械臂运动的缩放因子
 
 
         # ============ OneEuroFilter ============
