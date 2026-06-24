@@ -351,6 +351,65 @@ class RobotControllerMuJoCoPegTool:
         self.max_joint_velocity = float(self.config.get("max_joint_velocity", 0.5))  # rad/s
         self.max_joint_step_qpos = float(self.config.get("max_joint_step_qpos", 0.015))  # rad/frame for qpos debug mode
 
+        self.enable_force_velocity_scaling = bool(
+            self.config.get("enable_force_velocity_scaling", False)
+        )
+        self.force_velocity_medium_threshold = float(
+            self.config.get("force_velocity_medium_threshold", 40.0)
+        )
+        self.force_velocity_high_threshold = float(
+            self.config.get("force_velocity_high_threshold", 80.0)
+        )
+        self.force_velocity_medium_scale = float(
+            self.config.get("force_velocity_medium_scale", 0.4)
+        )
+        self.force_velocity_high_scale = float(
+            self.config.get("force_velocity_high_scale", 0.15)
+        )
+        self.enable_high_force_hold = bool(
+            self.config.get("enable_high_force_hold", False)
+        )
+        self.high_force_hold_threshold = float(
+            self.config.get("high_force_hold_threshold", 100.0)
+        )
+        self.high_force_hold_dwell_time = float(
+            self.config.get("high_force_hold_dwell_time", 0.15)
+        )
+        self.high_force_hold_release_ratio = float(
+            self.config.get("high_force_hold_release_ratio", 0.8)
+        )
+
+        if not (
+            0.0 <= self.force_velocity_medium_threshold
+            < self.force_velocity_high_threshold
+        ):
+            raise ValueError(
+                "force velocity thresholds must satisfy "
+                "0 <= medium_threshold < high_threshold"
+            )
+        if not (
+            0.0 < self.force_velocity_high_scale
+            <= self.force_velocity_medium_scale
+            <= 1.0
+        ):
+            raise ValueError(
+                "force velocity scales must satisfy "
+                "0 < high_scale <= medium_scale <= 1"
+            )
+        if self.high_force_hold_threshold <= 0.0:
+            raise ValueError("high_force_hold_threshold must be positive")
+        if self.high_force_hold_dwell_time < 0.0:
+            raise ValueError("high_force_hold_dwell_time must be non-negative")
+        if not 0.0 < self.high_force_hold_release_ratio < 1.0:
+            raise ValueError(
+                "high_force_hold_release_ratio must be between 0 and 1"
+            )
+
+        self.force_velocity_scale = 1.0
+        self.force_filter_last_force_norm = 0.0
+        self.high_force_hold_start_time = None
+        self.high_force_hold_active = False
+
 
 
 
@@ -1556,8 +1615,85 @@ class RobotControllerMuJoCoPegTool:
             limited.append(current + delta)
         return limited
 
+    def _reset_force_velocity_filter_locked(self):
+        self.force_velocity_scale = 1.0
+        self.force_filter_last_force_norm = 0.0
+        self.high_force_hold_start_time = None
+        self.high_force_hold_active = False
+
+    def _update_force_velocity_filter_locked(self):
+        wrench = self._get_peg_ft_sensor_locked()
+        if wrench is None or len(wrench) < 3:
+            self.force_velocity_scale = 1.0
+            self.high_force_hold_start_time = None
+            self.high_force_hold_active = False
+            return
+
+        force = np.asarray(wrench[:3], dtype=float)
+        if not np.all(np.isfinite(force)):
+            self.force_velocity_scale = 1.0
+            self.high_force_hold_start_time = None
+            self.high_force_hold_active = False
+            return
+
+        force_norm = float(np.linalg.norm(force))
+        self.force_filter_last_force_norm = force_norm
+
+        if not self.enable_force_velocity_scaling:
+            self.force_velocity_scale = 1.0
+        elif force_norm >= self.force_velocity_high_threshold:
+            self.force_velocity_scale = self.force_velocity_high_scale
+        elif force_norm >= self.force_velocity_medium_threshold:
+            self.force_velocity_scale = self.force_velocity_medium_scale
+        else:
+            self.force_velocity_scale = 1.0
+
+        if not self.enable_high_force_hold:
+            self.high_force_hold_start_time = None
+            self.high_force_hold_active = False
+            return
+
+        now = float(self.data.time)
+        release_threshold = (
+            self.high_force_hold_threshold
+            * self.high_force_hold_release_ratio
+        )
+
+        if self.high_force_hold_active:
+            if force_norm < release_threshold:
+                self.high_force_hold_active = False
+                self.high_force_hold_start_time = None
+                print(
+                    "[HighForceHold] Released: "
+                    f"force_norm={force_norm:.4f} N < "
+                    f"{release_threshold:.4f} N"
+                )
+            return
+
+        if force_norm < self.high_force_hold_threshold:
+            self.high_force_hold_start_time = None
+            return
+
+        if self.high_force_hold_start_time is None:
+            self.high_force_hold_start_time = now
+
+        if (
+            now - self.high_force_hold_start_time
+            >= self.high_force_hold_dwell_time
+        ):
+            self.high_force_hold_active = True
+            print(
+                "[HighForceHold] Activated: "
+                f"force_norm={force_norm:.4f} N, "
+                f"dwell={self.high_force_hold_dwell_time:.4f} s"
+            )
+
     def _step_command_toward_target_locked(self, dt: float):
-        max_step = self.max_joint_velocity * dt
+        max_step = (
+            self.max_joint_velocity
+            * self.force_velocity_scale
+            * dt
+        )
 
         for i in range(min(len(self.command_joints), len(self.target_joints))):
             delta = self.target_joints[i] - self.command_joints[i]
@@ -1572,9 +1708,18 @@ class RobotControllerMuJoCoPegTool:
 
     def _physics_step(self):
         with self.lock:
-            # self._step_command_toward_target_locked(self.sim_timestep)
             if not getattr(self, "terminal_hold_active", False):
-                self._step_command_toward_target_locked(self.sim_timestep)
+                self._update_force_velocity_filter_locked()
+
+                if self.high_force_hold_active:
+                    q_now = self._get_current_arm_qpos_locked()
+                    n = len(self.arm_joint_names)
+                    self.target_joints[:n] = q_now.tolist()
+                    self.command_joints[:n] = q_now.tolist()
+                else:
+                    self._step_command_toward_target_locked(
+                        self.sim_timestep
+                    )
 
             self._apply_actuator_targets(self.command_joints)
 
@@ -1975,6 +2120,7 @@ class RobotControllerMuJoCoPegTool:
         self.pending_auto_completed_review = False
         self.pending_auto_completed_episode_path = ""
         self.pending_auto_completed_episode_dir = ""
+        self._reset_force_velocity_filter_locked()
 
 
     def _get_site_distance_locked(self, site_a_id: int, site_b_id: int) -> float:

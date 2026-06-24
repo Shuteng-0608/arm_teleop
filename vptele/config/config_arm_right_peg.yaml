@@ -176,6 +176,20 @@ initial_arm_joints:
   - 0.005
   - 0.005
 
+# Force-aware actuator command velocity scaling
+max_joint_velocity: 0.1
+enable_force_velocity_scaling: true
+force_velocity_medium_threshold: 40.0
+force_velocity_high_threshold: 80.0
+force_velocity_medium_scale: 0.4
+force_velocity_high_scale: 0.15
+
+# High-force command hold
+enable_high_force_hold: true
+high_force_hold_threshold: 100.0
+high_force_hold_dwell_time: 0.15
+high_force_hold_release_ratio: 0.8
+
 # Hole randomization
 enable_hole_randomization: false
 randomize_hole_on_record_start: false

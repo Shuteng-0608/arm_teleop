@@ -120,7 +120,45 @@ class TeleopSystemMujoco:
 
             # 关节目标速度限制，单位 rad/s
             # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
-            "max_joint_velocity": 0.1,
+            "max_joint_velocity": self.config.get("max_joint_velocity", 0.1),
+
+            # Force-aware joint command velocity scaling / hold
+            "enable_force_velocity_scaling": self.config.get(
+                "enable_force_velocity_scaling",
+                False,
+            ),
+            "force_velocity_medium_threshold": self.config.get(
+                "force_velocity_medium_threshold",
+                40.0,
+            ),
+            "force_velocity_high_threshold": self.config.get(
+                "force_velocity_high_threshold",
+                80.0,
+            ),
+            "force_velocity_medium_scale": self.config.get(
+                "force_velocity_medium_scale",
+                0.4,
+            ),
+            "force_velocity_high_scale": self.config.get(
+                "force_velocity_high_scale",
+                0.15,
+            ),
+            "enable_high_force_hold": self.config.get(
+                "enable_high_force_hold",
+                False,
+            ),
+            "high_force_hold_threshold": self.config.get(
+                "high_force_hold_threshold",
+                100.0,
+            ),
+            "high_force_hold_dwell_time": self.config.get(
+                "high_force_hold_dwell_time",
+                0.15,
+            ),
+            "high_force_hold_release_ratio": self.config.get(
+                "high_force_hold_release_ratio",
+                0.8,
+            ),
 
             # 初始机械臂姿态，仍然用你现在这组
             # "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
@@ -401,5 +439,4 @@ class TeleopSystemMujoco:
         if self.robot_controller:
             self.robot_controller.disconnect()
     
-
 
