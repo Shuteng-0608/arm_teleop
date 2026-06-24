@@ -74,7 +74,7 @@
                   <body name="peg_tool" pos="0 -0.0125 0.0025" quat="0.707107 -0.707107 0 0">
                     <!-- END-EFFECTOR CAMERA: attached near the flange-peg connection; camera optical axis follows local -Z, aligned with the peg direction -->
                     <camera name="ee_cam" pos="0.15 0.000 0.05" quat="0.984808 0 0.173648 0" fovy="80" />
-                    <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.012000 0.045000" material="mat_peg" mass="0.115" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.010000 0.045000" material="mat_peg" mass="0.115" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
                     <site name="peg_tip_site"
                           type="sphere"
                           pos="0 0 -0.090000"
@@ -227,13 +227,13 @@
   <actuator>
     <!-- Only 7 arm actuators are kept for the peg-tool model -->
     <!-- 为每个关节添加执行器 -->
-    <position name="motor_joint_1" joint="joint_1" kp="900" kv="45" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-150 150" forcelimited="true" />
-    <position name="motor_joint_2" joint="joint_2" kp="900" kv="45" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-150 150" forcelimited="true" />
-    <position name="motor_joint_3" joint="joint_3" kp="800" kv="40" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-150 150" forcelimited="true" />
-    <position name="motor_joint_4" joint="joint_4" kp="700" kv="35" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-150 150" forcelimited="true" />
-    <position name="motor_joint_5" joint="joint_5" kp="450" kv="25" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-100 100" forcelimited="true" />
-    <position name="motor_joint_6" joint="joint_6" kp="250" kv="18" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-80 80" forcelimited="true" />
-    <position name="motor_joint_7" joint="joint_7" kp="180" kv="14" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-60 60" forcelimited="true" />
+    <position name="motor_joint_1" joint="joint_1" kp="900" kv="45" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-30 30" forcelimited="true" />
+    <position name="motor_joint_2" joint="joint_2" kp="900" kv="45" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-30 30" forcelimited="true" />
+    <position name="motor_joint_3" joint="joint_3" kp="800" kv="40" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-20 20" forcelimited="true" />
+    <position name="motor_joint_4" joint="joint_4" kp="700" kv="35" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-20 20" forcelimited="true" />
+    <position name="motor_joint_5" joint="joint_5" kp="450" kv="25" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="motor_joint_6" joint="joint_6" kp="250" kv="18" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="motor_joint_7" joint="joint_7" kp="180" kv="14" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
   </actuator>
   <sensor>
     <force name="peg_ft_force" site="ft_sensor_site" />

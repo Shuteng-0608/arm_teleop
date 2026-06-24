@@ -120,7 +120,7 @@ class TeleopSystemMujoco:
 
             # 关节目标速度限制，单位 rad/s
             # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
-            "max_joint_velocity": 0.25,
+            "max_joint_velocity": 0.1,
 
             # 初始机械臂姿态，仍然用你现在这组
             # "initial_arm_joints": [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
@@ -293,14 +293,25 @@ class TeleopSystemMujoco:
             "task_success_pending_manual_review": self.config.get(
                 "task_success_pending_manual_review",
                 True,
-            ),        
+            ), 
+
+            "enable_ft_wrench_alarm": self.config.get("enable_ft_wrench_alarm", True),
+            "ft_wrench_alarm_only_when_recording": self.config.get("ft_wrench_alarm_only_when_recording", True),
+            "ft_wrench_alarm_latched": self.config.get("ft_wrench_alarm_latched", True),
+            "reset_ft_wrench_alarm_on_record_start": self.config.get("reset_ft_wrench_alarm_on_record_start", True),
+            "ft_force_norm_limit": self.config.get("ft_force_norm_limit", 40.0),
+            "ft_torque_norm_limit": self.config.get("ft_torque_norm_limit", 3.0),
+            "ft_wrench_alarm_dwell_time": self.config.get("ft_wrench_alarm_dwell_time", 0.15),
+            "ft_wrench_alarm_peg_rgba": self.config.get("ft_wrench_alarm_peg_rgba", [0.0, 0.2, 1.0, 1.0]),
+            "both_alarm_peg_rgba": self.config.get("both_alarm_peg_rgba", [0.8, 0.0, 1.0, 1.0]),
+            "ft_wrench_alarm_freeze_on_trigger": self.config.get("ft_wrench_alarm_freeze_on_trigger", False),       
 
 
         }
 
         model_path = self.config.get(
             "mujoco_model_path",
-            "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall_contact.xml"
+            "/home/stw/pangu/src/arm_teleop/model/pangu_all_right.xml"
         )
 
         logger.info(f"初始化 MuJoCo 模型: {model_path}")

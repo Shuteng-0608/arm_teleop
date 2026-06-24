@@ -354,9 +354,9 @@ class RobotControllerMuJoCoPegTool:
 
 
 
-        # ############################################################
-        # # ---------------- Joint torque alarm ----------------------
-        # ############################################################
+        # ############################################################ #
+        # # ---------------- Joint torque alarm -------------------- # #
+        # ############################################################ #
         self.enable_joint_torque_alarm = bool(
             self.config.get("enable_joint_torque_alarm", True)
         )
@@ -405,6 +405,55 @@ class RobotControllerMuJoCoPegTool:
         self.joint_torque_alarm_first_value = 0.0
         self.joint_torque_alarm_first_limit = 0.0
         self.joint_torque_alarm_last_values = np.zeros(n_arm_joints, dtype=float)
+
+
+
+
+        # ############################################################ #
+        # # ---------------- FT wrench alarm ----------------------- # #
+        # ############################################################ #
+        self.enable_ft_wrench_alarm = bool(
+            self.config.get("enable_ft_wrench_alarm", True)
+        )
+        self.ft_wrench_alarm_only_when_recording = bool(
+            self.config.get("ft_wrench_alarm_only_when_recording", True)
+        )
+        self.ft_wrench_alarm_latched = bool(
+            self.config.get("ft_wrench_alarm_latched", True)
+        )
+        self.reset_ft_wrench_alarm_on_record_start = bool(
+            self.config.get("reset_ft_wrench_alarm_on_record_start", True)
+        )
+
+        self.ft_force_norm_limit = float(
+            self.config.get("ft_force_norm_limit", 40.0)
+        )
+        self.ft_torque_norm_limit = float(
+            self.config.get("ft_torque_norm_limit", 3.0)
+        )
+        self.ft_wrench_alarm_dwell_time = float(
+            self.config.get("ft_wrench_alarm_dwell_time", 0.15)
+        )
+
+        self.ft_wrench_alarm_peg_rgba = np.asarray(
+            self.config.get("ft_wrench_alarm_peg_rgba", [0.0, 0.2, 1.0, 1.0]),
+            dtype=float,
+        )
+        self.both_alarm_peg_rgba = np.asarray(
+            self.config.get("both_alarm_peg_rgba", [0.8, 0.0, 1.0, 1.0]),
+            dtype=float,
+        )
+
+        self.ft_wrench_alarm_freeze_on_trigger = bool(
+            self.config.get("ft_wrench_alarm_freeze_on_trigger", False)
+        )
+
+        self.ft_wrench_alarm_active = False
+        self.ft_wrench_alarm_start_time = None
+        self.ft_wrench_alarm_first_time = None
+        self.ft_wrench_alarm_first_force_norm = 0.0
+        self.ft_wrench_alarm_first_torque_norm = 0.0
+        self.ft_wrench_alarm_reason = ""
 
 
 
@@ -795,6 +844,8 @@ class RobotControllerMuJoCoPegTool:
                 # 2.5 clear previous torque alarm before this episode
                 if self.reset_joint_torque_alarm_on_record_start:
                     self.reset_joint_torque_alarm()
+                if getattr(self, "reset_ft_wrench_alarm_on_record_start", True):
+                    self.reset_ft_wrench_alarm()
                 
                 # 2.6 reset task success / terminal hold state
                 with self.lock:
@@ -987,6 +1038,7 @@ class RobotControllerMuJoCoPegTool:
                         f"{self.joint_torque_alarm_first_value:.3f} Nm > "
                         f"{self.joint_torque_alarm_first_limit:.3f} Nm."
                     )
+                quality_alarm_msg = self._make_quality_alarm_message()
 
                 # 3. 先保存 stop 前的路径，避免 stop_episode 返回 None 时丢失路径
                 hdf5_path_before_stop = self.hdf5_recorder.hdf5_path
@@ -1019,7 +1071,7 @@ class RobotControllerMuJoCoPegTool:
                             message=(
                                 "Stopped recording, stopped teleoperation, reset arm, "
                                 "and discarded this episode."
-                                + torque_alarm_msg
+                                + quality_alarm_msg
                             ),
                             episode_path=episode_path,
                         )
@@ -1041,7 +1093,7 @@ class RobotControllerMuJoCoPegTool:
                     message=(
                         "Stopped recording, stopped teleoperation, reset arm, "
                         "and kept this episode."
-                        + torque_alarm_msg
+                        + quality_alarm_msg
                     ),
                     episode_path=episode_path,
                 )
@@ -1532,6 +1584,7 @@ class RobotControllerMuJoCoPegTool:
         # If any joint torque exceeds its limit during recording,
         # turn the peg green and latch the alarm.
         self._update_joint_torque_alarm_locked()
+        self._update_ft_wrench_alarm_locked()
 
         # Task success auto-stop and terminal hold
         self._update_task_success_auto_stop_locked()
@@ -1620,6 +1673,180 @@ class RobotControllerMuJoCoPegTool:
             self.hdf5_recorder is not None
             and bool(getattr(self.hdf5_recorder, "active", False))
         )
+    
+    def _apply_alarm_color_locked(self):
+        """Apply peg color according to active alarms."""
+        joint_active = bool(getattr(self, "joint_torque_alarm_active", False))
+        ft_active = bool(getattr(self, "ft_wrench_alarm_active", False))
+
+        if joint_active and ft_active:
+            self.set_peg_color(self.both_alarm_peg_rgba)
+        elif joint_active:
+            self.set_peg_color(self.joint_torque_alarm_peg_rgba)
+        elif ft_active:
+            self.set_peg_color(self.ft_wrench_alarm_peg_rgba)
+        else:
+            self.set_peg_color(self.default_peg_rgba)
+    
+    def reset_ft_wrench_alarm(self):
+        """Clear latched end-effector FT wrench alarm."""
+        with self.lock:
+            self.ft_wrench_alarm_active = False
+            self.ft_wrench_alarm_start_time = None
+            self.ft_wrench_alarm_first_time = None
+            self.ft_wrench_alarm_first_force_norm = 0.0
+            self.ft_wrench_alarm_first_torque_norm = 0.0
+            self.ft_wrench_alarm_reason = ""
+            self._apply_alarm_color_locked()
+
+
+    def _make_quality_alarm_message(self) -> str:
+        """Build quality warning message for service response."""
+        msgs = []
+
+        if getattr(self, "joint_torque_alarm_active", False):
+            msgs.append(
+                "joint_torque_alarm: "
+                f"{self.joint_torque_alarm_first_joint}, "
+                f"{self.joint_torque_alarm_first_value:.3f} Nm > "
+                f"{self.joint_torque_alarm_first_limit:.3f} Nm"
+            )
+
+        if getattr(self, "ft_wrench_alarm_active", False):
+            msgs.append(
+                "ft_wrench_alarm: "
+                f"force_norm={self.ft_wrench_alarm_first_force_norm:.3f} N, "
+                f"torque_norm={self.ft_wrench_alarm_first_torque_norm:.3f} Nm, "
+                f"{self.ft_wrench_alarm_reason}"
+            )
+
+        if not msgs:
+            return ""
+
+        return " Quality warning: " + " | ".join(msgs) + "."
+    
+    def _get_sensor_data_locked(self, sensor_name: str):
+        sensor_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            sensor_name,
+        )
+        if sensor_id == -1:
+            return None
+
+        adr = int(self.model.sensor_adr[sensor_id])
+        dim = int(self.model.sensor_dim[sensor_id])
+        return self.data.sensordata[adr:adr + dim].copy()
+
+
+    def _get_peg_ft_sensor_locked(self):
+        """Return [Fx, Fy, Fz, Tx, Ty, Tz] from MuJoCo FT sensors."""
+        f = self._get_sensor_data_locked("peg_ft_force")
+        t = self._get_sensor_data_locked("peg_ft_torque")
+
+        if f is None or t is None:
+            return None
+
+        return np.concatenate([f, t], axis=0)
+    
+    def _update_ft_wrench_alarm_locked(self):
+        """Check end-effector FT wrench limits and update peg color.
+
+        Call inside self.lock, after mujoco.mj_step().
+        """
+        if not getattr(self, "enable_ft_wrench_alarm", True):
+            return
+
+        if (
+            getattr(self, "ft_wrench_alarm_only_when_recording", True)
+            and not self._is_hdf5_recording_active()
+        ):
+            return
+
+        if (
+            getattr(self, "ft_wrench_alarm_latched", True)
+            and getattr(self, "ft_wrench_alarm_active", False)
+        ):
+            return
+
+        wrench = self._get_peg_ft_sensor_locked()
+        if wrench is None or len(wrench) < 6:
+            return
+
+        wrench = np.asarray(wrench, dtype=float).reshape(-1)
+        force_norm = float(np.linalg.norm(wrench[:3]))
+        torque_norm = float(np.linalg.norm(wrench[3:6]))
+
+        force_over = force_norm > self.ft_force_norm_limit
+        torque_over = torque_norm > self.ft_torque_norm_limit
+
+        now = float(self.data.time)
+
+        if force_over or torque_over:
+            if self.ft_wrench_alarm_start_time is None:
+                self.ft_wrench_alarm_start_time = now
+
+            over_duration = now - self.ft_wrench_alarm_start_time
+
+            if over_duration < self.ft_wrench_alarm_dwell_time:
+                return
+
+            reasons = []
+            if force_over:
+                reasons.append(
+                    f"force_norm={force_norm:.3f}N > "
+                    f"{self.ft_force_norm_limit:.3f}N"
+                )
+            if torque_over:
+                reasons.append(
+                    f"torque_norm={torque_norm:.3f}Nm > "
+                    f"{self.ft_torque_norm_limit:.3f}Nm"
+                )
+
+            if not self.ft_wrench_alarm_active:
+                self.ft_wrench_alarm_active = True
+                self.ft_wrench_alarm_first_time = now
+                self.ft_wrench_alarm_first_force_norm = force_norm
+                self.ft_wrench_alarm_first_torque_norm = torque_norm
+                self.ft_wrench_alarm_reason = "; ".join(reasons)
+
+                print(
+                    "[FTWrenchAlarm] Over limit: "
+                    f"force_norm={force_norm:.4f} N, "
+                    f"torque_norm={torque_norm:.4f} Nm, "
+                    f"duration={over_duration:.4f} s, "
+                    f"t={now:.4f}"
+                )
+
+                if self.hdf5_recorder is not None:
+                    try:
+                        if getattr(self.hdf5_recorder, "active", False):
+                            self.hdf5_recorder.add_event("ft_wrench_over_limit")
+                    except Exception as e:
+                        print(f"[FTWrenchAlarm] Failed to add HDF5 event: {e}")
+
+                self._apply_alarm_color_locked()
+
+                if getattr(self, "ft_wrench_alarm_freeze_on_trigger", False):
+                    q_now = self._get_current_arm_qpos_locked()
+                    n = len(self.arm_joint_names)
+                    self.target_joints[:n] = q_now.tolist()
+                    self.command_joints[:n] = q_now.tolist()
+                    self._apply_actuator_targets(self.command_joints)
+                    self.accept_teleop_commands = False
+                    print("[FTWrenchAlarm] Freeze teleop target at current qpos.")
+
+            return
+
+        # Below threshold.
+        self.ft_wrench_alarm_start_time = None
+
+        if not getattr(self, "ft_wrench_alarm_latched", True):
+            if self.ft_wrench_alarm_active:
+                self.ft_wrench_alarm_active = False
+                self.ft_wrench_alarm_first_time = None
+                self.ft_wrench_alarm_reason = ""
+                self._apply_alarm_color_locked()
 
 
     def _get_arm_joint_torques_locked(self) -> np.ndarray:
@@ -1666,7 +1893,8 @@ class RobotControllerMuJoCoPegTool:
                 dtype=float,
             )
 
-            self.set_peg_color(self.default_peg_rgba)
+            # self.set_peg_color(self.default_peg_rgba)
+            self._apply_alarm_color_locked()
 
 
     def _update_joint_torque_alarm_locked(self):
@@ -1726,7 +1954,8 @@ class RobotControllerMuJoCoPegTool:
                     print(f"[JointTorqueAlarm] Failed to add HDF5 event: {e}")
 
         # Highest-priority visual alarm.
-        self.set_peg_color(self.joint_torque_alarm_peg_rgba)
+        # self.set_peg_color(self.joint_torque_alarm_peg_rgba)
+        self._apply_alarm_color_locked()
     
     def _reset_task_success_state_locked(self):
         """

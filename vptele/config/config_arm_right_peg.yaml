@@ -84,7 +84,7 @@ arm_config:
   teleop_service_ns: "/arm_teleop_mujoco"
 
   
-  scaling_factor: 1.1
+  scaling_factor: 0.8
   smoothing_factor: 0.99
   update_frequency: 0.01 # 根据日志，每秒能发送80个控制指令，也就是每一次操控，除开sleep了0.01秒，计算开销时间应该是 1/80 - 0.01 = 0.0025s
   position_logging_interval: 0.1  # 位置日志记录间隔(秒)
@@ -208,13 +208,34 @@ joint_torque_alarm_peg_rgba: [0.0, 1.0, 0.0, 1.0]
 # 7 个关节力矩限制，单位 Nm
 # 这里先用占位值，后续根据你实际采集数据统计调整
 joint_torque_limits:
-  - 40.0
-  - 40.0
-  - 40.0
-  - 40.0
+  - 30.0
+  - 30.0
   - 20.0
   - 20.0
-  - 20.0
+  - 10.0
+  - 10.0
+  - 10.0
+
+# End-effector FT wrench quality alarm
+enable_ft_wrench_alarm: true
+ft_wrench_alarm_only_when_recording: true
+ft_wrench_alarm_latched: true
+reset_ft_wrench_alarm_on_record_start: true
+
+# Separate force and torque because units are different.
+ft_force_norm_limit: 100.0          # N
+ft_torque_norm_limit: 3.0          # Nm
+ft_wrench_alarm_dwell_time: 0.25   # seconds
+
+# Blue: FT alarm
+# Green: joint torque alarm
+# Purple: both alarms
+ft_wrench_alarm_peg_rgba: [0.0, 0.2, 1.0, 1.0]
+both_alarm_peg_rgba: [0.8, 0.0, 1.0, 1.0]
+
+# 第一阶段建议 false，只报警、变色、写 event，不自动冻结
+ft_wrench_alarm_freeze_on_trigger: false
+
 
 # Task success auto-stop by task sites
 enable_task_success_auto_stop: true
