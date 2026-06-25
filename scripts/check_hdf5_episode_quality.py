@@ -204,6 +204,221 @@ def segment_summary(t: np.ndarray, values: np.ndarray, mask: np.ndarray, sample_
     }
 
 
+def nearest_values(query_t: np.ndarray, source_t: np.ndarray, source_values: np.ndarray) -> np.ndarray:
+    query_t = np.asarray(query_t, dtype=float).reshape(-1)
+    source_t = np.asarray(source_t, dtype=float).reshape(-1)
+    source_values = np.asarray(source_values)
+
+    right = np.searchsorted(source_t, query_t, side="left")
+    right = np.clip(right, 0, len(source_t) - 1)
+    left = np.clip(right - 1, 0, len(source_t) - 1)
+    use_left = np.abs(query_t - source_t[left]) <= np.abs(source_t[right] - query_t)
+    idx = np.where(use_left, left, right)
+    return source_values[idx]
+
+
+def force_aware_filter_diagnostics(
+    force_mag: np.ndarray,
+    t_force: np.ndarray,
+    action: Optional[np.ndarray],
+    command: Optional[np.ndarray],
+    t_state: Optional[np.ndarray],
+    events: List[str],
+    event_times: List[float],
+    expected_force_hz: float,
+    force_filter_bands: np.ndarray,
+) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "status": "OK",
+        "warnings": [],
+        "force_bands": {},
+        "thresholds": force_filter_bands.tolist(),
+        "action_source": None,
+        "action_step_comparison": {},
+        "high_force_hold_events": {},
+    }
+
+    force_mag = np.asarray(force_mag, dtype=float).reshape(-1)
+    t_force = np.asarray(t_force, dtype=float).reshape(-1)
+    if len(force_mag) == 0 or len(t_force) == 0 or len(force_mag) != len(t_force):
+        result["status"] = "SKIPPED"
+        result["warnings"].append("Force data or force timestamps are missing or mismatched.")
+        return result
+
+    dt_force = (
+        float(np.median(np.diff(t_force)))
+        if len(t_force) >= 2
+        else 1.0 / expected_force_hz
+    )
+    force_hz = 1.0 / dt_force if dt_force > 0 else expected_force_hz
+    total_force_duration = (
+        float(t_force[-1] - t_force[0])
+        if len(t_force) >= 2
+        else float(len(t_force) / expected_force_hz)
+    )
+
+    medium_threshold, high_threshold, hold_threshold = force_filter_bands
+
+    bands = [
+        (f"<{medium_threshold:g}N", force_mag < medium_threshold),
+        (
+            f"{medium_threshold:g}-{high_threshold:g}N",
+            (force_mag >= medium_threshold) & (force_mag < high_threshold),
+        ),
+        (
+            f"{high_threshold:g}-{hold_threshold:g}N",
+            (force_mag >= high_threshold) & (force_mag < hold_threshold),
+        ),
+        (f">={hold_threshold:g}N", force_mag >= hold_threshold),
+    ]
+
+    for label, mask in bands:
+        summary = segment_summary(t_force, force_mag, mask, force_hz)
+        band_values = force_mag[mask]
+        result["force_bands"][label] = {
+            "duration_sec": summary["duration_sec"],
+            "percentage": (
+                100.0 * summary["duration_sec"] / total_force_duration
+                if total_force_duration > 0
+                else math.nan
+            ),
+            "longest_duration_sec": summary["longest_duration_sec"],
+            "longest_start": summary["longest_start"],
+            "longest_end": summary["longest_end"],
+            "max_force": float(np.max(band_values)) if band_values.size else math.nan,
+            "action_steps": {
+                "samples": 0,
+                "mean": math.nan,
+                "p95": math.nan,
+                "max": math.nan,
+            },
+        }
+
+    action_data = action if action is not None else command
+    result["action_source"] = (
+        "action" if action is not None
+        else "actions/joint_pos_command" if command is not None
+        else None
+    )
+
+    action_step_t = np.asarray([], dtype=float)
+    action_step_norm = np.asarray([], dtype=float)
+    if action_data is None:
+        result["warnings"].append(
+            "No /action or actions/joint_pos_command dataset; action diagnostics skipped."
+        )
+    elif t_state is None:
+        result["warnings"].append("State/action timestamps missing; action diagnostics skipped.")
+    else:
+        action_data = np.asarray(action_data, dtype=float)
+        t_state_arr = np.asarray(t_state, dtype=float).reshape(-1)
+        n = min(len(action_data), len(t_state_arr))
+        if n < 2:
+            result["warnings"].append("Too few aligned action samples for step diagnostics.")
+        else:
+            action_data = action_data[:n]
+            t_state_arr = t_state_arr[:n]
+            action_step_norm = np.linalg.norm(np.diff(action_data, axis=0), axis=1)
+            action_step_t = t_state_arr[1:]
+            force_on_action = nearest_values(action_step_t, t_force, force_mag)
+
+            for label, _ in bands:
+                if label == f"<{medium_threshold:g}N":
+                    mask = force_on_action < medium_threshold
+                elif label == f"{medium_threshold:g}-{high_threshold:g}N":
+                    mask = (
+                        (force_on_action >= medium_threshold)
+                        & (force_on_action < high_threshold)
+                    )
+                elif label == f"{high_threshold:g}-{hold_threshold:g}N":
+                    mask = (
+                        (force_on_action >= high_threshold)
+                        & (force_on_action < hold_threshold)
+                    )
+                else:
+                    mask = force_on_action >= hold_threshold
+
+                values = action_step_norm[mask]
+                stats = finite_stats(values)
+                result["force_bands"][label]["action_steps"] = {
+                    "samples": int(values.size),
+                    "mean": stats["mean"],
+                    "p95": stats["p95"],
+                    "max": stats["max"],
+                }
+
+            low_label = f"<{medium_threshold:g}N"
+            medium_label = f"{medium_threshold:g}-{high_threshold:g}N"
+            low_mean = result["force_bands"][low_label]["action_steps"]["mean"]
+            medium_mean = result["force_bands"][medium_label]["action_steps"]["mean"]
+            high_values = action_step_norm[force_on_action >= high_threshold]
+            high_mean = finite_stats(high_values)["mean"]
+            result["action_step_comparison"] = {
+                "medium_smaller_than_low": (
+                    bool(medium_mean < low_mean)
+                    if np.isfinite(medium_mean) and np.isfinite(low_mean)
+                    else None
+                ),
+                "high_smaller_than_medium": (
+                    bool(high_mean < medium_mean)
+                    if np.isfinite(high_mean) and np.isfinite(medium_mean)
+                    else None
+                ),
+                "low_mean": low_mean,
+                "medium_mean": medium_mean,
+                "high_ge_threshold_mean": high_mean,
+            }
+
+    hold_event_rows = [
+        {"name": name, "time": float(event_times[i])}
+        for i, name in enumerate(events)
+        if name in {"high_force_hold_start", "high_force_hold_end"}
+        and i < len(event_times)
+        and np.isfinite(event_times[i])
+    ]
+    starts = [row["time"] for row in hold_event_rows if row["name"] == "high_force_hold_start"]
+    ends = [row["time"] for row in hold_event_rows if row["name"] == "high_force_hold_end"]
+
+    hold_report: Dict[str, Any] = {
+        "events_found": bool(hold_event_rows),
+        "event_count": len(hold_event_rows),
+        "events": hold_event_rows,
+        "start_count": len(starts),
+        "end_count": len(ends),
+    }
+
+    intervals = []
+    end_idx = 0
+    for start in starts:
+        while end_idx < len(ends) and ends[end_idx] < start:
+            end_idx += 1
+        if end_idx < len(ends):
+            intervals.append((start, ends[end_idx]))
+            end_idx += 1
+
+    if starts and ends:
+        hold_report["intervals"] = [
+            {"start": float(start), "end": float(end), "duration_sec": float(end - start)}
+            for start, end in intervals
+        ]
+        hold_report["hold_count"] = len(intervals)
+        hold_report["hold_total_duration_sec"] = float(
+            sum(end - start for start, end in intervals)
+        )
+
+        force_hold_mask = np.zeros(len(t_force), dtype=bool)
+        action_hold_mask = np.zeros(len(action_step_t), dtype=bool)
+        for start, end in intervals:
+            force_hold_mask |= (t_force >= start) & (t_force <= end)
+            action_hold_mask |= (action_step_t >= start) & (action_step_t <= end)
+
+        hold_report["force_magnitude"] = finite_stats(force_mag[force_hold_mask])
+        hold_report["action_step_norm"] = finite_stats(action_step_norm[action_hold_mask])
+
+    result["high_force_hold_events"] = hold_report
+    return result
+
+
 def fmt(x, nd=4) -> str:
     try:
         x = float(x)
@@ -231,6 +446,11 @@ def analyze_episode(args) -> Dict[str, Any]:
 
     forcerange = parse_csv_floats(args.forcerange, expected=7)
     force_thresholds = parse_csv_floats(args.force_thresholds)
+    force_filter_bands = parse_csv_floats(args.force_filter_bands, expected=3)
+    if not np.all(np.diff(force_filter_bands) > 0):
+        raise ValueError(
+            "--force-filter-bands must contain three increasing thresholds"
+        )
 
     issues: List[Dict[str, str]] = []
 
@@ -495,6 +715,19 @@ def analyze_episode(args) -> Dict[str, Any]:
             )
 
         report["metrics"]["force_duration"] = force_duration_report
+        report["metrics"]["force_aware_filter_diagnostics"] = (
+            force_aware_filter_diagnostics(
+                force_mag=force_mag,
+                t_force=t_force,
+                action=action,
+                command=command,
+                t_state=t_state,
+                events=events,
+                event_times=event_times,
+                expected_force_hz=args.expected_force_hz,
+                force_filter_bands=force_filter_bands,
+            )
+        )
 
         if np.max(force_mag) > args.force_max_warn:
             add_issue(
@@ -808,6 +1041,86 @@ def format_report(report: Dict[str, Any]) -> str:
         )
     lines.append("")
 
+    lines.append("=== Force-aware filter diagnostics ===")
+    fad = m.get("force_aware_filter_diagnostics", {})
+    if fad.get("status") == "SKIPPED":
+        for warning in fad.get("warnings", []):
+            lines.append(f"Warning: {warning}")
+    else:
+        for label, st in fad.get("force_bands", {}).items():
+            action_st = st.get("action_steps", {})
+            lines.append(
+                f"{label}: total={fmt(st.get('duration_sec'), 3)}s "
+                f"({fmt(st.get('percentage'), 2)}%), "
+                f"longest={fmt(st.get('longest_duration_sec'), 3)}s, "
+                f"range={fmt(st.get('longest_start'), 3)}->{fmt(st.get('longest_end'), 3)}, "
+                f"max_force={fmt(st.get('max_force'), 3)}N"
+            )
+            lines.append(
+                f"  action steps: samples={action_st.get('samples', 0)}, "
+                f"mean={fmt(action_st.get('mean'), 6)}, "
+                f"p95={fmt(action_st.get('p95'), 6)}, "
+                f"max={fmt(action_st.get('max'), 6)}"
+            )
+
+        lines.append(f"action source: {fad.get('action_source')}")
+        comparison = fad.get("action_step_comparison", {})
+        medium_cmp = comparison.get("medium_smaller_than_low")
+        high_cmp = comparison.get("high_smaller_than_medium")
+        thresholds = fad.get("thresholds", [40.0, 80.0, 100.0])
+        medium_threshold, high_threshold, _ = thresholds
+        lines.append(
+            f"{medium_threshold:g}-{high_threshold:g}N action steps smaller "
+            f"than <{medium_threshold:g}N: "
+            + ("unavailable" if medium_cmp is None else str(medium_cmp))
+        )
+        lines.append(
+            f">={high_threshold:g}N action steps smaller than "
+            f"{medium_threshold:g}-{high_threshold:g}N: "
+            + ("unavailable" if high_cmp is None else str(high_cmp))
+        )
+
+        for warning in fad.get("warnings", []):
+            lines.append(f"Warning: {warning}")
+
+        hold = fad.get("high_force_hold_events", {})
+        if not hold.get("events_found", False):
+            lines.append(
+                "No high_force_hold_start/end events found. "
+                "Hold diagnostics unavailable from events."
+            )
+        else:
+            lines.append(
+                f"hold events: count={hold.get('event_count', 0)}, "
+                f"starts={hold.get('start_count', 0)}, "
+                f"ends={hold.get('end_count', 0)}"
+            )
+            for row in hold.get("events", []):
+                lines.append(
+                    f"  {row.get('name')}: t={fmt(row.get('time'), 3)}s"
+                )
+
+            if "hold_count" in hold:
+                lines.append(
+                    f"estimated holds: count={hold.get('hold_count', 0)}, "
+                    f"total={fmt(hold.get('hold_total_duration_sec'), 3)}s"
+                )
+                hold_action = hold.get("action_step_norm", {})
+                hold_force = hold.get("force_magnitude", {})
+                lines.append(
+                    "  action_step_norm during hold: "
+                    f"mean={fmt(hold_action.get('mean'), 6)}, "
+                    f"p95={fmt(hold_action.get('p95'), 6)}, "
+                    f"max={fmt(hold_action.get('max'), 6)}"
+                )
+                lines.append(
+                    "  force magnitude during hold: "
+                    f"mean={fmt(hold_force.get('mean'), 3)}, "
+                    f"p95={fmt(hold_force.get('p95'), 3)}, "
+                    f"max={fmt(hold_force.get('max'), 3)}"
+                )
+    lines.append("")
+
     lines.append("=== Insertion progress under force ===")
     for key, st in m.get("insertion_progress_under_force", {}).items():
         lines.append(
@@ -964,6 +1277,12 @@ def build_parser():
         type=str,
         default="30,40,50",
         help="Force thresholds for duration statistics.",
+    )
+    p.add_argument(
+        "--force-filter-bands",
+        type=str,
+        default="40,80,100",
+        help="Increasing medium, high, and hold thresholds for force-aware diagnostics.",
     )
 
     # Force quality thresholds.
