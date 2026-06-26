@@ -297,6 +297,14 @@ class TeleopSystemMujoco:
                 "force_feedback_show_axial_lateral",
                 True,
             ),
+            "force_feedback_show_trend": self.config.get(
+                "force_feedback_show_trend",
+                True,
+            ),
+            "force_feedback_show_contact_state": self.config.get(
+                "force_feedback_show_contact_state",
+                True,
+            ),
             "force_feedback_show_arrow": self.config.get(
                 "force_feedback_show_arrow",
                 False,
@@ -316,6 +324,42 @@ class TeleopSystemMujoco:
             "force_feedback_use_compensated_wrench": self.config.get(
                 "force_feedback_use_compensated_wrench",
                 False,
+            ),
+            "force_feedback_trend_window_sec": self.config.get(
+                "force_feedback_trend_window_sec",
+                0.8,
+            ),
+            "force_feedback_trend_rising_threshold": self.config.get(
+                "force_feedback_trend_rising_threshold",
+                5.0,
+            ),
+            "force_feedback_trend_falling_threshold": self.config.get(
+                "force_feedback_trend_falling_threshold",
+                -5.0,
+            ),
+            "force_feedback_contact_free_threshold": self.config.get(
+                "force_feedback_contact_free_threshold",
+                5.0,
+            ),
+            "force_feedback_contact_light_threshold": self.config.get(
+                "force_feedback_contact_light_threshold",
+                15.0,
+            ),
+            "force_feedback_axial_high_threshold": self.config.get(
+                "force_feedback_axial_high_threshold",
+                20.0,
+            ),
+            "force_feedback_lateral_high_threshold": self.config.get(
+                "force_feedback_lateral_high_threshold",
+                10.0,
+            ),
+            "force_feedback_jam_force_threshold": self.config.get(
+                "force_feedback_jam_force_threshold",
+                25.0,
+            ),
+            "force_feedback_jam_lateral_threshold": self.config.get(
+                "force_feedback_jam_lateral_threshold",
+                12.0,
             ),
 
             # HDF5 recording

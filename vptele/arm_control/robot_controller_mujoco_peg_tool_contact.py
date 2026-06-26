@@ -41,6 +41,7 @@ from vptele.utils.force_feedback_overlay import (
     draw_force_feedback_overlay,
     make_force_feedback_hud,
     resize_with_aspect_padding,
+    trend_label,
 )
 
 import rospy
@@ -211,6 +212,7 @@ class RobotControllerMuJoCoPegTool:
         self.force_feedback_smoother = ForceFeedbackSmoother(
             alpha=self.force_feedback_config.smoothing_alpha
         )
+        self.force_feedback_history = []
 
         self.force_feedback_ft_sensor_site_id = -1
         ft_force_sensor_id = mujoco.mj_name2id(
@@ -1639,6 +1641,8 @@ class RobotControllerMuJoCoPegTool:
             return None
 
         force_sensor = self.force_feedback_smoother.update(force_sensor)
+        force_norm = float(np.linalg.norm(force_sensor))
+        trend = self._update_force_feedback_trend(force_norm)
         R_ws = self._get_force_feedback_sensor_rotation_world()
 
         return compute_force_feedback(
@@ -1646,7 +1650,25 @@ class RobotControllerMuJoCoPegTool:
             config=cfg,
             source_label="raw",
             R_ws=R_ws,
+            trend=trend,
         )
+
+    def _update_force_feedback_trend(self, force_norm: float) -> str:
+        cfg = self.force_feedback_config
+        now = time.perf_counter()
+        self.force_feedback_history.append((now, float(force_norm)))
+
+        window_sec = max(float(cfg.trend_window_sec), self.camera_stream_period)
+        cutoff = now - window_sec
+        self.force_feedback_history = [
+            row for row in self.force_feedback_history if row[0] >= cutoff
+        ]
+
+        if len(self.force_feedback_history) < 2:
+            return "STABLE"
+
+        old_force = self.force_feedback_history[0][1]
+        return trend_label(force_norm - old_force, cfg)
 
     def _get_force_feedback_sensor_rotation_world(self):
         site_id = getattr(self, "force_feedback_ft_sensor_site_id", -1)

@@ -18,11 +18,22 @@ class ForceFeedbackConfig:
         excessive_threshold: float = 100.0,
         show_numbers: bool = True,
         show_axial_lateral: bool = True,
+        show_trend: bool = True,
+        show_contact_state: bool = True,
         show_arrow: bool = False,
         smoothing_alpha: float = 0.25,
         window_name: str = "Force Feedback HUD",
         insertion_axis_world=None,
         use_compensated_wrench: bool = False,
+        trend_window_sec: float = 0.8,
+        trend_rising_threshold: float = 5.0,
+        trend_falling_threshold: float = -5.0,
+        contact_free_threshold: float = 5.0,
+        contact_light_threshold: float = 15.0,
+        axial_high_threshold: float = 20.0,
+        lateral_high_threshold: float = 10.0,
+        jam_force_threshold: float = 25.0,
+        jam_lateral_threshold: float = 12.0,
     ):
         self.enabled = bool(enabled)
         self.display_mode = str(display_mode)
@@ -33,6 +44,8 @@ class ForceFeedbackConfig:
         self.excessive_threshold = float(excessive_threshold)
         self.show_numbers = bool(show_numbers)
         self.show_axial_lateral = bool(show_axial_lateral)
+        self.show_trend = bool(show_trend)
+        self.show_contact_state = bool(show_contact_state)
         self.show_arrow = bool(show_arrow)
         self.smoothing_alpha = float(np.clip(smoothing_alpha, 0.0, 1.0))
         self.window_name = str(window_name)
@@ -40,6 +53,18 @@ class ForceFeedbackConfig:
             insertion_axis_world if insertion_axis_world is not None else [0.0, -1.0, 0.0]
         )
         self.use_compensated_wrench = bool(use_compensated_wrench)
+        self.trend_window_sec = max(0.0, float(trend_window_sec))
+        self.trend_rising_threshold = float(trend_rising_threshold)
+        self.trend_falling_threshold = float(trend_falling_threshold)
+        self.contact_free_threshold = max(0.0, float(contact_free_threshold))
+        self.contact_light_threshold = max(
+            self.contact_free_threshold,
+            float(contact_light_threshold),
+        )
+        self.axial_high_threshold = max(0.0, float(axial_high_threshold))
+        self.lateral_high_threshold = max(0.0, float(lateral_high_threshold))
+        self.jam_force_threshold = max(0.0, float(jam_force_threshold))
+        self.jam_lateral_threshold = max(0.0, float(jam_lateral_threshold))
 
         if self.display_mode not in {"overlay", "window", "off"}:
             self.display_mode = "overlay"
@@ -67,6 +92,8 @@ class ForceFeedbackConfig:
             excessive_threshold=config.get("force_feedback_excessive_threshold", 100.0),
             show_numbers=config.get("force_feedback_show_numbers", True),
             show_axial_lateral=config.get("force_feedback_show_axial_lateral", True),
+            show_trend=config.get("force_feedback_show_trend", True),
+            show_contact_state=config.get("force_feedback_show_contact_state", True),
             show_arrow=config.get("force_feedback_show_arrow", False),
             smoothing_alpha=config.get("force_feedback_smoothing_alpha", 0.25),
             window_name=config.get("force_feedback_window_name", "Force Feedback HUD"),
@@ -77,6 +104,39 @@ class ForceFeedbackConfig:
             use_compensated_wrench=config.get(
                 "force_feedback_use_compensated_wrench",
                 False,
+            ),
+            trend_window_sec=config.get("force_feedback_trend_window_sec", 0.8),
+            trend_rising_threshold=config.get(
+                "force_feedback_trend_rising_threshold",
+                5.0,
+            ),
+            trend_falling_threshold=config.get(
+                "force_feedback_trend_falling_threshold",
+                -5.0,
+            ),
+            contact_free_threshold=config.get(
+                "force_feedback_contact_free_threshold",
+                5.0,
+            ),
+            contact_light_threshold=config.get(
+                "force_feedback_contact_light_threshold",
+                15.0,
+            ),
+            axial_high_threshold=config.get(
+                "force_feedback_axial_high_threshold",
+                20.0,
+            ),
+            lateral_high_threshold=config.get(
+                "force_feedback_lateral_high_threshold",
+                10.0,
+            ),
+            jam_force_threshold=config.get(
+                "force_feedback_jam_force_threshold",
+                25.0,
+            ),
+            jam_lateral_threshold=config.get(
+                "force_feedback_jam_lateral_threshold",
+                12.0,
             ),
         )
 
@@ -105,6 +165,7 @@ def compute_force_feedback(
     config: ForceFeedbackConfig,
     source_label: str = "raw",
     R_ws: Optional[np.ndarray] = None,
+    trend: str = "STABLE",
 ) -> Dict[str, Any]:
     force_sensor = np.asarray(force_sensor, dtype=float).reshape(3)
     force_norm = float(np.linalg.norm(force_sensor))
@@ -116,6 +177,8 @@ def compute_force_feedback(
         "band": risk_band(force_norm, config),
         "axial": None,
         "lateral": None,
+        "trend": trend,
+        "contact_state": "FREE",
     }
 
     if config.show_axial_lateral and R_ws is not None:
@@ -127,7 +190,48 @@ def compute_force_feedback(
         feedback["axial"] = axial
         feedback["lateral"] = float(np.linalg.norm(lateral_vec))
 
+    feedback["contact_state"] = contact_state_label(feedback, config)
     return feedback
+
+
+def contact_state_label(
+    feedback: Dict[str, Any],
+    config: ForceFeedbackConfig,
+) -> str:
+    force_norm = float(feedback.get("force_norm", 0.0))
+    axial = feedback.get("axial")
+    lateral = feedback.get("lateral")
+    trend = feedback.get("trend", "STABLE")
+
+    if force_norm < config.contact_free_threshold:
+        return "FREE"
+    if force_norm < config.contact_light_threshold:
+        return "LIGHT CONTACT"
+
+    if force_norm >= config.excessive_threshold:
+        return "HIGH FORCE"
+
+    if axial is None or lateral is None:
+        if force_norm >= config.high_threshold:
+            return "HIGH FORCE"
+        return "LIGHT CONTACT"
+
+    axial_abs = abs(float(axial))
+    lateral_abs = abs(float(lateral))
+
+    if (
+        force_norm >= config.jam_force_threshold
+        and lateral_abs >= config.jam_lateral_threshold
+        and trend == "RISING"
+    ):
+        return "JAM RISK"
+    if axial_abs >= config.axial_high_threshold and lateral_abs >= config.lateral_high_threshold:
+        return "MIXED CONTACT"
+    if lateral_abs >= config.lateral_high_threshold:
+        return "LATERAL CONTACT"
+    if axial_abs >= config.axial_high_threshold:
+        return "AXIAL LOAD"
+    return "LIGHT CONTACT"
 
 
 def draw_force_feedback_overlay(
@@ -141,12 +245,20 @@ def draw_force_feedback_overlay(
 
     h, w = frame_bgr.shape[:2]
     x0, y0 = 14, 48
-    panel_w = min(310, max(240, w - 28))
-    panel_h = 118 if config.show_axial_lateral else 86
+    panel_w = min(390, max(300, w - 28))
+    panel_h = 168
+    if not config.show_axial_lateral:
+        panel_h -= 44
+    if not config.show_trend:
+        panel_h -= 22
+    if not config.show_contact_state:
+        panel_h -= 24
 
     band = feedback["band"]
     color = band["color_bgr"]
     force_norm = float(feedback["force_norm"])
+    contact_state = feedback.get("contact_state", "FREE")
+    contact_color = contact_state_color(contact_state, band)
 
     overlay = frame_bgr.copy()
     cv2.rectangle(overlay, (x0, y0), (x0 + panel_w, y0 + panel_h), (0, 0, 0), -1)
@@ -159,36 +271,107 @@ def draw_force_feedback_overlay(
     if camera_name:
         title = f"{title} - {camera_name}"
 
-    _put_text(frame_bgr, title, (x0 + 20, y0 + 24), 0.58, (235, 235, 235), 1)
-    if config.show_numbers:
-        force_text = f"|F| {force_norm:5.1f} N ({feedback['source_label']})"
-    else:
-        force_text = f"{feedback['source_label']}"
-
-    _put_text(frame_bgr, force_text, (x0 + 20, y0 + 52), 0.72, color, 2)
+    y = y0 + 24
+    _put_text(frame_bgr, title, (x0 + 20, y), 0.58, (235, 235, 235), 1)
     _put_text(
         frame_bgr,
         band["label"],
-        (x0 + panel_w - 118, y0 + 24),
+        (x0 + panel_w - 118, y),
         0.58,
         color,
         2,
     )
 
-    bar_x, bar_y = x0 + 20, y0 + 66
-    bar_w, bar_h = panel_w - 40, 12
-    fill = _scaled_bar_length(force_norm, config.excessive_threshold, bar_w)
-    cv2.rectangle(frame_bgr, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (70, 70, 70), 1)
-    cv2.rectangle(frame_bgr, (bar_x, bar_y), (bar_x + fill, bar_y + bar_h), color, -1)
+    y += 28
+    if config.show_numbers:
+        force_text = f"|F| {force_norm:5.1f} N ({feedback['source_label']})"
+    else:
+        force_text = f"{feedback['source_label']}"
+
+    _put_text(frame_bgr, force_text, (x0 + 20, y), 0.70, color, 2)
+
+    y += 14
+    _draw_bar(
+        frame_bgr,
+        x0 + 20,
+        y,
+        panel_w - 40,
+        10,
+        force_norm,
+        config.excessive_threshold,
+        color,
+    )
 
     if config.show_axial_lateral:
+        y += 28
         axial = feedback.get("axial")
         lateral = feedback.get("lateral")
         if axial is None or lateral is None:
-            detail = "axial/lateral: unavailable"
+            _put_text(
+                frame_bgr,
+                "Axial/Lateral unavailable",
+                (x0 + 20, y),
+                0.55,
+                (210, 210, 210),
+                1,
+            )
         else:
-            detail = f"axial {axial:+5.1f} N   lateral {lateral:5.1f} N"
-        _put_text(frame_bgr, detail, (x0 + 20, y0 + 104), 0.55, (230, 230, 230), 1)
+            axial_abs = abs(float(axial))
+            lateral_abs = abs(float(lateral))
+            label_x = x0 + 20
+            value_x = x0 + 96
+            bar_x = x0 + 178
+            bar_w = panel_w - 198
+
+            _put_text(frame_bgr, "Axial", (label_x, y), 0.55, (230, 230, 230), 1)
+            _put_text(frame_bgr, f"{axial:+5.1f} N", (value_x, y), 0.55, (230, 230, 230), 1)
+            _draw_bar(
+                frame_bgr,
+                bar_x,
+                y - 9,
+                bar_w,
+                9,
+                axial_abs,
+                config.jam_force_threshold,
+                color,
+            )
+
+            y += 22
+            _put_text(frame_bgr, "Lateral", (label_x, y), 0.55, (230, 230, 230), 1)
+            _put_text(frame_bgr, f"{lateral_abs:5.1f} N", (value_x, y), 0.55, (230, 230, 230), 1)
+            _draw_bar(
+                frame_bgr,
+                bar_x,
+                y - 9,
+                bar_w,
+                9,
+                lateral_abs,
+                config.jam_lateral_threshold,
+                contact_color,
+            )
+
+    if config.show_trend:
+        y += 24
+        trend = feedback.get("trend", "STABLE")
+        _put_text(
+            frame_bgr,
+            f"Trend   {trend}",
+            (x0 + 20, y),
+            0.58,
+            trend_color(trend),
+            2 if trend == "RISING" else 1,
+        )
+
+    if config.show_contact_state:
+        y += 24
+        _put_text(
+            frame_bgr,
+            f"Contact {contact_state}",
+            (x0 + 20, y),
+            0.60,
+            contact_color,
+            2,
+        )
 
     return frame_bgr
 
@@ -251,6 +434,40 @@ def risk_band(force_norm: float, config: ForceFeedbackConfig) -> Dict[str, Any]:
     return {"label": "SAFE", "color_bgr": (60, 220, 60)}
 
 
+def trend_label(delta_force: float, config: ForceFeedbackConfig) -> str:
+    if delta_force >= config.trend_rising_threshold:
+        return "RISING"
+    if delta_force <= config.trend_falling_threshold:
+        return "FALLING"
+    return "STABLE"
+
+
+def trend_color(trend: str):
+    if trend == "RISING":
+        return (0, 180, 255)
+    if trend == "FALLING":
+        return (180, 220, 120)
+    return (220, 220, 220)
+
+
+def contact_state_color(contact_state: str, band: Dict[str, Any]):
+    if contact_state == "FREE":
+        return (80, 220, 80)
+    if contact_state == "LIGHT CONTACT":
+        return (0, 230, 255)
+    if contact_state == "AXIAL LOAD":
+        return (255, 210, 80)
+    if contact_state == "LATERAL CONTACT":
+        return (0, 170, 255)
+    if contact_state == "MIXED CONTACT":
+        return (0, 120, 255)
+    if contact_state == "JAM RISK":
+        return (0, 0, 255)
+    if contact_state == "HIGH FORCE":
+        return (40, 40, 255)
+    return band["color_bgr"]
+
+
 def _normalized(vec) -> np.ndarray:
     out = np.asarray(vec, dtype=float).reshape(3)
     norm = float(np.linalg.norm(out))
@@ -282,6 +499,12 @@ def _scaled_bar_length(value: float, max_value: float, width: int) -> int:
     if max_value <= 1e-9:
         return 0
     return int(np.clip(value / max_value, 0.0, 1.0) * width)
+
+
+def _draw_bar(frame, x, y, width, height, value, max_value, color):
+    fill = _scaled_bar_length(value, max_value, width)
+    cv2.rectangle(frame, (x, y), (x + width, y + height), (70, 70, 70), 1)
+    cv2.rectangle(frame, (x, y), (x + fill, y + height), color, -1)
 
 
 def _put_text(frame, text, org, scale, color, thickness):

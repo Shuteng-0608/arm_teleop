@@ -92,12 +92,25 @@ force_feedback_excessive_threshold: 100.0
 
 force_feedback_show_numbers: true
 force_feedback_show_axial_lateral: true
+force_feedback_show_trend: true
+force_feedback_show_contact_state: true
 force_feedback_show_arrow: false
 force_feedback_smoothing_alpha: 0.25
 force_feedback_window_name: "Force Feedback HUD"
 
 force_feedback_insertion_axis_world: [0.0, -1.0, 0.0]
 force_feedback_use_compensated_wrench: false
+
+force_feedback_trend_window_sec: 0.8
+force_feedback_trend_rising_threshold: 5.0
+force_feedback_trend_falling_threshold: -5.0
+
+force_feedback_contact_free_threshold: 5.0
+force_feedback_contact_light_threshold: 15.0
+force_feedback_axial_high_threshold: 20.0
+force_feedback_lateral_high_threshold: 10.0
+force_feedback_jam_force_threshold: 25.0
+force_feedback_jam_lateral_threshold: 12.0
 
 # VisionPro配置
 vp_ip: "192.168.1.144" # DaiLab-Normal
