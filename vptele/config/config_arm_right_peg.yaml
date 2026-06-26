@@ -68,6 +68,11 @@ monitor_camera_names:
   - "cctv_cam"
   - "ee_cam"
   - "base_top_cam"
+separate_cctv_window: true
+cctv_window_name: "CCTV Camera"
+cctv_window_width: 1280
+cctv_window_height: 720
+show_cctv_in_combined_panel: false
 
 # Operator-only live force feedback HUD.
 # This overlay is drawn only on OpenCV display frames, never on HDF5 images.

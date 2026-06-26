@@ -150,6 +150,16 @@ class RobotControllerMuJoCoPegTool:
             ["cctv_cam", "ee_cam", "base_top_cam"]
         )
 
+        self.separate_cctv_window = bool(
+            self.config.get("separate_cctv_window", False)
+        )
+        self.cctv_window_name = self.config.get("cctv_window_name", "CCTV Camera")
+        self.cctv_window_width = int(self.config.get("cctv_window_width", 1280))
+        self.cctv_window_height = int(self.config.get("cctv_window_height", 720))
+        self.show_cctv_in_combined_panel = bool(
+            self.config.get("show_cctv_in_combined_panel", True)
+        )
+
         self.camera_renderer = None
         self.monitor_camera_ids = {}
 
@@ -1437,48 +1447,43 @@ class RobotControllerMuJoCoPegTool:
         labels = []
         feedback = self._get_force_feedback_snapshot()
 
+        if self.separate_cctv_window:
+            cctv_bgr = self._render_display_camera_bgr(
+                camera_name=self.cctv_camera,
+                feedback=feedback,
+                size=(self.cctv_window_width, self.cctv_window_height),
+            )
+            if cctv_bgr is not None:
+                cv2.imshow(self.cctv_window_name, cctv_bgr)
+
         for cam_name in self.monitor_camera_names:
-            rgb = self._render_camera_rgb(cam_name)
-            if rgb is None:
+            if (
+                self.separate_cctv_window
+                and not self.show_cctv_in_combined_panel
+                and cam_name == self.cctv_camera
+            ):
                 continue
 
-            # MuJoCo 返回 RGB，OpenCV 显示用 BGR
-            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-
-            if self._should_overlay_force_feedback(cam_name) and feedback is not None:
-                draw_force_feedback_overlay(
-                    frame_bgr=bgr,
-                    feedback=feedback,
-                    config=self.force_feedback_config,
-                    camera_name=cam_name,
-                )
-
-            # 在左上角打上相机名称
-            cv2.putText(
-                bgr,
-                cam_name,
-                (15, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
+            bgr = self._render_display_camera_bgr(
+                camera_name=cam_name,
+                feedback=feedback,
             )
+            if bgr is None:
+                continue
 
             frames.append(bgr)
             labels.append(cam_name)
 
-        if len(frames) == 0:
-            return
+        if len(frames) > 0:
+            # 如果只有一个相机，就单独显示
+            if len(frames) == 1:
+                panel = frames[0]
+            else:
+                # 横向拼接两个画面
+                panel = np.hstack(frames)
 
-        # 如果只有一个相机，就单独显示
-        if len(frames) == 1:
-            panel = frames[0]
-        else:
-            # 横向拼接两个画面
-            panel = np.hstack(frames)
+            cv2.imshow("Task Camera Streams", panel)
 
-        cv2.imshow("Task Camera Streams", panel)
         if (
             self.force_feedback_config.enabled
             and self.force_feedback_config.display_mode == "window"
@@ -1491,6 +1496,38 @@ class RobotControllerMuJoCoPegTool:
         cv2.waitKey(1)
 
         self.last_camera_stream_time = now
+
+    def _render_display_camera_bgr(self, camera_name: str, feedback=None, size=None):
+        rgb = self._render_camera_rgb(camera_name)
+        if rgb is None:
+            return None
+
+        # MuJoCo 返回 RGB，OpenCV 显示用 BGR。Overlay is display-only.
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        if size is not None:
+            bgr = cv2.resize(bgr, size, interpolation=cv2.INTER_LINEAR)
+
+        if self._should_overlay_force_feedback(camera_name) and feedback is not None:
+            draw_force_feedback_overlay(
+                frame_bgr=bgr,
+                feedback=feedback,
+                config=self.force_feedback_config,
+                camera_name=camera_name,
+            )
+
+        # 在左上角打上相机名称
+        cv2.putText(
+            bgr,
+            camera_name,
+            (15, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+
+        return bgr
 
     def _should_overlay_force_feedback(self, camera_name: str) -> bool:
         cfg = self.force_feedback_config

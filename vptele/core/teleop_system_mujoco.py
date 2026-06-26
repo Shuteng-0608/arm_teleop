@@ -222,6 +222,26 @@ class TeleopSystemMujoco:
                 "monitor_camera_names",
                 ["cctv_cam", "ee_cam", "base_top_cam"],
             ),
+            "separate_cctv_window": self.config.get(
+                "separate_cctv_window",
+                False,
+            ),
+            "cctv_window_name": self.config.get(
+                "cctv_window_name",
+                "CCTV Camera",
+            ),
+            "cctv_window_width": self.config.get(
+                "cctv_window_width",
+                1280,
+            ),
+            "cctv_window_height": self.config.get(
+                "cctv_window_height",
+                720,
+            ),
+            "show_cctv_in_combined_panel": self.config.get(
+                "show_cctv_in_combined_panel",
+                True,
+            ),
 
             # Operator-only force feedback HUD. This is drawn only on live
             # OpenCV display frames, not on HDF5 recording frames.
