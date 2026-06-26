@@ -242,6 +242,22 @@ class TeleopSystemMujoco:
                 "show_cctv_in_combined_panel",
                 True,
             ),
+            "cctv_window_preserve_aspect_ratio": self.config.get(
+                "cctv_window_preserve_aspect_ratio",
+                True,
+            ),
+            "cctv_window_fullscreen": self.config.get(
+                "cctv_window_fullscreen",
+                False,
+            ),
+            "cctv_window_fit_mode": self.config.get(
+                "cctv_window_fit_mode",
+                "contain",
+            ),
+            "cctv_window_padding_color": self.config.get(
+                "cctv_window_padding_color",
+                [0, 0, 0],
+            ),
 
             # Operator-only force feedback HUD. This is drawn only on live
             # OpenCV display frames, not on HDF5 recording frames.

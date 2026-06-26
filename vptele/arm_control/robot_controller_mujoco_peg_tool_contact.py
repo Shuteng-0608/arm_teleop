@@ -40,6 +40,7 @@ from vptele.utils.force_feedback_overlay import (
     compute_force_feedback,
     draw_force_feedback_overlay,
     make_force_feedback_hud,
+    resize_with_aspect_padding,
 )
 
 import rospy
@@ -159,6 +160,27 @@ class RobotControllerMuJoCoPegTool:
         self.show_cctv_in_combined_panel = bool(
             self.config.get("show_cctv_in_combined_panel", True)
         )
+        self.cctv_window_preserve_aspect_ratio = bool(
+            self.config.get("cctv_window_preserve_aspect_ratio", True)
+        )
+        self.cctv_window_fullscreen = bool(
+            self.config.get("cctv_window_fullscreen", False)
+        )
+        self.cctv_window_fit_mode = self.config.get(
+            "cctv_window_fit_mode",
+            "contain",
+        )
+        if self.cctv_window_fit_mode != "contain":
+            print(
+                f"[Camera Monitor] Unsupported cctv_window_fit_mode="
+                f"{self.cctv_window_fit_mode}. Falling back to contain."
+            )
+            self.cctv_window_fit_mode = "contain"
+        self.cctv_window_padding_color = self.config.get(
+            "cctv_window_padding_color",
+            [0, 0, 0],
+        )
+        self.cctv_window_initialized = False
 
         self.camera_renderer = None
         self.monitor_camera_ids = {}
@@ -1448,12 +1470,12 @@ class RobotControllerMuJoCoPegTool:
         feedback = self._get_force_feedback_snapshot()
 
         if self.separate_cctv_window:
-            cctv_bgr = self._render_display_camera_bgr(
+            cctv_bgr = self._render_cctv_window_bgr(
                 camera_name=self.cctv_camera,
                 feedback=feedback,
-                size=(self.cctv_window_width, self.cctv_window_height),
             )
             if cctv_bgr is not None:
+                self._ensure_cctv_window()
                 cv2.imshow(self.cctv_window_name, cctv_bgr)
 
         for cam_name in self.monitor_camera_names:
@@ -1528,6 +1550,72 @@ class RobotControllerMuJoCoPegTool:
         )
 
         return bgr
+
+    def _render_cctv_window_bgr(self, camera_name: str, feedback=None):
+        rgb = self._render_camera_rgb(camera_name)
+        if rgb is None:
+            return None
+
+        # This is only the live display copy. HDF5 uses a separate renderer.
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+        if self.cctv_window_preserve_aspect_ratio:
+            bgr = resize_with_aspect_padding(
+                frame_bgr=bgr,
+                target_width=self.cctv_window_width,
+                target_height=self.cctv_window_height,
+                padding_color=self.cctv_window_padding_color,
+            )
+        else:
+            bgr = cv2.resize(
+                bgr,
+                (self.cctv_window_width, self.cctv_window_height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+        if self._should_overlay_force_feedback(camera_name) and feedback is not None:
+            draw_force_feedback_overlay(
+                frame_bgr=bgr,
+                feedback=feedback,
+                config=self.force_feedback_config,
+                camera_name=camera_name,
+            )
+
+        cv2.putText(
+            bgr,
+            camera_name,
+            (15, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+
+        return bgr
+
+    def _ensure_cctv_window(self):
+        if self.cctv_window_initialized:
+            return
+
+        try:
+            cv2.namedWindow(self.cctv_window_name, cv2.WINDOW_NORMAL)
+            if self.cctv_window_fullscreen:
+                cv2.setWindowProperty(
+                    self.cctv_window_name,
+                    cv2.WND_PROP_FULLSCREEN,
+                    cv2.WINDOW_FULLSCREEN,
+                )
+            else:
+                cv2.resizeWindow(
+                    self.cctv_window_name,
+                    self.cctv_window_width,
+                    self.cctv_window_height,
+                )
+        except Exception as e:
+            print(f"[Camera Monitor] CCTV window setup failed: {e}")
+
+        self.cctv_window_initialized = True
 
     def _should_overlay_force_feedback(self, camera_name: str) -> bool:
         cfg = self.force_feedback_config

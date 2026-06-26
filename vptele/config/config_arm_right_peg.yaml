@@ -73,6 +73,10 @@ cctv_window_name: "CCTV Camera"
 cctv_window_width: 1280
 cctv_window_height: 720
 show_cctv_in_combined_panel: false
+cctv_window_preserve_aspect_ratio: true
+cctv_window_fullscreen: false
+cctv_window_fit_mode: "contain"   # contain only for now
+cctv_window_padding_color: [0, 0, 0]
 
 # Operator-only live force feedback HUD.
 # This overlay is drawn only on OpenCV display frames, never on HDF5 images.

@@ -206,6 +206,41 @@ def make_force_feedback_hud(
     )
 
 
+def resize_with_aspect_padding(
+    frame_bgr: np.ndarray,
+    target_width: int,
+    target_height: int,
+    padding_color=None,
+) -> np.ndarray:
+    if frame_bgr is None:
+        return frame_bgr
+
+    target_width = max(1, int(target_width))
+    target_height = max(1, int(target_height))
+    image_height, image_width = frame_bgr.shape[:2]
+    if image_width <= 0 or image_height <= 0:
+        return np.zeros((target_height, target_width, 3), dtype=np.uint8)
+
+    color = _padding_color_bgr(padding_color)
+    scale = min(target_width / image_width, target_height / image_height)
+    resized_width = max(1, int(round(image_width * scale)))
+    resized_height = max(1, int(round(image_height * scale)))
+
+    resized = cv2.resize(
+        frame_bgr,
+        (resized_width, resized_height),
+        interpolation=cv2.INTER_LINEAR,
+    )
+
+    canvas = np.empty((target_height, target_width, 3), dtype=frame_bgr.dtype)
+    canvas[:, :] = color
+
+    x0 = (target_width - resized_width) // 2
+    y0 = (target_height - resized_height) // 2
+    canvas[y0:y0 + resized_height, x0:x0 + resized_width] = resized
+    return canvas
+
+
 def risk_band(force_norm: float, config: ForceFeedbackConfig) -> Dict[str, Any]:
     if force_norm >= config.excessive_threshold:
         return {"label": "EXCESS", "color_bgr": (40, 40, 255)}
@@ -230,6 +265,17 @@ def _string_list(value, default):
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value]
+
+
+def _padding_color_bgr(value) -> np.ndarray:
+    if value is None:
+        return np.array([0, 0, 0], dtype=np.uint8)
+
+    color = np.asarray(value, dtype=float).reshape(-1)
+    if color.size < 3:
+        return np.array([0, 0, 0], dtype=np.uint8)
+
+    return np.asarray(np.clip(color[:3], 0, 255), dtype=np.uint8)
 
 
 def _scaled_bar_length(value: float, max_value: float, width: int) -> int:
