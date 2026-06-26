@@ -323,7 +323,11 @@ class TeleopSystemMujoco:
             ),
             "force_feedback_use_compensated_wrench": self.config.get(
                 "force_feedback_use_compensated_wrench",
-                False,
+                True,
+            ),
+            "force_feedback_wrench_label": self.config.get(
+                "force_feedback_wrench_label",
+                "comp",
             ),
             "force_feedback_trend_window_sec": self.config.get(
                 "force_feedback_trend_window_sec",
@@ -360,6 +364,78 @@ class TeleopSystemMujoco:
             "force_feedback_jam_lateral_threshold": self.config.get(
                 "force_feedback_jam_lateral_threshold",
                 12.0,
+            ),
+            "enable_task_force_guidance_hud": self.config.get(
+                "enable_task_force_guidance_hud",
+                True,
+            ),
+            "task_force_guidance_mode": self.config.get(
+                "task_force_guidance_mode",
+                "ring",
+            ),
+            "force_guidance_overlay_cameras": self.config.get(
+                "force_guidance_overlay_cameras",
+                ["cctv_cam"],
+            ),
+            "show_translation_ring": self.config.get(
+                "show_translation_ring",
+                True,
+            ),
+            "show_torque_ring": self.config.get(
+                "show_torque_ring",
+                True,
+            ),
+            "show_axial_core": self.config.get(
+                "show_axial_core",
+                True,
+            ),
+            "force_guidance_plane_right_world": self.config.get(
+                "force_guidance_plane_right_world",
+                [1.0, 0.0, 0.0],
+            ),
+            "force_guidance_plane_up_world": self.config.get(
+                "force_guidance_plane_up_world",
+                [0.0, 0.0, 1.0],
+            ),
+            "force_guidance_ring_radius_px": self.config.get(
+                "force_guidance_ring_radius_px",
+                70,
+            ),
+            "force_guidance_max_vector_px": self.config.get(
+                "force_guidance_max_vector_px",
+                55,
+            ),
+            "force_guidance_max_force_n": self.config.get(
+                "force_guidance_max_force_n",
+                40.0,
+            ),
+            "force_guidance_max_torque_nm": self.config.get(
+                "force_guidance_max_torque_nm",
+                2.0,
+            ),
+            "force_guidance_draw_numeric_values": self.config.get(
+                "force_guidance_draw_numeric_values",
+                True,
+            ),
+            "force_guidance_show_caveat_label": self.config.get(
+                "force_guidance_show_caveat_label",
+                True,
+            ),
+            "force_feedback_ft_compensation_mode": self.config.get(
+                "force_feedback_ft_compensation_mode",
+                self.config.get("hdf5_ft_compensation_mode", "gravity"),
+            ),
+            "force_feedback_gravity_tool_body_names": self.config.get(
+                "force_feedback_gravity_tool_body_names",
+                self.config.get("hdf5_ft_gravity_tool_body_names", ["peg_tool"]),
+            ),
+            "force_feedback_gravity_world": self.config.get(
+                "force_feedback_gravity_world",
+                self.config.get("hdf5_ft_gravity_world", [0.0, 0.0, -9.81]),
+            ),
+            "force_feedback_gravity_sensor_sign": self.config.get(
+                "force_feedback_gravity_sensor_sign",
+                self.config.get("hdf5_ft_gravity_sensor_sign", -1.0),
             ),
 
             # HDF5 recording

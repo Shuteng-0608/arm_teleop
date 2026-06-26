@@ -24,7 +24,7 @@ class ForceFeedbackConfig:
         smoothing_alpha: float = 0.25,
         window_name: str = "Force Feedback HUD",
         insertion_axis_world=None,
-        use_compensated_wrench: bool = False,
+        use_compensated_wrench: bool = True,
         trend_window_sec: float = 0.8,
         trend_rising_threshold: float = 5.0,
         trend_falling_threshold: float = -5.0,
@@ -34,6 +34,21 @@ class ForceFeedbackConfig:
         lateral_high_threshold: float = 10.0,
         jam_force_threshold: float = 25.0,
         jam_lateral_threshold: float = 12.0,
+        enable_task_force_guidance_hud: bool = False,
+        task_force_guidance_mode: str = "ring",
+        force_guidance_overlay_cameras=None,
+        show_translation_ring: bool = True,
+        show_torque_ring: bool = True,
+        show_axial_core: bool = True,
+        force_guidance_plane_right_world=None,
+        force_guidance_plane_up_world=None,
+        force_guidance_ring_radius_px: int = 70,
+        force_guidance_max_vector_px: int = 55,
+        force_guidance_max_force_n: float = 40.0,
+        force_guidance_max_torque_nm: float = 2.0,
+        force_guidance_draw_numeric_values: bool = True,
+        force_guidance_show_caveat_label: bool = True,
+        wrench_label: str = "comp",
     ):
         self.enabled = bool(enabled)
         self.display_mode = str(display_mode)
@@ -65,6 +80,34 @@ class ForceFeedbackConfig:
         self.lateral_high_threshold = max(0.0, float(lateral_high_threshold))
         self.jam_force_threshold = max(0.0, float(jam_force_threshold))
         self.jam_lateral_threshold = max(0.0, float(jam_lateral_threshold))
+        self.enable_task_force_guidance_hud = bool(enable_task_force_guidance_hud)
+        self.task_force_guidance_mode = str(task_force_guidance_mode)
+        if self.task_force_guidance_mode not in {"ring", "bars"}:
+            self.task_force_guidance_mode = "ring"
+        self.force_guidance_overlay_cameras = _string_list(
+            force_guidance_overlay_cameras,
+            self.overlay_cameras,
+        )
+        self.show_translation_ring = bool(show_translation_ring)
+        self.show_torque_ring = bool(show_torque_ring)
+        self.show_axial_core = bool(show_axial_core)
+        self.force_guidance_plane_right_world = _normalized(
+            force_guidance_plane_right_world
+            if force_guidance_plane_right_world is not None
+            else [1.0, 0.0, 0.0]
+        )
+        self.force_guidance_plane_up_world = _normalized(
+            force_guidance_plane_up_world
+            if force_guidance_plane_up_world is not None
+            else [0.0, 0.0, 1.0]
+        )
+        self.force_guidance_ring_radius_px = max(20, int(force_guidance_ring_radius_px))
+        self.force_guidance_max_vector_px = max(10, int(force_guidance_max_vector_px))
+        self.force_guidance_max_force_n = max(1e-9, float(force_guidance_max_force_n))
+        self.force_guidance_max_torque_nm = max(1e-9, float(force_guidance_max_torque_nm))
+        self.force_guidance_draw_numeric_values = bool(force_guidance_draw_numeric_values)
+        self.force_guidance_show_caveat_label = bool(force_guidance_show_caveat_label)
+        self.wrench_label = str(wrench_label)
 
         if self.display_mode not in {"overlay", "window", "off"}:
             self.display_mode = "overlay"
@@ -92,8 +135,14 @@ class ForceFeedbackConfig:
             excessive_threshold=config.get("force_feedback_excessive_threshold", 100.0),
             show_numbers=config.get("force_feedback_show_numbers", True),
             show_axial_lateral=config.get("force_feedback_show_axial_lateral", True),
-            show_trend=config.get("force_feedback_show_trend", True),
-            show_contact_state=config.get("force_feedback_show_contact_state", True),
+            show_trend=config.get(
+                "force_feedback_show_trend",
+                config.get("show_trend", True),
+            ),
+            show_contact_state=config.get(
+                "force_feedback_show_contact_state",
+                config.get("show_contact_state", True),
+            ),
             show_arrow=config.get("force_feedback_show_arrow", False),
             smoothing_alpha=config.get("force_feedback_smoothing_alpha", 0.25),
             window_name=config.get("force_feedback_window_name", "Force Feedback HUD"),
@@ -103,7 +152,7 @@ class ForceFeedbackConfig:
             ),
             use_compensated_wrench=config.get(
                 "force_feedback_use_compensated_wrench",
-                False,
+                True,
             ),
             trend_window_sec=config.get("force_feedback_trend_window_sec", 0.8),
             trend_rising_threshold=config.get(
@@ -138,6 +187,54 @@ class ForceFeedbackConfig:
                 "force_feedback_jam_lateral_threshold",
                 12.0,
             ),
+            enable_task_force_guidance_hud=config.get(
+                "enable_task_force_guidance_hud",
+                False,
+            ),
+            task_force_guidance_mode=config.get(
+                "task_force_guidance_mode",
+                "ring",
+            ),
+            force_guidance_overlay_cameras=config.get(
+                "force_guidance_overlay_cameras",
+                config.get("force_feedback_overlay_cameras", ["cctv_cam"]),
+            ),
+            show_translation_ring=config.get("show_translation_ring", True),
+            show_torque_ring=config.get("show_torque_ring", True),
+            show_axial_core=config.get("show_axial_core", True),
+            force_guidance_plane_right_world=config.get(
+                "force_guidance_plane_right_world",
+                [1.0, 0.0, 0.0],
+            ),
+            force_guidance_plane_up_world=config.get(
+                "force_guidance_plane_up_world",
+                [0.0, 0.0, 1.0],
+            ),
+            force_guidance_ring_radius_px=config.get(
+                "force_guidance_ring_radius_px",
+                70,
+            ),
+            force_guidance_max_vector_px=config.get(
+                "force_guidance_max_vector_px",
+                55,
+            ),
+            force_guidance_max_force_n=config.get(
+                "force_guidance_max_force_n",
+                40.0,
+            ),
+            force_guidance_max_torque_nm=config.get(
+                "force_guidance_max_torque_nm",
+                2.0,
+            ),
+            force_guidance_draw_numeric_values=config.get(
+                "force_guidance_draw_numeric_values",
+                True,
+            ),
+            force_guidance_show_caveat_label=config.get(
+                "force_guidance_show_caveat_label",
+                True,
+            ),
+            wrench_label=config.get("force_feedback_wrench_label", "comp"),
         )
 
 
@@ -166,6 +263,7 @@ def compute_force_feedback(
     source_label: str = "raw",
     R_ws: Optional[np.ndarray] = None,
     trend: str = "STABLE",
+    torque_sensor: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     force_sensor = np.asarray(force_sensor, dtype=float).reshape(3)
     force_norm = float(np.linalg.norm(force_sensor))
@@ -179,16 +277,42 @@ def compute_force_feedback(
         "lateral": None,
         "trend": trend,
         "contact_state": "FREE",
+        "force_world": None,
+        "torque_sensor": None,
+        "torque_world": None,
+        "lateral_uv": None,
+        "torque_uv": None,
     }
 
-    if config.show_axial_lateral and R_ws is not None:
+    if R_ws is not None:
         R_ws = np.asarray(R_ws, dtype=float).reshape(3, 3)
         force_world = R_ws @ force_sensor
+        feedback["force_world"] = force_world
         axis = config.insertion_axis_world
         axial = float(np.dot(force_world, axis))
         lateral_vec = force_world - axial * axis
         feedback["axial"] = axial
         feedback["lateral"] = float(np.linalg.norm(lateral_vec))
+        feedback["lateral_uv"] = np.array(
+            [
+                float(np.dot(lateral_vec, config.force_guidance_plane_right_world)),
+                float(np.dot(lateral_vec, config.force_guidance_plane_up_world)),
+            ],
+            dtype=float,
+        )
+
+        if torque_sensor is not None:
+            torque_sensor = np.asarray(torque_sensor, dtype=float).reshape(3)
+            torque_world = R_ws @ torque_sensor
+            feedback["torque_sensor"] = torque_sensor
+            feedback["torque_world"] = torque_world
+            feedback["torque_uv"] = np.array(
+                [
+                    float(np.dot(torque_world, config.force_guidance_plane_right_world)),
+                    float(np.dot(torque_world, config.force_guidance_plane_up_world)),
+                ],
+                dtype=float,
+            )
 
     feedback["contact_state"] = contact_state_label(feedback, config)
     return feedback
@@ -242,6 +366,17 @@ def draw_force_feedback_overlay(
 ) -> np.ndarray:
     if frame_bgr is None or feedback is None:
         return frame_bgr
+
+    if (
+        config.enable_task_force_guidance_hud
+        and config.task_force_guidance_mode == "ring"
+    ):
+        return draw_force_guidance_ring_overlay(
+            frame_bgr=frame_bgr,
+            feedback=feedback,
+            config=config,
+            camera_name=camera_name,
+        )
 
     h, w = frame_bgr.shape[:2]
     x0, y0 = 14, 48
@@ -376,6 +511,148 @@ def draw_force_feedback_overlay(
     return frame_bgr
 
 
+def draw_force_guidance_ring_overlay(
+    frame_bgr: np.ndarray,
+    feedback: Dict[str, Any],
+    config: ForceFeedbackConfig,
+    camera_name: str = "",
+) -> np.ndarray:
+    h, w = frame_bgr.shape[:2]
+    radius = int(config.force_guidance_ring_radius_px)
+    margin = 24
+    cx = w - radius - margin
+    cy = radius + 74
+    if cx < radius + margin:
+        cx = radius + margin
+    if cy + radius + 92 > h:
+        cy = max(radius + margin, h - radius - 92)
+
+    panel_w = 2 * radius + 62
+    panel_h = 2 * radius + 126
+    x0 = max(10, cx - radius - 28)
+    y0 = max(10, cy - radius - 48)
+
+    band = feedback["band"]
+    force_norm = float(feedback["force_norm"])
+    axial = feedback.get("axial")
+    lateral = feedback.get("lateral")
+    torque_uv = feedback.get("torque_uv")
+    lateral_uv = feedback.get("lateral_uv")
+    trend = feedback.get("trend", "STABLE")
+    contact_state = feedback.get("contact_state", "FREE")
+    contact_color = contact_state_color(contact_state, band)
+
+    overlay = frame_bgr.copy()
+    cv2.rectangle(
+        overlay,
+        (x0, y0),
+        (min(w - 1, x0 + panel_w), min(h - 1, y0 + panel_h)),
+        (0, 0, 0),
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.40, frame_bgr, 0.60, 0.0, frame_bgr)
+
+    title = "Peg Contact HUD"
+    if camera_name:
+        title = f"{title} - {camera_name}"
+    _put_text(frame_bgr, title, (x0 + 14, y0 + 24), 0.52, (235, 235, 235), 1)
+    _put_text(
+        frame_bgr,
+        f"{feedback.get('source_label', 'raw')}",
+        (x0 + panel_w - 62, y0 + 24),
+        0.52,
+        band["color_bgr"],
+        2,
+    )
+
+    cv2.circle(frame_bgr, (cx, cy), radius, (92, 92, 92), 1, cv2.LINE_AA)
+    cv2.circle(frame_bgr, (cx, cy), max(8, radius // 2), (68, 68, 68), 1, cv2.LINE_AA)
+    cv2.line(frame_bgr, (cx - radius, cy), (cx + radius, cy), (55, 55, 55), 1, cv2.LINE_AA)
+    cv2.line(frame_bgr, (cx, cy - radius), (cx, cy + radius), (55, 55, 55), 1, cv2.LINE_AA)
+
+    if config.show_axial_core:
+        axial_abs = abs(float(axial)) if axial is not None else 0.0
+        core_scale = np.clip(axial_abs / config.force_guidance_max_force_n, 0.0, 1.0)
+        core_radius = int(12 + core_scale * 16)
+        core_color = risk_band(axial_abs, config)["color_bgr"]
+        cv2.circle(frame_bgr, (cx, cy), core_radius, core_color, -1, cv2.LINE_AA)
+        cv2.circle(frame_bgr, (cx, cy), core_radius, (240, 240, 240), 1, cv2.LINE_AA)
+
+    if config.show_translation_ring and lateral_uv is not None:
+        end = _vector_endpoint(
+            cx,
+            cy,
+            lateral_uv,
+            config.force_guidance_max_force_n,
+            config.force_guidance_max_vector_px,
+        )
+        cv2.arrowedLine(
+            frame_bgr,
+            (cx, cy),
+            end,
+            contact_color,
+            3,
+            cv2.LINE_AA,
+            tipLength=0.22,
+        )
+        cv2.circle(frame_bgr, end, 5, contact_color, -1, cv2.LINE_AA)
+
+    if config.show_torque_ring and torque_uv is not None:
+        end = _vector_endpoint(
+            cx,
+            cy,
+            torque_uv,
+            config.force_guidance_max_torque_nm,
+            radius,
+        )
+        cv2.circle(frame_bgr, (cx, cy), radius + 10, (74, 74, 74), 1, cv2.LINE_AA)
+        cv2.line(frame_bgr, (cx, cy), end, (255, 185, 80), 2, cv2.LINE_AA)
+        cv2.circle(frame_bgr, end, 4, (255, 185, 80), -1, cv2.LINE_AA)
+
+    y = cy + radius + 24
+    _put_text(
+        frame_bgr,
+        f"|F| {force_norm:4.1f} N  {band['label']}",
+        (x0 + 14, y),
+        0.53,
+        band["color_bgr"],
+        2,
+    )
+    y += 22
+    if axial is None or lateral is None:
+        _put_text(frame_bgr, "Ax/Lat unavailable", (x0 + 14, y), 0.50, (210, 210, 210), 1)
+    else:
+        _put_text(
+            frame_bgr,
+            f"Ax {float(axial):+4.1f} N  Lat {float(lateral):4.1f} N",
+            (x0 + 14, y),
+            0.50,
+            (230, 230, 230),
+            1,
+        )
+
+    if config.force_guidance_draw_numeric_values and torque_uv is not None:
+        y += 20
+        torque_mag = float(np.linalg.norm(torque_uv))
+        _put_text(frame_bgr, f"Tilt {torque_mag:4.2f} Nm", (x0 + 14, y), 0.48, (255, 210, 130), 1)
+
+    y += 22
+    _put_text(frame_bgr, f"{trend}  {contact_state}", (x0 + 14, y), 0.54, contact_color, 2)
+
+    if config.force_guidance_show_caveat_label:
+        y += 20
+        _put_text(
+            frame_bgr,
+            "Contact cue - sign unvalidated",
+            (x0 + 14, y),
+            0.42,
+            (190, 190, 190),
+            1,
+        )
+
+    return frame_bgr
+
+
 def make_force_feedback_hud(
     feedback: Dict[str, Any],
     config: ForceFeedbackConfig,
@@ -505,6 +782,17 @@ def _draw_bar(frame, x, y, width, height, value, max_value, color):
     fill = _scaled_bar_length(value, max_value, width)
     cv2.rectangle(frame, (x, y), (x + width, y + height), (70, 70, 70), 1)
     cv2.rectangle(frame, (x, y), (x + fill, y + height), color, -1)
+
+
+def _vector_endpoint(cx: int, cy: int, vec, max_value: float, max_px: int):
+    vec = np.asarray(vec, dtype=float).reshape(2)
+    norm = float(np.linalg.norm(vec))
+    if norm < 1e-9:
+        return int(cx), int(cy)
+
+    scale = min(norm / max(max_value, 1e-9), 1.0)
+    disp = vec / norm * scale * float(max_px)
+    return int(round(cx + disp[0])), int(round(cy - disp[1]))
 
 
 def _put_text(frame, text, org, scale, color, thickness):

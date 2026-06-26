@@ -43,6 +43,13 @@ from vptele.utils.force_feedback_overlay import (
     resize_with_aspect_padding,
     trend_label,
 )
+from vptele.utils.ft_wrench_utils import (
+    body_ids as ft_body_ids,
+    compensated_ft_wrench,
+    ft_sensor_pose_world,
+    gravity_wrench_sensor_frame,
+    raw_ft_wrench,
+)
 
 import rospy
 from arm_teleop.srv import SetRecording, SetRecordingResponse
@@ -213,6 +220,7 @@ class RobotControllerMuJoCoPegTool:
             alpha=self.force_feedback_config.smoothing_alpha
         )
         self.force_feedback_history = []
+        self.force_feedback_raw_fallback_warned = False
 
         self.force_feedback_ft_sensor_site_id = -1
         ft_force_sensor_id = mujoco.mj_name2id(
@@ -239,7 +247,30 @@ class RobotControllerMuJoCoPegTool:
             print("[ForceFeedbackHUD] enabled")
             print(f"  display_mode    = {self.force_feedback_config.display_mode}")
             print(f"  overlay_cameras = {self.force_feedback_config.overlay_cameras}")
-            print("  wrench_source   = raw")
+            print(f"  wrench_source   = {self.force_feedback_config.wrench_label}")
+
+        self.force_feedback_compensation_mode = self.config.get(
+            "force_feedback_ft_compensation_mode",
+            self.config.get("hdf5_ft_compensation_mode", "gravity"),
+        )
+        self.force_feedback_gravity_tool_body_names = self.config.get(
+            "force_feedback_gravity_tool_body_names",
+            self.config.get("hdf5_ft_gravity_tool_body_names", ["peg_tool"]),
+        )
+        self.force_feedback_gravity_tool_body_ids = ft_body_ids(
+            self.model,
+            self.force_feedback_gravity_tool_body_names,
+        )
+        self.force_feedback_gravity_world = self.config.get(
+            "force_feedback_gravity_world",
+            self.config.get("hdf5_ft_gravity_world", [0.0, 0.0, -9.81]),
+        )
+        self.force_feedback_gravity_sensor_sign = float(
+            self.config.get(
+                "force_feedback_gravity_sensor_sign",
+                self.config.get("hdf5_ft_gravity_sensor_sign", -1.0),
+            )
+        )
 
 
 
@@ -1621,10 +1652,14 @@ class RobotControllerMuJoCoPegTool:
 
     def _should_overlay_force_feedback(self, camera_name: str) -> bool:
         cfg = self.force_feedback_config
+        overlay_cameras = cfg.overlay_cameras
+        if cfg.enable_task_force_guidance_hud:
+            overlay_cameras = cfg.force_guidance_overlay_cameras
+
         return (
             cfg.enabled
             and cfg.display_mode == "overlay"
-            and camera_name in cfg.overlay_cameras
+            and camera_name in overlay_cameras
         )
 
     def _get_force_feedback_snapshot(self):
@@ -1632,12 +1667,13 @@ class RobotControllerMuJoCoPegTool:
         if not cfg.enabled or cfg.display_mode == "off":
             return None
 
-        wrench = self._get_peg_ft_sensor_locked()
-        if wrench is None or len(wrench) < 3:
+        wrench, source_label = self._get_force_feedback_wrench()
+        if wrench is None or len(wrench) < 6:
             return None
 
         force_sensor = np.asarray(wrench[:3], dtype=float)
-        if not np.all(np.isfinite(force_sensor)):
+        torque_sensor = np.asarray(wrench[3:6], dtype=float)
+        if not np.all(np.isfinite(force_sensor)) or not np.all(np.isfinite(torque_sensor)):
             return None
 
         force_sensor = self.force_feedback_smoother.update(force_sensor)
@@ -1648,10 +1684,45 @@ class RobotControllerMuJoCoPegTool:
         return compute_force_feedback(
             force_sensor=force_sensor,
             config=cfg,
-            source_label="raw",
+            source_label=source_label,
             R_ws=R_ws,
             trend=trend,
+            torque_sensor=torque_sensor,
         )
+
+    def _get_force_feedback_wrench(self):
+        raw = raw_ft_wrench(self.model, self.data)
+        if raw is None:
+            return None, "raw"
+
+        if not self.force_feedback_config.use_compensated_wrench:
+            return raw, "raw"
+
+        gravity = gravity_wrench_sensor_frame(
+            model=self.model,
+            data=self.data,
+            ft_site_id=self.force_feedback_ft_sensor_site_id,
+            tool_body_ids=self.force_feedback_gravity_tool_body_ids,
+            gravity_world=self.force_feedback_gravity_world,
+            sensor_sign=self.force_feedback_gravity_sensor_sign,
+        )
+        comp = compensated_ft_wrench(
+            raw_wrench=raw,
+            gravity_wrench=gravity,
+            compensation_mode=self.force_feedback_compensation_mode,
+        )
+
+        if comp is not None and np.all(np.isfinite(comp)):
+            return comp, "comp"
+
+        if not self.force_feedback_raw_fallback_warned:
+            print(
+                "[ForceFeedbackHUD] Warning: compensated wrench unavailable; "
+                "falling back to raw FT values for display."
+            )
+            self.force_feedback_raw_fallback_warned = True
+
+        return raw, "raw"
 
     def _update_force_feedback_trend(self, force_norm: float) -> str:
         cfg = self.force_feedback_config
@@ -1676,7 +1747,8 @@ class RobotControllerMuJoCoPegTool:
             return None
 
         try:
-            return self.data.site_xmat[site_id].copy().reshape(3, 3)
+            _, R_ws = ft_sensor_pose_world(self.data, site_id)
+            return R_ws
         except Exception:
             return None
 

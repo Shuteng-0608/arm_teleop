@@ -99,7 +99,8 @@ force_feedback_smoothing_alpha: 0.25
 force_feedback_window_name: "Force Feedback HUD"
 
 force_feedback_insertion_axis_world: [0.0, -1.0, 0.0]
-force_feedback_use_compensated_wrench: false
+force_feedback_use_compensated_wrench: true
+force_feedback_wrench_label: "comp"   # comp | raw
 
 force_feedback_trend_window_sec: 0.8
 force_feedback_trend_rising_threshold: 5.0
@@ -111,6 +112,33 @@ force_feedback_axial_high_threshold: 20.0
 force_feedback_lateral_high_threshold: 10.0
 force_feedback_jam_force_threshold: 25.0
 force_feedback_jam_lateral_threshold: 12.0
+
+enable_task_force_guidance_hud: true
+task_force_guidance_mode: "ring"   # ring | bars
+force_guidance_overlay_cameras:
+  - "cctv_cam"
+
+show_translation_ring: true
+show_torque_ring: true
+show_axial_core: true
+show_contact_state: true
+show_trend: true
+
+force_guidance_plane_right_world: [1.0, 0.0, 0.0]
+force_guidance_plane_up_world: [0.0, 0.0, 1.0]
+
+force_guidance_ring_radius_px: 70
+force_guidance_max_vector_px: 55
+force_guidance_max_force_n: 40.0
+force_guidance_max_torque_nm: 2.0
+force_guidance_draw_numeric_values: true
+force_guidance_show_caveat_label: true
+
+force_feedback_ft_compensation_mode: "gravity"
+force_feedback_gravity_tool_body_names:
+  - "peg_tool"
+force_feedback_gravity_world: [0.0, 0.0, -9.81]
+force_feedback_gravity_sensor_sign: -1.0
 
 # VisionPro配置
 vp_ip: "192.168.1.144" # DaiLab-Normal
