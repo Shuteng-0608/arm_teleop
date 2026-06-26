@@ -34,6 +34,13 @@ import shutil
 
 from utils.mujoco_data_recorder import MujocoDataRecorder
 from vptele.utils.mujoco_hdf5_recorder import MujocoHDF5Recorder
+from vptele.utils.force_feedback_overlay import (
+    ForceFeedbackConfig,
+    ForceFeedbackSmoother,
+    compute_force_feedback,
+    draw_force_feedback_overlay,
+    make_force_feedback_hud,
+)
 
 import rospy
 from arm_teleop.srv import SetRecording, SetRecordingResponse
@@ -140,7 +147,7 @@ class RobotControllerMuJoCoPegTool:
 
         self.monitor_camera_names = self.config.get(
             "monitor_camera_names",
-            ["ee_cam", "base_top_cam"]
+            ["cctv_cam", "ee_cam", "base_top_cam"]
         )
 
         self.camera_renderer = None
@@ -161,6 +168,44 @@ class RobotControllerMuJoCoPegTool:
             if len(self.monitor_camera_ids) == 0:
                 print("[Camera Monitor] No valid monitor cameras found, disable stream display.")
                 self.show_camera_streams = False
+
+
+
+        # ############################################################### #
+        # ---------------- Operator force feedback HUD ----------------- #
+        # ############################################################### #
+
+        self.force_feedback_config = ForceFeedbackConfig.from_dict(self.config)
+        self.force_feedback_smoother = ForceFeedbackSmoother(
+            alpha=self.force_feedback_config.smoothing_alpha
+        )
+
+        self.force_feedback_ft_sensor_site_id = -1
+        ft_force_sensor_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            "peg_ft_force",
+        )
+        ft_torque_sensor_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            "peg_ft_torque",
+        )
+
+        if ft_force_sensor_id != -1:
+            self.force_feedback_ft_sensor_site_id = int(
+                self.model.sensor_objid[ft_force_sensor_id]
+            )
+        elif ft_torque_sensor_id != -1:
+            self.force_feedback_ft_sensor_site_id = int(
+                self.model.sensor_objid[ft_torque_sensor_id]
+            )
+
+        if self.force_feedback_config.enabled:
+            print("[ForceFeedbackHUD] enabled")
+            print(f"  display_mode    = {self.force_feedback_config.display_mode}")
+            print(f"  overlay_cameras = {self.force_feedback_config.overlay_cameras}")
+            print("  wrench_source   = raw")
 
 
 
@@ -1379,8 +1424,7 @@ class RobotControllerMuJoCoPegTool:
 
     def update_camera_stream_windows(self):
         """
-        显示两个相机的视频流：
-        左边 ee_cam，右边 base_top_cam。
+        显示配置的 MuJoCo camera 视频流。
         """
         if not self.show_camera_streams:
             return
@@ -1391,6 +1435,7 @@ class RobotControllerMuJoCoPegTool:
 
         frames = []
         labels = []
+        feedback = self._get_force_feedback_snapshot()
 
         for cam_name in self.monitor_camera_names:
             rgb = self._render_camera_rgb(cam_name)
@@ -1399,6 +1444,14 @@ class RobotControllerMuJoCoPegTool:
 
             # MuJoCo 返回 RGB，OpenCV 显示用 BGR
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+            if self._should_overlay_force_feedback(cam_name) and feedback is not None:
+                draw_force_feedback_overlay(
+                    frame_bgr=bgr,
+                    feedback=feedback,
+                    config=self.force_feedback_config,
+                    camera_name=cam_name,
+                )
 
             # 在左上角打上相机名称
             cv2.putText(
@@ -1426,9 +1479,59 @@ class RobotControllerMuJoCoPegTool:
             panel = np.hstack(frames)
 
         cv2.imshow("Task Camera Streams", panel)
+        if (
+            self.force_feedback_config.enabled
+            and self.force_feedback_config.display_mode == "window"
+            and feedback is not None
+        ):
+            cv2.imshow(
+                self.force_feedback_config.window_name,
+                make_force_feedback_hud(feedback, self.force_feedback_config),
+            )
         cv2.waitKey(1)
 
         self.last_camera_stream_time = now
+
+    def _should_overlay_force_feedback(self, camera_name: str) -> bool:
+        cfg = self.force_feedback_config
+        return (
+            cfg.enabled
+            and cfg.display_mode == "overlay"
+            and camera_name in cfg.overlay_cameras
+        )
+
+    def _get_force_feedback_snapshot(self):
+        cfg = self.force_feedback_config
+        if not cfg.enabled or cfg.display_mode == "off":
+            return None
+
+        wrench = self._get_peg_ft_sensor_locked()
+        if wrench is None or len(wrench) < 3:
+            return None
+
+        force_sensor = np.asarray(wrench[:3], dtype=float)
+        if not np.all(np.isfinite(force_sensor)):
+            return None
+
+        force_sensor = self.force_feedback_smoother.update(force_sensor)
+        R_ws = self._get_force_feedback_sensor_rotation_world()
+
+        return compute_force_feedback(
+            force_sensor=force_sensor,
+            config=cfg,
+            source_label="raw",
+            R_ws=R_ws,
+        )
+
+    def _get_force_feedback_sensor_rotation_world(self):
+        site_id = getattr(self, "force_feedback_ft_sensor_site_id", -1)
+        if site_id == -1:
+            return None
+
+        try:
+            return self.data.site_xmat[site_id].copy().reshape(3, 3)
+        except Exception:
+            return None
 
     
 

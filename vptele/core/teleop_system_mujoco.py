@@ -218,7 +218,69 @@ class TeleopSystemMujoco:
             "camera_stream_height": 480,
             "camera_stream_fps": 15.0,
 
-            "monitor_camera_names": ["ee_cam", "base_top_cam"],
+            "monitor_camera_names": self.config.get(
+                "monitor_camera_names",
+                ["cctv_cam", "ee_cam", "base_top_cam"],
+            ),
+
+            # Operator-only force feedback HUD. This is drawn only on live
+            # OpenCV display frames, not on HDF5 recording frames.
+            "enable_force_visual_feedback": self.config.get(
+                "enable_force_visual_feedback",
+                False,
+            ),
+            "force_feedback_display_mode": self.config.get(
+                "force_feedback_display_mode",
+                "overlay",
+            ),
+            "force_feedback_overlay_cameras": self.config.get(
+                "force_feedback_overlay_cameras",
+                ["cctv_cam"],
+            ),
+            "force_feedback_low_threshold": self.config.get(
+                "force_feedback_low_threshold",
+                10.0,
+            ),
+            "force_feedback_medium_threshold": self.config.get(
+                "force_feedback_medium_threshold",
+                40.0,
+            ),
+            "force_feedback_high_threshold": self.config.get(
+                "force_feedback_high_threshold",
+                80.0,
+            ),
+            "force_feedback_excessive_threshold": self.config.get(
+                "force_feedback_excessive_threshold",
+                100.0,
+            ),
+            "force_feedback_show_numbers": self.config.get(
+                "force_feedback_show_numbers",
+                True,
+            ),
+            "force_feedback_show_axial_lateral": self.config.get(
+                "force_feedback_show_axial_lateral",
+                True,
+            ),
+            "force_feedback_show_arrow": self.config.get(
+                "force_feedback_show_arrow",
+                False,
+            ),
+            "force_feedback_smoothing_alpha": self.config.get(
+                "force_feedback_smoothing_alpha",
+                0.25,
+            ),
+            "force_feedback_window_name": self.config.get(
+                "force_feedback_window_name",
+                "Force Feedback HUD",
+            ),
+            "force_feedback_insertion_axis_world": self.config.get(
+                "force_feedback_insertion_axis_world",
+                [0.0, -1.0, 0.0],
+            ),
+            "force_feedback_use_compensated_wrench": self.config.get(
+                "force_feedback_use_compensated_wrench",
+                False,
+            ),
 
             # HDF5 recording
             "record_hdf5": self.config.get("record_hdf5", True),
@@ -439,4 +501,3 @@ class TeleopSystemMujoco:
         if self.robot_controller:
             self.robot_controller.disconnect()
     
-
