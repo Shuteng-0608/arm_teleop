@@ -421,6 +421,22 @@ class TeleopSystemMujoco:
                 "force_guidance_show_caveat_label",
                 True,
             ),
+            "force_guidance_hud_anchor": self.config.get(
+                "force_guidance_hud_anchor",
+                "top_right",
+            ),
+            "force_guidance_hud_margin_px": self.config.get(
+                "force_guidance_hud_margin_px",
+                [40, 40],
+            ),
+            "force_guidance_hud_offset_px": self.config.get(
+                "force_guidance_hud_offset_px",
+                [0, 0],
+            ),
+            "force_guidance_hud_center_norm": self.config.get(
+                "force_guidance_hud_center_norm",
+                [0.78, 0.28],
+            ),
             "force_feedback_ft_compensation_mode": self.config.get(
                 "force_feedback_ft_compensation_mode",
                 self.config.get("hdf5_ft_compensation_mode", "gravity"),

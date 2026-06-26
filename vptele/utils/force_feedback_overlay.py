@@ -48,6 +48,10 @@ class ForceFeedbackConfig:
         force_guidance_max_torque_nm: float = 2.0,
         force_guidance_draw_numeric_values: bool = True,
         force_guidance_show_caveat_label: bool = True,
+        force_guidance_hud_anchor: str = "top_right",
+        force_guidance_hud_margin_px=None,
+        force_guidance_hud_offset_px=None,
+        force_guidance_hud_center_norm=None,
         wrench_label: str = "comp",
     ):
         self.enabled = bool(enabled)
@@ -107,6 +111,28 @@ class ForceFeedbackConfig:
         self.force_guidance_max_torque_nm = max(1e-9, float(force_guidance_max_torque_nm))
         self.force_guidance_draw_numeric_values = bool(force_guidance_draw_numeric_values)
         self.force_guidance_show_caveat_label = bool(force_guidance_show_caveat_label)
+        self.force_guidance_hud_anchor = str(force_guidance_hud_anchor)
+        if self.force_guidance_hud_anchor not in {
+            "top_left",
+            "top_right",
+            "bottom_left",
+            "bottom_right",
+            "center",
+            "custom",
+        }:
+            self.force_guidance_hud_anchor = "top_right"
+        self.force_guidance_hud_margin_px = _pair(
+            force_guidance_hud_margin_px,
+            [40, 40],
+        )
+        self.force_guidance_hud_offset_px = _pair(
+            force_guidance_hud_offset_px,
+            [0, 0],
+        )
+        self.force_guidance_hud_center_norm = _pair(
+            force_guidance_hud_center_norm,
+            [0.78, 0.28],
+        )
         self.wrench_label = str(wrench_label)
 
         if self.display_mode not in {"overlay", "window", "off"}:
@@ -233,6 +259,22 @@ class ForceFeedbackConfig:
             force_guidance_show_caveat_label=config.get(
                 "force_guidance_show_caveat_label",
                 True,
+            ),
+            force_guidance_hud_anchor=config.get(
+                "force_guidance_hud_anchor",
+                "top_right",
+            ),
+            force_guidance_hud_margin_px=config.get(
+                "force_guidance_hud_margin_px",
+                [40, 40],
+            ),
+            force_guidance_hud_offset_px=config.get(
+                "force_guidance_hud_offset_px",
+                [0, 0],
+            ),
+            force_guidance_hud_center_norm=config.get(
+                "force_guidance_hud_center_norm",
+                [0.78, 0.28],
             ),
             wrench_label=config.get("force_feedback_wrench_label", "comp"),
         )
@@ -519,16 +561,9 @@ def draw_force_guidance_ring_overlay(
 ) -> np.ndarray:
     h, w = frame_bgr.shape[:2]
     radius = int(config.force_guidance_ring_radius_px)
-    margin = 24
-    cx = w - radius - margin
-    cy = radius + 74
-    if cx < radius + margin:
-        cx = radius + margin
-    if cy + radius + 92 > h:
-        cy = max(radius + margin, h - radius - 92)
-
     panel_w = 2 * radius + 62
     panel_h = 2 * radius + 126
+    cx, cy = compute_guidance_hud_center(w, h, config, panel_w, panel_h)
     x0 = max(10, cx - radius - 28)
     y0 = max(10, cy - radius - 48)
 
@@ -653,6 +688,50 @@ def draw_force_guidance_ring_overlay(
     return frame_bgr
 
 
+def compute_guidance_hud_center(
+    canvas_width: int,
+    canvas_height: int,
+    config: ForceFeedbackConfig,
+    panel_width: Optional[int] = None,
+    panel_height: Optional[int] = None,
+):
+    radius = int(config.force_guidance_ring_radius_px)
+    panel_width = int(panel_width if panel_width is not None else 2 * radius + 62)
+    panel_height = int(panel_height if panel_height is not None else 2 * radius + 126)
+
+    margin_x, margin_y = config.force_guidance_hud_margin_px
+    offset_x, offset_y = config.force_guidance_hud_offset_px
+
+    half_w = panel_width / 2.0
+    # The ring center is above the panel center because text lives below it.
+    top_to_center_y = radius + 48
+    min_cx = half_w
+    max_cx = max(min_cx, canvas_width - half_w)
+    min_cy = top_to_center_y
+    max_cy = max(min_cy, canvas_height - (panel_height - top_to_center_y))
+
+    anchor = config.force_guidance_hud_anchor
+    if anchor == "custom":
+        norm_x, norm_y = config.force_guidance_hud_center_norm
+        cx = float(canvas_width) * norm_x
+        cy = float(canvas_height) * norm_y
+    elif anchor == "center":
+        cx = float(canvas_width) * 0.5
+        cy = float(canvas_height) * 0.5
+    else:
+        left = anchor.endswith("left")
+        top = anchor.startswith("top")
+        cx = margin_x + half_w if left else canvas_width - margin_x - half_w
+        cy = margin_y + top_to_center_y if top else canvas_height - margin_y - (panel_height - top_to_center_y)
+
+    cx += offset_x
+    cy += offset_y
+
+    cx = int(round(np.clip(cx, min_cx, max_cx)))
+    cy = int(round(np.clip(cy, min_cy, max_cy)))
+    return cx, cy
+
+
 def make_force_feedback_hud(
     feedback: Dict[str, Any],
     config: ForceFeedbackConfig,
@@ -759,6 +838,19 @@ def _string_list(value, default):
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value]
+
+
+def _pair(value, default):
+    if value is None:
+        return [float(default[0]), float(default[1])]
+    if isinstance(value, (int, float)):
+        scalar = float(value)
+        return [scalar, scalar]
+
+    arr = list(value)
+    if len(arr) < 2:
+        return [float(default[0]), float(default[1])]
+    return [float(arr[0]), float(arr[1])]
 
 
 def _padding_color_bgr(value) -> np.ndarray:
