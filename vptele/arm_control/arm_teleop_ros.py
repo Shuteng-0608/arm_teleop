@@ -51,7 +51,7 @@ class ArmTeleopROS:
         
         
         # ================== Single Arm MoveJ SERVICE ==================
-        rospy.wait_for_service('/aris_node/movej_srv')
+        # rospy.wait_for_service('/aris_node/movej_srv')
         self.pq_movej_service = rospy.ServiceProxy('/aris_node/movej_srv', MovejService)
 
 
@@ -62,7 +62,7 @@ class ArmTeleopROS:
 
 
         # ================== [RIGHT ARM INIT] ==================
-        rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
+        # rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
         self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
         self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
         self.init_right_rotation = R.from_euler("XYZ", 
@@ -78,7 +78,7 @@ class ArmTeleopROS:
         pq_request.vel = 0.5
         pq_request.acc = 5.0
         pq_request.jerk = 10.0
-        pq_response = self.pq_movej_service.call(pq_request)
+        # pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
         self.current_arm_angle_right = 0
@@ -89,7 +89,7 @@ class ArmTeleopROS:
 
 
         # ================== [LEFT ARM INIT] ===================
-        rospy.wait_for_service('/arm_teleop/left_arm_ik_srv')
+        # rospy.wait_for_service('/arm_teleop/left_arm_ik_srv')
         self.left_ik_service = rospy.ServiceProxy('/arm_teleop/left_arm_ik_srv', ArmIK)
         self.initial_left_robot_pose = [0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
         self.init_left_rotation = R.from_euler("XYZ", 
@@ -105,7 +105,7 @@ class ArmTeleopROS:
         pq_request.vel = 0.5
         pq_request.acc = 5.0
         pq_request.jerk = 10.0
-        pq_response = self.pq_movej_service.call(pq_request)
+        # pq_response = self.pq_movej_service.call(pq_request)
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
@@ -116,15 +116,15 @@ class ArmTeleopROS:
 
 
         # ============== Start Dual TeleOP Service ==============
-        rospy.wait_for_service('/aris_node/start_teleop_srv')
+        # rospy.wait_for_service('/aris_node/start_teleop_srv')
         self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
         tele_req = StartDualTeleOPRequest()
         tele_req.running_flag = True
-        tele_response = self.start_teleop_service.call(tele_req)
-        if tele_response.success:
-            logger.info("已通知底层控制节点启动双臂遥操作模式")
-        else:
-            logger.error("通知底层控制节点启动双臂遥操作模式失败")
+        # tele_response = self.start_teleop_service.call(tele_req)
+        # if tele_response.success:
+        #     logger.info("已通知底层控制节点启动双臂遥操作模式")
+        # else:
+        #     logger.error("通知底层控制节点启动双臂遥操作模式失败")
         
         
 
@@ -900,7 +900,7 @@ class ArmTeleopROS:
                 
                 
                 # 发布数据
-                self.dual_arm_publisher.publish(dual_arm_msg)
+                # self.dual_arm_publisher.publish(dual_arm_msg)
                 
                     
             except Exception as e:

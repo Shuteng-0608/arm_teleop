@@ -272,6 +272,7 @@ catkin_install_python(PROGRAMS
   # scripts/main_ros.py
   scripts/test_ik.py
   scripts/avp_test.py
+  scripts/mh6_modbus_ros.py
   vptele/main_ros.py
   vptele/main_mujoco.py
   scripts/movej_agent.py

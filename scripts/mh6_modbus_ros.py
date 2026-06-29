@@ -10,7 +10,15 @@ from typing import Iterable, List, Optional, Tuple
 import rospy
 
 from arm_teleop.msg import MH6NormalizedCommand
-from mh6_modbus_dev import DexHandControl
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+
+if _PACKAGE_ROOT not in sys.path:
+    sys.path.insert(0, _PACKAGE_ROOT)
+from vptele.mh6_hardware.mh6_modbus_dev import DexHandControl
 
 
 class MH6ModbusROS:

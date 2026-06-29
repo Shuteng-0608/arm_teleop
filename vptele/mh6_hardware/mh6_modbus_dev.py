@@ -4,7 +4,12 @@ import time
 import threading
 
 try:
-    from pymodbus import FramerType
+    try:
+        from pymodbus import FramerType
+        RTU_FRAMER = FramerType.RTU
+    except ImportError:
+        from pymodbus.framer import Framer
+        RTU_FRAMER = "rtu"
     from pymodbus.client import ModbusSerialClient as ModbusClient
 except ImportError as exc:
     FramerType = None
@@ -76,7 +81,7 @@ class DexHandControl:
 
         self.client = ModbusClient(
             port=port,
-            framer=FramerType.RTU,
+            framer=RTU_FRAMER,
             baudrate=baudrate,
             bytesize=bytesize,
             parity=parity,

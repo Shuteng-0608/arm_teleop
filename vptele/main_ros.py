@@ -93,7 +93,7 @@ class TeleopROSNode:
         rospy.init_node('teleop_system', anonymous=True)
         
         # 从ROS参数服务器获取参数
-        self.config_path = rospy.get_param('~config_path', 'config/config_arm_right.yaml')
+        self.config_path = rospy.get_param('~config_path', 'config/config_mh6_topic_bridge.yaml')
         self.vp_ip = rospy.get_param('~vp_ip', None)
         self.robot_ip = rospy.get_param('~robot_ip', None)
         self.end_effector = rospy.get_param('~end_effector', None)
