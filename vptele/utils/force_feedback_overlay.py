@@ -52,6 +52,12 @@ class ForceFeedbackConfig:
         force_guidance_hud_margin_px=None,
         force_guidance_hud_offset_px=None,
         force_guidance_hud_center_norm=None,
+        force_guidance_basis_mode: str = "camera_screen",
+        force_guidance_basis_camera: str = "cctv_cam",
+        force_guidance_screen_right_sign: float = 1.0,
+        force_guidance_screen_up_sign: float = 1.0,
+        force_guidance_vector_semantics: str = "contact",
+        force_guidance_correction_sign: float = -1.0,
         wrench_label: str = "comp",
     ):
         self.enabled = bool(enabled)
@@ -133,6 +139,21 @@ class ForceFeedbackConfig:
             force_guidance_hud_center_norm,
             [0.78, 0.28],
         )
+        self.force_guidance_basis_mode = str(force_guidance_basis_mode)
+        if self.force_guidance_basis_mode not in {
+            "camera_screen",
+            "task_world",
+            "manual_world",
+            "sensor_debug",
+        }:
+            self.force_guidance_basis_mode = "camera_screen"
+        self.force_guidance_basis_camera = str(force_guidance_basis_camera)
+        self.force_guidance_screen_right_sign = float(force_guidance_screen_right_sign)
+        self.force_guidance_screen_up_sign = float(force_guidance_screen_up_sign)
+        self.force_guidance_vector_semantics = str(force_guidance_vector_semantics)
+        if self.force_guidance_vector_semantics not in {"contact", "correction"}:
+            self.force_guidance_vector_semantics = "contact"
+        self.force_guidance_correction_sign = float(force_guidance_correction_sign)
         self.wrench_label = str(wrench_label)
 
         if self.display_mode not in {"overlay", "window", "off"}:
@@ -276,6 +297,30 @@ class ForceFeedbackConfig:
                 "force_guidance_hud_center_norm",
                 [0.78, 0.28],
             ),
+            force_guidance_basis_mode=config.get(
+                "force_guidance_basis_mode",
+                "camera_screen",
+            ),
+            force_guidance_basis_camera=config.get(
+                "force_guidance_basis_camera",
+                "cctv_cam",
+            ),
+            force_guidance_screen_right_sign=config.get(
+                "force_guidance_screen_right_sign",
+                1.0,
+            ),
+            force_guidance_screen_up_sign=config.get(
+                "force_guidance_screen_up_sign",
+                1.0,
+            ),
+            force_guidance_vector_semantics=config.get(
+                "force_guidance_vector_semantics",
+                "contact",
+            ),
+            force_guidance_correction_sign=config.get(
+                "force_guidance_correction_sign",
+                -1.0,
+            ),
             wrench_label=config.get("force_feedback_wrench_label", "comp"),
         )
 
@@ -306,6 +351,9 @@ def compute_force_feedback(
     R_ws: Optional[np.ndarray] = None,
     trend: str = "STABLE",
     torque_sensor: Optional[np.ndarray] = None,
+    guidance_right_world: Optional[np.ndarray] = None,
+    guidance_up_world: Optional[np.ndarray] = None,
+    guidance_basis_label: Optional[str] = None,
 ) -> Dict[str, Any]:
     force_sensor = np.asarray(force_sensor, dtype=float).reshape(3)
     force_norm = float(np.linalg.norm(force_sensor))
@@ -324,7 +372,27 @@ def compute_force_feedback(
         "torque_world": None,
         "lateral_uv": None,
         "torque_uv": None,
+        "basis_label": guidance_basis_label or config.force_guidance_basis_mode,
+        "vector_semantics": config.force_guidance_vector_semantics,
     }
+
+    if config.force_guidance_basis_mode == "sensor_debug":
+        feedback["axial"] = float(force_sensor[2])
+        feedback["lateral"] = float(np.linalg.norm(force_sensor[:2]))
+        feedback["lateral_uv"] = _apply_vector_semantics(
+            np.asarray(force_sensor[:2], dtype=float),
+            config,
+        )
+        if torque_sensor is not None:
+            torque_sensor = np.asarray(torque_sensor, dtype=float).reshape(3)
+            feedback["torque_sensor"] = torque_sensor
+            feedback["torque_uv"] = _apply_vector_semantics(
+                np.asarray(torque_sensor[:2], dtype=float),
+                config,
+            )
+        feedback["basis_label"] = "sensor_debug"
+        feedback["contact_state"] = contact_state_label(feedback, config)
+        return feedback
 
     if R_ws is not None:
         R_ws = np.asarray(R_ws, dtype=float).reshape(3, 3)
@@ -335,12 +403,26 @@ def compute_force_feedback(
         lateral_vec = force_world - axial * axis
         feedback["axial"] = axial
         feedback["lateral"] = float(np.linalg.norm(lateral_vec))
+        right_world = (
+            np.asarray(guidance_right_world, dtype=float).reshape(3)
+            if guidance_right_world is not None
+            else config.force_guidance_plane_right_world
+        )
+        up_world = (
+            np.asarray(guidance_up_world, dtype=float).reshape(3)
+            if guidance_up_world is not None
+            else config.force_guidance_plane_up_world
+        )
         feedback["lateral_uv"] = np.array(
             [
-                float(np.dot(lateral_vec, config.force_guidance_plane_right_world)),
-                float(np.dot(lateral_vec, config.force_guidance_plane_up_world)),
+                float(np.dot(lateral_vec, right_world)),
+                float(np.dot(lateral_vec, up_world)),
             ],
             dtype=float,
+        )
+        feedback["lateral_uv"] = _apply_vector_semantics(
+            feedback["lateral_uv"],
+            config,
         )
 
         if torque_sensor is not None:
@@ -350,10 +432,14 @@ def compute_force_feedback(
             feedback["torque_world"] = torque_world
             feedback["torque_uv"] = np.array(
                 [
-                    float(np.dot(torque_world, config.force_guidance_plane_right_world)),
-                    float(np.dot(torque_world, config.force_guidance_plane_up_world)),
+                    float(np.dot(torque_world, right_world)),
+                    float(np.dot(torque_world, up_world)),
                 ],
                 dtype=float,
+            )
+            feedback["torque_uv"] = _apply_vector_semantics(
+                feedback["torque_uv"],
+                config,
             )
 
     feedback["contact_state"] = contact_state_label(feedback, config)
@@ -676,9 +762,11 @@ def draw_force_guidance_ring_overlay(
 
     if config.force_guidance_show_caveat_label:
         y += 20
+        basis_label = feedback.get("basis_label", config.force_guidance_basis_mode)
+        semantics = feedback.get("vector_semantics", config.force_guidance_vector_semantics)
         _put_text(
             frame_bgr,
-            "Contact cue - sign unvalidated",
+            f"{semantics} cue | basis: {basis_label}",
             (x0 + 14, y),
             0.42,
             (190, 190, 190),
@@ -874,6 +962,13 @@ def _draw_bar(frame, x, y, width, height, value, max_value, color):
     fill = _scaled_bar_length(value, max_value, width)
     cv2.rectangle(frame, (x, y), (x + width, y + height), (70, 70, 70), 1)
     cv2.rectangle(frame, (x, y), (x + fill, y + height), color, -1)
+
+
+def _apply_vector_semantics(vec, config: ForceFeedbackConfig):
+    vec = np.asarray(vec, dtype=float).reshape(2)
+    if config.force_guidance_vector_semantics == "correction":
+        return vec * config.force_guidance_correction_sign
+    return vec
 
 
 def _vector_endpoint(cx: int, cy: int, vec, max_value: float, max_px: int):

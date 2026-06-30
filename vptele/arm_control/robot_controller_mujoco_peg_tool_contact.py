@@ -221,6 +221,7 @@ class RobotControllerMuJoCoPegTool:
         )
         self.force_feedback_history = []
         self.force_feedback_raw_fallback_warned = False
+        self.force_guidance_basis_fallback_warned = False
 
         self.force_feedback_ft_sensor_site_id = -1
         ft_force_sensor_id = mujoco.mj_name2id(
@@ -1680,6 +1681,7 @@ class RobotControllerMuJoCoPegTool:
         force_norm = float(np.linalg.norm(force_sensor))
         trend = self._update_force_feedback_trend(force_norm)
         R_ws = self._get_force_feedback_sensor_rotation_world()
+        basis_right, basis_up, basis_label = self._get_force_guidance_basis_world()
 
         return compute_force_feedback(
             force_sensor=force_sensor,
@@ -1688,6 +1690,9 @@ class RobotControllerMuJoCoPegTool:
             R_ws=R_ws,
             trend=trend,
             torque_sensor=torque_sensor,
+            guidance_right_world=basis_right,
+            guidance_up_world=basis_up,
+            guidance_basis_label=basis_label,
         )
 
     def _get_force_feedback_wrench(self):
@@ -1751,6 +1756,100 @@ class RobotControllerMuJoCoPegTool:
             return R_ws
         except Exception:
             return None
+
+    def _get_force_guidance_basis_world(self):
+        cfg = self.force_feedback_config
+
+        if cfg.force_guidance_basis_mode == "sensor_debug":
+            return None, None, "sensor_debug"
+
+        if cfg.force_guidance_basis_mode == "camera_screen":
+            basis = self._get_camera_screen_force_guidance_basis()
+            if basis is not None:
+                right, up = basis
+                return right, up, "camera_screen"
+
+            if not self.force_guidance_basis_fallback_warned:
+                print(
+                    "[ForceFeedbackHUD] Warning: camera_screen guidance basis "
+                    "unavailable; falling back to manual_world."
+                )
+                self.force_guidance_basis_fallback_warned = True
+
+            right, up = self._manual_force_guidance_basis()
+            return right, up, "manual_world fallback"
+
+        right, up = self._manual_force_guidance_basis()
+        return right, up, cfg.force_guidance_basis_mode
+
+    def _get_camera_screen_force_guidance_basis(self):
+        cfg = self.force_feedback_config
+        cam_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_CAMERA,
+            cfg.force_guidance_basis_camera,
+        )
+        if cam_id == -1:
+            return None
+
+        try:
+            R_wc = self.data.cam_xmat[cam_id].copy().reshape(3, 3)
+        except Exception:
+            return None
+
+        # MuJoCo camera xyaxes define local +X as image-right and +Y as image-up.
+        right_world = R_wc[:, 0] * cfg.force_guidance_screen_right_sign
+        up_world = R_wc[:, 1] * cfg.force_guidance_screen_up_sign
+
+        return self._orthonormalize_guidance_basis(right_world, up_world)
+
+    def _manual_force_guidance_basis(self):
+        cfg = self.force_feedback_config
+        return self._orthonormalize_guidance_basis(
+            cfg.force_guidance_plane_right_world,
+            cfg.force_guidance_plane_up_world,
+        )
+
+    def _orthonormalize_guidance_basis(self, right_world, up_world):
+        axis = np.asarray(
+            self.force_feedback_config.insertion_axis_world,
+            dtype=float,
+        ).reshape(3)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm < 1e-9:
+            return None
+        axis = axis / axis_norm
+
+        right = self._project_vector_to_task_plane(right_world, axis)
+        if right is None:
+            return None
+
+        up = self._project_vector_to_task_plane(up_world, axis)
+        if up is None or abs(float(np.dot(right, up))) > 0.95:
+            up = np.cross(axis, right)
+            up_norm = np.linalg.norm(up)
+            if up_norm < 1e-9:
+                return None
+            up = up / up_norm
+        else:
+            up = up - float(np.dot(up, right)) * right
+            up_norm = np.linalg.norm(up)
+            if up_norm < 1e-9:
+                return None
+            up = up / up_norm
+
+        return right, up
+
+    @staticmethod
+    def _project_vector_to_task_plane(vec, axis):
+        vec = np.asarray(vec, dtype=float).reshape(3)
+        if not np.all(np.isfinite(vec)):
+            return None
+        projected = vec - float(np.dot(vec, axis)) * axis
+        norm = np.linalg.norm(projected)
+        if norm < 1e-9:
+            return None
+        return projected / norm
 
     
 

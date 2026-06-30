@@ -437,6 +437,30 @@ class TeleopSystemMujoco:
                 "force_guidance_hud_center_norm",
                 [0.78, 0.28],
             ),
+            "force_guidance_basis_mode": self.config.get(
+                "force_guidance_basis_mode",
+                "camera_screen",
+            ),
+            "force_guidance_basis_camera": self.config.get(
+                "force_guidance_basis_camera",
+                "cctv_cam",
+            ),
+            "force_guidance_screen_right_sign": self.config.get(
+                "force_guidance_screen_right_sign",
+                1.0,
+            ),
+            "force_guidance_screen_up_sign": self.config.get(
+                "force_guidance_screen_up_sign",
+                1.0,
+            ),
+            "force_guidance_vector_semantics": self.config.get(
+                "force_guidance_vector_semantics",
+                "contact",
+            ),
+            "force_guidance_correction_sign": self.config.get(
+                "force_guidance_correction_sign",
+                -1.0,
+            ),
             "force_feedback_ft_compensation_mode": self.config.get(
                 "force_feedback_ft_compensation_mode",
                 self.config.get("hdf5_ft_compensation_mode", "gravity"),

@@ -137,6 +137,12 @@ force_guidance_hud_anchor: "top_right"   # top_left | top_right | bottom_left | 
 force_guidance_hud_margin_px: [40, 40]
 force_guidance_hud_offset_px: [0, 0]
 force_guidance_hud_center_norm: [0.78, 0.28]
+force_guidance_basis_mode: "camera_screen"   # camera_screen | task_world | manual_world | sensor_debug
+force_guidance_basis_camera: "cctv_cam"
+force_guidance_screen_right_sign: 1.0
+force_guidance_screen_up_sign: 1.0
+force_guidance_vector_semantics: "contact"   # contact | correction
+force_guidance_correction_sign: -1.0
 
 force_feedback_ft_compensation_mode: "gravity"
 force_feedback_gravity_tool_body_names:
