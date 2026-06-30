@@ -21,6 +21,8 @@ import csv
 from datetime import datetime
 from std_srvs.srv import SetBool, SetBoolResponse
 
+from arm_angle.srv import PredictArmAngle, PredictArmAngleRequest
+
 logger = get_logger()
 
 class ArmTeleopROS:
@@ -40,6 +42,11 @@ class ArmTeleopROS:
 
         if not rospy.core.is_initialized():
             rospy.init_node('arm_teleop', anonymous=True)
+
+
+
+        # Arm Angle Prediction Service
+        self.arm_angle_subscriber = rospy.ServiceProxy('/predict_arm_angle', PredictArmAngle)
         
         # ================= DUAL ARM DATA PUBLISHER ==================
         self.dual_arm_publisher = rospy.Publisher('/arm_teleop/dual_arm_movej', DualArmMovej, queue_size=100)
@@ -56,8 +63,8 @@ class ArmTeleopROS:
 
 
 
-        self.current_arm_angle_right = 0.0
-        self.arm_angle_subscriber = rospy.Subscriber('/arm_angle/info', ArmAngle, self.arm_angle_callback, queue_size=10)
+        # self.current_arm_angle_right = 0.0
+        # self.arm_angle_subscriber = rospy.Subscriber('/arm_angle/info', ArmAngle, self.arm_angle_callback, queue_size=10)
         
 
 
@@ -65,10 +72,18 @@ class ArmTeleopROS:
         # rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
         self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
         self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
+        
+        # self.initial_right_robot_pose_aa = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
+        self.initial_right_robot_pose_aa = [0.26164, -0.35714, 0.06982, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
         self.init_right_rotation = R.from_euler("XYZ", 
                                         [self.initial_right_robot_pose[3], 
                                          self.initial_right_robot_pose[4], 
                                          self.initial_right_robot_pose[5]], 
+                                        degrees=False)
+        self.init_right_rotation_aa = R.from_euler("XYZ", 
+                                        [self.initial_right_robot_pose_aa[3], 
+                                         self.initial_right_robot_pose_aa[4], 
+                                         self.initial_right_robot_pose_aa[5]], 
                                         degrees=False)
         self.last_right_joint_angles = [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005]
         self.last_right_joint_angles = [round(angle, 4) for angle in self.last_right_joint_angles]
@@ -78,7 +93,7 @@ class ArmTeleopROS:
         pq_request.vel = 0.5
         pq_request.acc = 5.0
         pq_request.jerk = 10.0
-        # pq_response = self.pq_movej_service.call(pq_request)
+        pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
         self.current_arm_angle_right = 0
@@ -92,10 +107,17 @@ class ArmTeleopROS:
         # rospy.wait_for_service('/arm_teleop/left_arm_ik_srv')
         self.left_ik_service = rospy.ServiceProxy('/arm_teleop/left_arm_ik_srv', ArmIK)
         self.initial_left_robot_pose = [0.301, -0.358, -0.333, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
+        self.initial_left_robot_pose_aa = [0.26164, -0.35714, -0.06994, 3.0905722, 0.0360597, -0.0010818]  # XYZ + 欧拉角 (弧度)
+
         self.init_left_rotation = R.from_euler("XYZ", 
                                         [self.initial_left_robot_pose[3], 
                                          self.initial_left_robot_pose[4], 
                                          self.initial_left_robot_pose[5]], 
+                                        degrees=False)
+        self.init_left_rotation_aa = R.from_euler("XYZ", 
+                                        [self.initial_left_robot_pose_aa[3], 
+                                         self.initial_left_robot_pose_aa[4], 
+                                         self.initial_left_robot_pose_aa[5]], 
                                         degrees=False)
         # self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
         self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
@@ -105,7 +127,7 @@ class ArmTeleopROS:
         pq_request.vel = 0.5
         pq_request.acc = 5.0
         pq_request.jerk = 10.0
-        # pq_response = self.pq_movej_service.call(pq_request)
+        pq_response = self.pq_movej_service.call(pq_request)
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
@@ -120,11 +142,11 @@ class ArmTeleopROS:
         self.start_teleop_service = rospy.ServiceProxy('/aris_node/start_teleop_srv', StartDualTeleOP)
         tele_req = StartDualTeleOPRequest()
         tele_req.running_flag = True
-        # tele_response = self.start_teleop_service.call(tele_req)
-        # if tele_response.success:
-        #     logger.info("已通知底层控制节点启动双臂遥操作模式")
-        # else:
-        #     logger.error("通知底层控制节点启动双臂遥操作模式失败")
+        tele_response = self.start_teleop_service.call(tele_req)
+        if tele_response.success:
+            logger.info("已通知底层控制节点启动双臂遥操作模式")
+        else:
+            logger.error("通知底层控制节点启动双臂遥操作模式失败")
         
         
 
@@ -202,8 +224,8 @@ class ArmTeleopROS:
 
         # self.head_thread = None
         logger.info("启动 头部数据获取线程...")
-        self.head_thread = Thread(target=self.head_loop, daemon=True) 
-        self.head_thread.start()
+        # self.head_thread = Thread(target=self.head_loop, daemon=True) 
+        # self.head_thread.start()
 
         # For data logging
         self.vp_time = 0.0
@@ -429,7 +451,7 @@ class ArmTeleopROS:
         # 使用 'xyz' (extrinsic) 顺序，这样 Z 轴旋转是相对于固定坐标系的
         r = R.from_matrix(relative_rotation)
         euler = r.as_euler('xyz', degrees=False)
-        rospy.loginfo(f"头部相对旋转欧拉角: {[round(angle, 4) for angle in euler]}")
+        # rospy.loginfo(f"头部相对旋转欧拉角: {[round(angle, 4) for angle in euler]}")
         
         return euler[2]
     
@@ -547,14 +569,82 @@ class ArmTeleopROS:
         target_position[3] = new_rx
         target_position[4] = new_ry
         target_position[5] = new_rz
+
+        
+        # 转换成 numpy 数组
+        target_position = np.array(target_position)
+        return target_position
+    
+    def map_hand_to_robot_aa(self, hand_transform, hand_side="right"):
+        """
+        将手部位置和旋转映射到机械臂位置和姿态
+        
+        参数:
+            hand_transform: 4x4 变换矩阵，包含位置和旋转信息
+        """
+        # 提取手部位置
+        hand_position = hand_transform[:3, 3]
+        
+        # 计算手部位置相对于初始位置的偏移
+        if hand_side == 'right':
+            hand_offset = hand_position - self.initial_hand_position_right
+        elif hand_side == 'left':
+            hand_offset = hand_position - self.initial_hand_position_left
+            rospy.loginfo(f"左手手腕偏移: {[round(x, 4) for x in hand_offset]}")
+        
+        # 将偏移应用到机械臂初始位置
+        if hand_side == 'right':
+            raw_target_position = self.initial_right_robot_pose_aa.copy()
+        elif hand_side == 'left':
+            raw_target_position = self.initial_left_robot_pose_aa.copy()
+
+        raw_target_position[0] += hand_offset[1]
+        raw_target_position[1] += hand_offset[2]
+        raw_target_position[2] += hand_offset[0]
+
+
+        
+        
+        
+        # 从变换矩阵中提取旋转信息，转为欧拉角
+        rotation_matrix = hand_transform[:3, :3]
+        
+        # 计算相对于初始手部姿态的旋转变化
+        # 相对旋转 = 当前旋转 × 初始旋转的逆
+        if hand_side == 'right':
+            relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_right)
+        elif hand_side == 'left':
+            relative_rotation = rotation_matrix @ np.linalg.inv(self.initial_hand_rotation_left)
+        # rospy.loginfo(f"相对旋转矩阵: \n{relative_rotation}")
+        transfrom_matrix = np.array([[0.0, 1.0, 0.0],
+                                     [0.0, 0.0, 1.0],
+                                     [1.0, 0.0, 0.0]])
+
+        rotation_in_arm = np.dot(transfrom_matrix, relative_rotation) @ transfrom_matrix.T
+        if hand_side == 'right':
+            relative_rotation = R.from_matrix(rotation_in_arm @ self.init_right_rotation_aa.as_matrix())
+        else:
+            relative_rotation = R.from_matrix(rotation_in_arm @ self.init_left_rotation_aa.as_matrix())
+        [new_rx, new_ry, new_rz] = relative_rotation.as_euler('XYZ')
+
+        
+        
+        # target_position[3] = new_rx
+        # target_position[4] = new_ry
+        # target_position[5] = new_rz
+
+        raw_target_position[3] = new_rx
+        raw_target_position[4] = new_ry
+        raw_target_position[5] = new_rz
         # 如果想固定末端姿态，可以取消下面三行的注释
         # target_position[3] = self.initial_robot_pose[3]
         # target_position[4] = self.initial_robot_pose[4]
         # target_position[5] = self.initial_robot_pose[5]
         
         # 转换成 numpy 数组
-        target_position = np.array(target_position)
-        return target_position
+        # target_position = np.array(target_position)
+        raw_target_position = np.array(raw_target_position)
+        return raw_target_position
         
     
     def euler_to_quaternion(self, euler_pose, rotation_order='XYZ', degrees=False):
@@ -587,6 +677,40 @@ class ArmTeleopROS:
         
         # 组合位置和四元数
         quaternion_pose = np.concatenate([position, quaternion])
+        
+        return quaternion_pose
+    
+
+    def euler_to_quaternion_aa(self, euler_pose, rotation_order='XYZ', degrees=False):
+        """
+        将欧拉角形式的6维位姿转换为四元数形式的7维位姿
+        
+        参数:
+            euler_pose: 欧拉角位姿 [x, y, z, rx, ry, rz]
+            rotation_order: 欧拉角的旋转顺序，默认为 'XYZ'
+            degrees: 欧拉角的单位，False为弧度(默认)，True为度
+        
+        返回:
+            quaternion_pose: 四元数位姿 [x, y, z, qw, qx, qy, qz]
+        """
+        # 确保输入是 numpy 数组
+        euler_pose = np.array(euler_pose)
+        
+        # 分离位置和旋转
+        position = euler_pose[:3]  # [x, y, z]
+        euler_angles = euler_pose[3:]  # [rx, ry, rz]
+        
+        # 使用 SciPy 创建旋转对象
+        rotation = R.from_euler(rotation_order, euler_angles, degrees=degrees)
+        
+        # 转换为四元数 (SciPy 返回 [x, y, z, w] 格式)
+        quat_scipy = rotation.as_quat()  # 返回 [qx, qy, qz, qw]
+        
+        # 转换为 [qw, qx, qy, qz] 格式
+        # quaternion = [quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]]
+        
+        # 组合位置和四元数
+        quaternion_pose = np.concatenate([position, quat_scipy])
         
         return quaternion_pose
 
@@ -627,48 +751,48 @@ class ArmTeleopROS:
                     
                     # 映射到机械臂位置和姿态
                     target_pose = self.map_hand_to_robot(hand_transform, arm_side) # [位置(x,y,z) + 欧拉角(rx,ry,rz)]
+                    target_pose_aa = self.map_hand_to_robot_aa(hand_transform, arm_side)
+                    # raw_target_pose = 
                     logger.info(f'{arm_side}目标位置: {[round(x, 4) for x in target_pose]}')
                     
                     # 应用平滑过滤到位置
                     target_pose_in_quat = self.euler_to_quaternion(target_pose) # 转为四元数形式 [x, y, z, qw, qx, qy, qz]
+                    target_pose_in_quat_aa = self.euler_to_quaternion_aa(target_pose_aa)
                     current_timestamp = time.time()
 
                     self.mapping_time = time.time() - loop_start_time # TIMEPOINT
+
+                    aa_req = PredictArmAngleRequest()
+
                     if arm_side == 'right':
                         # 对[姿态]进行 1Euro 滤波
                         smooth_target_in_quat = self.pose_filter_right.process(target_pose_in_quat, current_timestamp)
+
+                        smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
+
                         self.last_target_pose_right = target_pose.copy()
                         self.last_target_pose_right_quat = target_pose_in_quat.copy()
                         self.last_target_pose_right_smooth = smooth_target_in_quat.copy()
-                        # smooth_target, self.position_buffer_right = smooth_values(
-                        #     target_pose, 
-                        #     self.last_target_pose_right, 
-                        #     self.position_buffer_right, 
-                        #     self.smoothing_factor
-                        # )
-                        # smooth_target = [round(angle, 4) for angle in smooth_target]
-                        # self.last_target_pose_right = smooth_target.copy()
+
+                        aa_req.arm_side = arm_side
+                        aa_req.pose = smooth_target_in_quat_aa
+                        # aa_result = self.arm_angle_subscriber.call(aa_req)
+                        
+                        
                     elif arm_side == 'left':
                         smooth_target_in_quat = self.pose_filter_left.process(target_pose_in_quat, current_timestamp)
+
+                        smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
+
                         self.last_target_pose_left = target_pose.copy()
                         self.last_target_pose_left_quat = target_pose_in_quat.copy()
                         self.last_target_pose_left_smooth = smooth_target_in_quat.copy()
-                        # smooth_target, self.position_buffer_left = smooth_values(
-                        #     target_pose, 
-                        #     self.last_target_pose_left, 
-                        #     self.position_buffer_left, 
-                        #     self.smoothing_factor
-                        # )
-                        # smooth_target = [round(angle, 4) for angle in smooth_target]
-                        # self.last_target_pose_left = smooth_target.copy()
-                    
-                    # logger.info(f"平滑位置: {[round(x, 4) for x in smooth_target]}")
-                    
-                    # debug 限制位置，全部设置为初始值
-                    # smooth_target[:3] = self.initial_robot_pose[:3]
 
-                    # debug 限制旋转，全部设置为初始值
-                    # smooth_target[3:] = self.initial_robot_pose[3:]
+                        aa_req.arm_side = arm_side
+                        aa_req.pose = smooth_target_in_quat_aa
+                        # aa_result = self.arm_angle_subscriber.call(aa_req)
+                        
+                    
                     
                     # Log position only once every 0.1 seconds
                     current_time = time.time()
@@ -676,6 +800,9 @@ class ArmTeleopROS:
                         # logger.info(f"目标位置: {[round(x, 4) for x in smooth_target]}")
                         self.last_log_time = current_time
                     self.euro_time = time.time() - loop_start_time # TIMEPOINT
+
+
+
                     # 使用逆运动学计算关节角度
                     # TODO: call 逆解服务
                     start_time = time.time()
@@ -683,56 +810,29 @@ class ArmTeleopROS:
                     # ======================== [feasible method] ========================
                     if arm_side == 'right':
                         ik_request.method = 'optimal_ref'  # 使用组合方法
+                        # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
+                        ik_request.current_arm_angle = self.current_arm_angle_right
                     elif arm_side == 'left':
                         ik_request.method = 'optimal_ref'  # 使用组合方法
-                    # if arm_side == 'right':
-                    #     ik_request.current_arm_angle = self.current_arm_angle_right * np.pi / 180.0  # 传入当前臂角，转换为0~1范围
-                    # elif arm_side == 'left':
-                    #     # ik_request.current_arm_angle = 0.0
-                    #     ik_request.current_arm_angle = (-1) * self.current_arm_angle_left * np.pi / 180.0  # 传入当前臂角，转换为0~1范围
-                    # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
-                    # ik_request.current_arm_angle = self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left
-                    ik_request.current_arm_angle = 0
-                    # ik_request.offset_list = [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
-                    if arm_side == 'right':
-                        offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
-                    elif arm_side == 'left':
-                        offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
-                    # if arm_side == 'right':
-                    #     offset_list2 = [i + self.current_arm_angle_right for i in [0, -0.01, -0.03, -0.06, -0.1, -0.15, -0.2]]
-                    # elif arm_side == 'left':
-                    #     offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.01, 0.03, 0.06, 0.1, 0.15, 0.2]]
-                    # if arm_side == 'right':
-                    #     offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.01, -0.01, 0.02, -0.02, 0.05, -0.05, 0.1, -0.1]]
-                    # elif arm_side == 'left':
-                    #     offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.01, -0.01, 0.02, -0.02, 0.05, -0.05, 0.1, -0.1]]
-
-                    # ik_request.current_arm_angle = 0
-                    # # logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right}")
-                    if arm_side == 'right':
-                        offset_list1 = [0, -0.1, -0.2, -0.3, -0.4, -0.5]
-                    elif arm_side == 'left':
-                        # offset_list1 = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
-                        offset_list1 = [0, -0.1, -0.2, -0.3, -0.4, -0.5]
-                    offset_list = offset_list1 + offset_list2
-                    # if arm_side == 'right':
-                    #     for i in range(len(offset_list)):
-                    #         if offset_list[i] < 0.0:
-                    #             offset_list[i] = 0.0
-                    # elif arm_side == 'left':
-                    #     for i in range(len(offset_list)):
-                    #         if offset_list[i] > 0.0:
-                    #             offset_list[i] = 0.0
-                    ik_request.offset_list = offset_list
-                    ik_request.offset_refer = 0.5
-                    # ======================== [feasible method] ========================
+                        # ik_request.current_arm_angle = aa_result.arm_angle_rad
+                        ik_request.current_arm_angle = self.current_arm_angle_left
                     
+                    
+                    # ik_request.current_arm_angle = aa_result.arm_angle_rad
+                    # rospy.loginfo(f"arm_side: {arm_side}  -  arm_angle: {aa_result}")
 
-                    # if arm_side == 'left':
-                    #     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
-                    #     # smooth_target_in_quat = self.euler_to_quaternion(smooth_target_in_quat)
-                    # elif arm_side == 'right':
-                    #     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
+
+                    # 3. 直接在当前进程暴力破解 IK！
+                    offset_list1 = [0, -0.1, -0.2, -0.3, -0.4, -0.5]
+                    # ⚠️ 注意这里：也必须改为围绕修正后的 `ik_phi` 进行搜索，而不是原来的 `predicted_arm_angle_rad`
+                    if arm_side == "right":
+                        offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    else:
+                        offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    search_list = offset_list1 + offset_list2
+                    
+                    ik_request.offset_list = search_list
+                    ik_request.offset_refer = 0.5
 
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
@@ -886,6 +986,7 @@ class ArmTeleopROS:
                 dual_arm_msg.left_arm.arm_id = 0
                 
                 dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
+            
                 # dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
                 dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
                 # dual_arm_msg.left_arm.arm_joints =  [0.314957,   0.238734,   -0.658534,   1.496385,   -1.000000,   -0.080329,   -0.113492 ]
@@ -897,10 +998,11 @@ class ArmTeleopROS:
 
                 # dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 dual_arm_msg.head_z_rotation = 0.0
+                # self.robot_controller.set_dual_arm_positions(self.last_smooth_joints_right,self.last_smooth_joints_left)
                 
                 
                 # 发布数据
-                # self.dual_arm_publisher.publish(dual_arm_msg)
+                self.dual_arm_publisher.publish(dual_arm_msg)
                 
                     
             except Exception as e:

@@ -1,0 +1,1 @@
+controller_joint_names: ['', 'yaw-joint', 'pigu_joint', 'body_joint', 'dai_joint', 'dai2_joint', 'J4R_joint', 'J5R_joint', 'J6R_Joint', 'J7R_joint', 'J8R_joint', 'J9R_joint', 'J10R_joint', 'J4L_joint', 'J5L_joint', 'J6L_joint', 'J7L_joint', 'J8L_joint', 'J9L_joint', 'J10L_joint', ]

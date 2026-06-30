@@ -1,0 +1,197 @@
+<mujoco model="总装-简化urdfv2.4.SLDASM">
+  <compiler angle="radian" autolimits="true"/>
+
+  <option timestep="0.002" gravity="0 0 -9.81" iterations="50" tolerance="1e-10">
+    <flag contact="disable"/>  <!-- 完全禁用所有碰撞计算，防止散架 -->
+  </option>
+
+  <default>
+    <geom contype="1" conaffinity="1" friction="1 0.005 0.0001"/>
+    <joint damping="0.01" armature="0.001"/> <!-- 给所有关节加一点阻尼和转子惯量，防止抽搐 -->
+  </default>
+
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="meshes/base_link.STL"/>
+    <mesh name="yaw-link" content_type="model/stl" file="meshes/yaw-link.STL"/>
+    <mesh name="pigu_link" content_type="model/stl" file="meshes/pigu_link.STL"/>
+    <mesh name="body_link" content_type="model/stl" file="meshes/body_link.STL"/>
+    <mesh name="body2_link" content_type="model/stl" file="meshes/body2_link.STL"/>
+    <mesh name="dai_link" content_type="model/stl" file="meshes/dai_link.STL"/>
+    <mesh name="dai2_link" content_type="model/stl" file="meshes/dai2_link.STL"/>
+    <mesh name="J3R_link" content_type="model/stl" file="meshes/J3R_link.STL"/>
+    <mesh name="J4R_link" content_type="model/stl" file="meshes/J4R_link.STL"/>
+    <mesh name="J5R_link" content_type="model/stl" file="meshes/J5R_link.STL"/>
+    <mesh name="J6R_link" content_type="model/stl" file="meshes/J6R_link.STL"/>
+    <mesh name="J7R_link" content_type="model/stl" file="meshes/J7R_link.STL"/>
+    <mesh name="J8R_link" content_type="model/stl" file="meshes/J8R_link.STL"/>
+    <mesh name="J9R_link" content_type="model/stl" file="meshes/J9R_link.STL"/>
+    <mesh name="J10R_link" content_type="model/stl" file="meshes/J10R_link.STL"/>
+    <mesh name="J11R_link" content_type="model/stl" file="meshes/J11R_link.STL"/>
+    <mesh name="J12R_link" content_type="model/stl" file="meshes/J12R_link.STL"/>
+    <mesh name="J3L_link" content_type="model/stl" file="meshes/J3L_link.STL"/>
+    <mesh name="J4L_link" content_type="model/stl" file="meshes/J4L_link.STL"/>
+    <mesh name="J5L_link" content_type="model/stl" file="meshes/J5L_link.STL"/>
+    <mesh name="J6L_link" content_type="model/stl" file="meshes/J6L_link.STL"/>
+    <mesh name="J7L_link" content_type="model/stl" file="meshes/J7L_link.STL"/>
+    <mesh name="J8L_link" content_type="model/stl" file="meshes/J8L_link.STL"/>
+    <mesh name="J9L_link" content_type="model/stl" file="meshes/J9L_link.STL"/>
+    <mesh name="J10L_link" content_type="model/stl" file="meshes/J10L_link.STL"/>
+    <mesh name="J11L_link" content_type="model/stl" file="meshes/J11L_link.STL"/>
+    <mesh name="J12L_link" content_type="model/stl" file="meshes/J12L_link.STL"/>
+  </asset>
+
+  <worldbody>
+    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="base_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="base_link"/>
+    <body name="yaw-link" gravcomp="1" pos="-0.040213 0 0.76572">
+      <inertial pos="0 0 -0.1605" quat="0.5 0.5 -0.5 0.5" mass="0.0461814" diaginertia="0.000249772 0.000126425 0.000126425"/>
+      <joint name="yaw-joint" pos="0 0 0" axis="0 0 -1" type="slide"/>
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="yaw-link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="yaw-link"/>
+      <body name="pigu_link" gravcomp="1">
+        <inertial pos="0.00407857 -0.000646482 0.0889289" quat="0.999993 2.90779e-05 -0.00383987 -1.40374e-06" mass="0.756493" diaginertia="0.00773297 0.00497829 0.00440141"/>
+        <joint name="pigu_joint" pos="0 0 0" axis="0 0 -1"/>
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="pigu_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="pigu_link"/>
+        <body name="body_link" gravcomp="1" pos="0 0 0.1183" quat="0.707054 0.707049 0.00903251 -0.00867632">
+          <inertial pos="-0.0548044 0.344709 0.0038857" quat="0.326781 0.304697 0.692166 0.566816" mass="38.2502" diaginertia="0.874751 0.842617 0.179899"/>
+          <joint name="body_joint" pos="0 0 0" axis="0 0 1"/>
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="body_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="body_link"/>
+          <geom pos="0 0.404539 0" quat="1 -2.05588e-05 0.000251044 5.16115e-09" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="body2_link"/>
+        <geom pos="0 0.404539 0" quat="1 -2.05588e-05 0.000251044 5.16115e-09" type="mesh" rgba="1 1 1 1" mesh="body2_link"/>
+          <geom pos="-0.000563394 0.404203 0.104077" quat="1 -2.05588e-05 0.000251044 5.16115e-09" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J3R_link"/>
+        <geom pos="-0.000563394 0.404203 0.104077" quat="1 -2.05588e-05 0.000251044 5.16115e-09" type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J3R_link"/>
+          <geom pos="0.000579256 0.404234 -0.106033" quat="0.00025138 0.012522 -0.999922 9.52112e-06" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J3L_link"/>
+        <geom pos="0.000579256 0.404234 -0.106033" quat="0.00025138 0.012522 -0.999922 9.52112e-06" type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J3L_link"/>
+          <body name="dai_link" gravcomp="1" pos="-0.0163481 0.611782 -0.000955103" quat="0.503353 -0.489908 -0.509893 -0.496624">
+            <inertial pos="-0.00271084 0.000498326 -0.0431713" quat="0.700195 0.710516 0.050786 -0.0481039" mass="0.219805" diaginertia="0.000177975 0.000168298 0.000142944"/>
+            <joint name="dai_joint" pos="0 0 0" axis="0 0 1"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="dai_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="dai_link"/>
+            <body name="dai2_link" gravcomp="1" quat="0.704508 -0.0605669 0.704508 -0.0605669">
+              <inertial pos="-0.0629434 0.0361675 -9.3872e-05" quat="0.300759 0.298237 0.639494 0.641597" mass="0.942874" diaginertia="0.0046769 0.00348073 0.00298698"/>
+              <joint name="dai2_joint" pos="0 0 0" axis="0 0 1"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="dai2_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="dai2_link"/>
+            </body>
+          </body>
+          <body name="J4R_link" gravcomp="1" pos="0.000131856 0.404548 0.262377" quat="0.701177 0.000164575 0.000190684 0.712987">
+            <inertial pos="-0.000406284 0.0412636 -0.0432595" quat="0.696397 -0.148448 0.07709 0.697891" mass="0.475863" diaginertia="0.00109086 0.00079951 0.000663215"/>
+            <joint name="J4R_joint" pos="0 0 0" axis="0 0 1"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="J4R_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="J4R_link"/>
+            <body name="J5R_link" gravcomp="1" quat="0.5 0.5 0.5 -0.5">
+              <inertial pos="-6.17899e-05 -0.021879 -0.0108777" quat="0.0367469 0.706761 0.0292242 0.705893" mass="5.10317" diaginertia="0.00477015 0.00383316 0.00365289"/>
+              <joint name="J5R_joint" pos="0 0 0" axis="0 0 1"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="J5R_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="J5R_link"/>
+              <body name="J6R_link" gravcomp="1" pos="0 -0.3596 -0.009" quat="0.707099 -0.00325466 0.7071 -0.00323509">
+                <inertial pos="-0.0134868 0.139002 -0.000196426" quat="0.494048 0.505145 -0.495459 0.505237" mass="0.717701" diaginertia="0.00208804 0.00192861 0.000496805"/>
+                <joint name="J6R_Joint" pos="0 0 0" axis="0.0091778 -0.999958 0"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="J6R_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="J6R_link"/>
+                <body name="J7R_link" gravcomp="1">
+                  <inertial pos="-0.00017361 -0.0633096 0.000219752" quat="0.717748 -0.0262838 -0.0136704 0.695672" mass="0.917283" diaginertia="0.000711857 0.000512565 0.000498997"/>
+                  <joint name="J7R_joint" pos="0 0 0" axis="0 0 1"/>
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J7R_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J7R_link"/>
+                  <body name="J8R_link" gravcomp="1" pos="0.0023578 -0.25689 0" quat="0.0173282 -0.710139 0.703638 -0.0171696">
+                    <inertial pos="-0.0848234 0.00243315 0.000391079" quat="0.0125854 0.707075 -0.0140152 0.706888" mass="0.443212" diaginertia="0.000677153 0.000627089 0.000132556"/>
+                    <joint name="J8R_joint" pos="0 0 0" axis="1 0 0"/>
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J8R_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J8R_link"/>
+                    <body name="J9R_link" gravcomp="1">
+                      <inertial pos="0.00409633 0.00125618 -6.80344e-11" quat="0.427369 0.427369 0.563344 0.563344" mass="0.00838811" diaginertia="4.96142e-07 4.31204e-07 3.14868e-07"/>
+                      <joint name="J9R_joint" pos="0 0 0" axis="0 0 1"/>
+                      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J9R_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J9R_link"/>
+                      <body name="J10R_link" gravcomp="1" pos="0.012 0 0" quat="0.707107 0.707107 4.28973e-05 -4.28973e-05">
+                        <inertial pos="0.048302 0.0013051 0.0150263" quat="0.00125656 0.492158 0.0307725 0.869961" mass="0.994811" diaginertia="0.00184465 0.00177327 0.00041314"/>
+                        <joint name="J10R_joint" pos="0 0 0" axis="0 0 1"/>
+                        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J10R_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J10R_link"/>
+                        <geom pos="0.0395 0 0.00018625" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.77647 0.75686 0.73725 1" mesh="J11R_link"/>
+        <geom pos="0.0395 0 0.00018625" type="mesh" rgba="0.77647 0.75686 0.73725 1" mesh="J11R_link"/>
+                        <geom pos="0.0395 0 0.00018625" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="J12R_link"/>
+        <geom pos="0.0395 0 0.00018625" quat="1 0 0 0" type="mesh" rgba="1 1 1 1" mesh="J12R_link"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+          <body name="J4L_link" gravcomp="1" pos="0.000131618 0.404548 0.262377" quat="0.701177 0.00016435 0.000190451 0.712987">
+            <inertial pos="-0.000807178 0.041257 -0.48345" quat="0.692898 0.148828 -0.0763441 0.701365" mass="0.475873" diaginertia="0.00109088 0.000799536 0.000663208"/>
+            <joint name="J4L_joint" pos="0 0 0" axis="0 0 1"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="J4L_link"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="J4L_link"/>
+            <body name="J5L_link" gravcomp="1" pos="1.45802e-05 0 -0.52671" quat="0.502085 0.497914 0.502077 -0.497906">
+              <inertial pos="-7.61877e-05 -0.021448 -0.0110278" quat="0.0370282 0.706625 0.0284806 0.706045" mass="5.01699" diaginertia="0.0047417 0.00377926 0.0036265"/>
+              <joint name="J5L_joint" pos="0 0 0" axis="0 -0.00834231 0.999965"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J5L_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J5L_link"/>
+              <body name="J6L_link" gravcomp="1" pos="0 -0.359585 0.00960089" quat="0.707107 -0.000586297 -0.707106 0.00059531">
+                <inertial pos="-0.00974195 0.226423 -5.53337e-05" quat="0.494769 0.504406 -0.496534 0.504214" mass="2.55591" diaginertia="0.00320922 0.0030475 0.00214294"/>
+                <joint name="J6L_joint" pos="0 0 0" axis="0 1 0"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J6L_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J6L_link"/>
+                <body name="J7L_link" gravcomp="1">
+                  <inertial pos="-0.00084639 -0.0633053 -0.000109341" quat="0.720774 -0.0332803 -0.0429715 0.691036" mass="0.917283" diaginertia="0.000711863 0.000507027 0.00050453"/>
+                  <joint name="J7L_joint" pos="0 0 0" axis="0 0 1"/>
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J7L_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J7L_link"/>
+                  <body name="J8L_link" gravcomp="1" pos="0 -0.2569 0" quat="0.707107 0.707106 1.59393e-05 -1.59393e-05">
+                    <inertial pos="0.00245476 0.000242275 -0.0842613" quat="0.706266 -0.0132051 -0.0133924 0.707697" mass="0.439417" diaginertia="0.000677057 0.000627053 0.000132463"/>
+                    <joint name="J8L_joint" pos="0 0 0" axis="0 0 -1"/>
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J8L_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J8L_link"/>
+                    <body name="J9L_link" gravcomp="1" quat="0.500002 0.499998 -0.500002 0.499998">
+                      <inertial pos="0.00409633 -0.00125618 6.66296e-11" quat="0.563344 0.563344 0.427369 0.427369" mass="0.00838811" diaginertia="4.96142e-07 4.31204e-07 3.14868e-07"/>
+                      <joint name="J9L_joint" pos="0 0 0" axis="0 0 1"/>
+                      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J9L_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J9L_link"/>
+                      <body name="J10L_link" gravcomp="1" pos="0.012 0 0" quat="0.707107 0.707107 -4.28973e-05 4.28973e-05">
+                        <inertial pos="0.0481737 0.00163269 0.0131792" quat="0.0176011 0.504885 0.0491147 0.861608" mass="0.981964" diaginertia="0.00177828 0.0017267 0.000421819"/>
+                        <joint name="J10L_joint" pos="0 0 0" axis="0 0 -1"/>
+                        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J10L_link"/>
+        <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J10L_link"/>
+                        <geom pos="0.0395 0 0" quat="1 0.000526411 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="J11L_link"/>
+        <geom pos="0.0395 0 0" quat="1 0.000526411 0 0" type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="J11L_link"/>
+                        <geom pos="0.0395 0 0" quat="1 0.000526411 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="J12L_link"/>
+        <geom pos="0.0395 0 0" quat="1 0.000526411 0 0" type="mesh" rgba="1 1 1 1" mesh="J12L_link"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="motor_yaw-joint" joint="yaw-joint" kp="10000" kv="500"/>
+    <position name="motor_pigu_joint" joint="pigu_joint" kp="10000" kv="500"/>
+    <position name="motor_body_joint" joint="body_joint" kp="10000" kv="500"/>
+    <position name="motor_dai_joint" joint="dai_joint" kp="5" kv="1"/>
+    <position name="motor_dai2_joint" joint="dai2_joint" kp="5" kv="1"/>
+    <position name="motor_J4R_joint" joint="J4R_joint" kp="5" kv="1"/>
+    <position name="motor_J5R_joint" joint="J5R_joint" kp="5" kv="1"/>
+    <position name="motor_J6R_Joint" joint="J6R_Joint" kp="5" kv="1"/>
+    <position name="motor_J7R_joint" joint="J7R_joint" kp="5" kv="1"/>
+    <position name="motor_J8R_joint" joint="J8R_joint" kp="5" kv="1"/>
+    <position name="motor_J9R_joint" joint="J9R_joint" kp="5" kv="1"/>
+    <position name="motor_J10R_joint" joint="J10R_joint" kp="5" kv="1"/>
+    <position name="motor_J4L_joint" joint="J4L_joint" kp="5" kv="1"/>
+    <position name="motor_J5L_joint" joint="J5L_joint" kp="5" kv="1"/>
+    <position name="motor_J6L_joint" joint="J6L_joint" kp="5" kv="1"/>
+    <position name="motor_J7L_joint" joint="J7L_joint" kp="5" kv="1"/>
+    <position name="motor_J8L_joint" joint="J8L_joint" kp="5" kv="1"/>
+    <position name="motor_J9L_joint" joint="J9L_joint" kp="5" kv="1"/>
+    <position name="motor_J10L_joint" joint="J10L_joint" kp="5" kv="1"/>
+  </actuator>
+</mujoco>

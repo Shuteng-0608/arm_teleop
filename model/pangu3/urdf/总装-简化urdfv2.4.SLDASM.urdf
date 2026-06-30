@@ -1,0 +1,1435 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="总装-简化urdfv2.4.SLDASM">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-0.0321389872362979 -0.000259056795331907 0.295950881772513"
+        rpy="0 0 0" />
+      <mass
+        value="7.49827484397357" />
+      <inertia
+        ixx="0.125800191011178"
+        ixy="-9.33590139175178E-05"
+        ixz="0.00143897847551623"
+        iyy="0.150585691436636"
+        iyz="0.000225007239088937"
+        izz="0.206289689949427" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="yaw-link">
+    <inertial>
+      <origin
+        xyz="-4.16333634234434E-16 3.06061006441166E-18 -0.1605"
+        rpy="0 0 0" />
+      <mass
+        value="0.04618141200777" />
+      <inertia
+        ixx="0.000126425463822271"
+        ixy="-7.20323549819594E-36"
+        ixz="0"
+        iyy="0.000126425463822271"
+        iyz="1.10202595389589E-36"
+        izz="0.000249772166844024" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/yaw-link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/yaw-link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="yaw-joint"
+    type="prismatic">
+    <origin
+      xyz="-0.040213 0 0.76572"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="yaw-link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="pigu_link">
+    <inertial>
+      <origin
+        xyz="0.00407857419568612 -0.000646481820886424 0.0889288697491857"
+        rpy="0 0 0" />
+      <mass
+        value="0.756492640651364" />
+      <inertia
+        ixx="0.0077327731493596"
+        ixy="-8.60621717624022E-09"
+        ixz="2.55845053152087E-05"
+        iyy="0.00497829026390784"
+        iyz="3.34770468036564E-08"
+        izz="0.00440161114706403" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/pigu_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/pigu_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="pigu_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="yaw-link" />
+    <child
+      link="pigu_link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="body_link">
+    <inertial>
+      <origin
+        xyz="-0.00461013580321251 0.369605037598206 -0.00096778012568763"
+        rpy="0 0 0" />
+      <mass
+        value="11.5444054078249" />
+      <inertia
+        ixx="0.0648613479983151"
+        ixy="0.00103712173943683"
+        ixz="-4.87794865483375E-06"
+        iyy="0.0448120000287978"
+        iyz="-2.27461454256499E-05"
+        izz="0.0389480656590663" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/body_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/body_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="body_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0.1183"
+      rpy="1.5707963267949 0.0250447265343818 0.000503767875636686" />
+    <parent
+      link="pigu_link" />
+    <child
+      link="body_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="body2_link">
+    <inertial>
+      <origin
+        xyz="-0.00460964697117122 -0.0349342299166127 -0.000976634532631792"
+        rpy="0 0 0" />
+      <mass
+        value="11.5444054078249" />
+      <inertia
+        ixx="0.064861346377247"
+        ixy="0.00103713256698728"
+        ixz="8.17541970131871E-06"
+        iyy="0.0448120018334546"
+        iyz="-2.19843066278689E-05"
+        izz="0.0389480654754776" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/body2_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/body2_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="body2_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.404539307671299 0"
+      rpy="-4.11175420820265E-05 0.000502087064913193 0" />
+    <parent
+      link="body_link" />
+    <child
+      link="body2_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="dai_link">
+    <inertial>
+      <origin
+        xyz="-0.00271084332383414 0.000498326479449807 -0.0431712903055523"
+        rpy="0 0 0" />
+      <mass
+        value="0.219805387675214" />
+      <inertia
+        ixx="0.000177786671085377"
+        ixy="1.16086262062506E-07"
+        ixz="-1.33551400092027E-06"
+        iyy="0.000142949496486054"
+        iyz="-3.82326995868577E-07"
+        izz="0.000168480755618086" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/dai_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/dai_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="dai_joint"
+    type="continuous">
+    <origin
+      xyz="-0.016347624580389 0.207242342721472 -0.000954790186486696"
+      rpy="1.5687838562238 -1.55703626576189 -3.11286461140266" />
+    <parent
+      link="body2_link" />
+    <child
+      link="dai_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="dai2_link">
+    <inertial>
+      <origin
+        xyz="-0.0629434198285055 0.0361675186087336 -9.38720187195575E-05"
+        rpy="0 0 0" />
+      <mass
+        value="0.942874009465477" />
+      <inertia
+        ixx="0.00368177255277991"
+        ixy="-0.000831504537312078"
+        ixz="-8.17234360791064E-08"
+        iyy="0.00398210764575454"
+        iyz="-3.140111902733E-06"
+        izz="0.00348072787612285" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/dai2_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/dai2_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="dai2_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5707963267949 1.39927718426768 -1.5707963267949" />
+    <parent
+      link="dai_link" />
+    <child
+      link="dai2_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J3R_link">
+    <inertial>
+      <origin
+        xyz="-0.00399399775102943 -0.0345940663490349 -0.105053294111108"
+        rpy="0 0 0" />
+      <mass
+        value="11.5444054078249" />
+      <inertia
+        ixx="0.064861346377247"
+        ixy="0.00103713256698728"
+        ixz="8.1754197013194E-06"
+        iyy="0.0448120018334546"
+        iyz="-2.19843066278695E-05"
+        izz="0.0389480654754776" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J3R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J3R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J3R_joint"
+    type="fixed">
+    <origin
+      xyz="-0.000615649220141706 -0.000340163567578822 0.104076659578476"
+      rpy="0 0 0" />
+    <parent
+      link="body2_link" />
+    <child
+      link="J3R_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="J4R_link">
+    <inertial>
+      <origin
+        xyz="-0.000406284135975765 0.0412635688887308 -0.0432595413055075"
+        rpy="0 0 0" />
+      <mass
+        value="0.475863053424981" />
+      <inertia
+        ixx="0.000798209212958341"
+        ixy="8.15178116281624E-06"
+        ixz="1.15608519805512E-05"
+        iyy="0.00104850598245449"
+        iyz="-0.000127436780120971"
+        izz="0.000706872743844882" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J4R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J4R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J4R_joint"
+    type="continuous">
+    <origin
+      xyz="0.000615769303666386 0.000337950719666802 0.158300008484359"
+      rpy="0 0 1.58749863994918" />
+    <parent
+      link="J3R_link" />
+    <child
+      link="J4R_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J5R_link">
+    <inertial>
+      <origin
+        xyz="-6.17899079378148E-05 -0.021878952699067 -0.0108776707070736"
+        rpy="0 0 0" />
+      <mass
+        value="5.10316727277532" />
+      <inertia
+        ixx="0.00365291303630831"
+        ixy="2.07637633483883E-06"
+        ixz="1.73854243024048E-06"
+        iyy="0.00384127955898895"
+        iyz="8.69338345695808E-05"
+        izz="0.00476200546734244" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J5R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J5R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J5R_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="1.5707963267949 1.5707963267949 0" />
+    <parent
+      link="J4R_link" />
+    <child
+      link="J5R_link" />
+    <axis
+      xyz="0 0 0.99999999999946" />
+  </joint>
+  <link
+    name="J6R_link">
+    <inertial>
+      <origin
+        xyz="-0.01348682082503 0.139001752781207 -0.000196426215864576"
+        rpy="0 0 0" />
+      <mass
+        value="0.717700606958042" />
+      <inertia
+        ixx="0.00192799086196554"
+        ixy="2.98815697462423E-05"
+        ixz="-1.98442421058422E-07"
+        iyy="0.000497431728226032"
+        iyz="-2.07876084633434E-06"
+        izz="0.00208803963481322" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J6R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J6R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J6R_Joint"
+    type="continuous">
+    <origin
+      xyz="0 -0.359600063372819 -0.00899999968426771"
+      rpy="-1.57090951955984 1.56161840051294 -1.57088183298175" />
+    <parent
+      link="J5R_link" />
+    <child
+      link="J6R_link" />
+    <axis
+      xyz="0.00917779740303196 -0.999957883130499 0" />
+  </joint>
+  <link
+    name="J7R_link">
+    <inertial>
+      <origin
+        xyz="-0.000173610069490057 -0.0633095791826963 0.000219752150322328"
+        rpy="0 0 0" />
+      <mass
+        value="0.917283018308955" />
+      <inertia
+        ixx="0.000512722862070404"
+        ixy="6.32921223620798E-06"
+        ixz="6.5403466307392E-07"
+        iyy="0.000711594668339354"
+        iyz="-3.62840831369635E-06"
+        izz="0.000499101813207713" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J7R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J7R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J7R_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="J6R_link" />
+    <child
+      link="J7R_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J8R_link">
+    <inertial>
+      <origin
+        xyz="-0.084823371556234 0.00243315156892866 0.000391078681208412"
+        rpy="0 0 0" />
+      <mass
+        value="0.443212029147671" />
+      <inertia
+        ixx="0.000133255498493693"
+        ixy="1.85872166660778E-05"
+        ixz="1.61065781874035E-07"
+        iyy="0.000626390101245437"
+        iyz="-1.07101053458981E-07"
+        izz="0.000677153179562723" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J8R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J8R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J8R_joint"
+    type="continuous">
+    <origin
+      xyz="0.0023578 -0.25689 0"
+      rpy="-3.0928 0 -1.5616" />
+    <parent
+      link="J7R_link" />
+    <child
+      link="J8R_link" />
+    <axis
+      xyz="1 0 0" />
+  </joint>
+  <link
+    name="J9R_link">
+    <inertial>
+      <origin
+        xyz="0.00409633422883515 0.00125618186723409 -6.80344114378784E-11"
+        rpy="0 0 0" />
+      <mass
+        value="0.00838810699696841" />
+      <inertia
+        ixx="3.28026552178308E-07"
+        ixy="-4.70336673398015E-08"
+        ixz="-1.56137708843135E-15"
+        iyy="4.82983505785284E-07"
+        iyz="3.71385160706652E-15"
+        izz="4.31204386729277E-07" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J9R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J9R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J9R_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="J8R_link" />
+    <child
+      link="J9R_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J10R_link">
+    <inertial>
+      <origin
+        xyz="0.00467559994114297 -6.58562149258302E-10 -0.00743178181903235"
+        rpy="0 0 0" />
+      <mass
+        value="0.0408046993944819" />
+      <inertia
+        ixx="1.29954605648567E-05"
+        ixy="-2.93568294822781E-13"
+        ixz="-1.49381986808353E-06"
+        iyy="1.11162841892677E-05"
+        iyz="-2.32475031873824E-13"
+        izz="6.66247331983496E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J10R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J10R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J10R_joint"
+    type="continuous">
+    <origin
+      xyz="0.0120000000000002 0 0"
+      rpy="1.5707963267949 0.000121331837178871 0" />
+    <parent
+      link="J9R_link" />
+    <child
+      link="J10R_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J11R_link">
+    <inertial>
+      <origin
+        xyz="-0.013979 7.9751E-07 0.00051573"
+        rpy="0 0 0" />
+      <mass
+        value="0.59435" />
+      <inertia
+        ixx="0.00027349"
+        ixy="4.0448E-09"
+        ixz="6.5374E-07"
+        iyy="0.00017941"
+        iyz="-6.6241E-09"
+        izz="0.00016902" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J11R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.77647 0.75686 0.73725 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J11R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J11R_joint"
+    type="fixed">
+    <origin
+      xyz="0.0395 0 0.000186249934239435"
+      rpy="0 0 0" />
+    <parent
+      link="J10R_link" />
+    <child
+      link="J11R_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="J12R_link">
+    <inertial>
+      <origin
+        xyz="0.0916454292234154 0.00399702903539817 0.00134588817014299"
+        rpy="0 0 0" />
+      <mass
+        value="0.359656793962829" />
+      <inertia
+        ixx="0.00012727455223503"
+        ixy="-6.91718556550805E-06"
+        ixz="-2.93891781322792E-06"
+        iyy="0.000162290426359686"
+        iyz="-1.10174277361332E-06"
+        izz="0.00024922430707936" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J12R_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J12R_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J12R_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="J11R_link" />
+    <child
+      link="J12R_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="J3L_link">
+    <inertial>
+      <origin
+        xyz="0.000623043959390265 -0.00144885764250779 0.0514536191379329"
+        rpy="0 0 0" />
+      <mass
+        value="3.61700314091766" />
+      <inertia
+        ixx="0.0023367460316643"
+        ixy="-8.95050640442562E-07"
+        ixz="1.24396117991743E-06"
+        iyy="0.00226890915034836"
+        iyz="-9.3712851181139E-05"
+        izz="0.00356790041491379" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J3L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J3L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J3L_joint"
+    type="fixed">
+    <origin
+      xyz="0.000632493932397907 -0.000300990348815589 -0.106033035433106"
+      rpy="3.14157686741591 0 -3.11654793651822" />
+    <parent
+      link="body2_link" />
+    <child
+      link="J3L_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="J4L_link">
+    <inertial>
+      <origin
+        xyz="-0.000807177813825444 0.0412569790652122 -0.483449689394005"
+        rpy="0 0 0" />
+      <mass
+        value="0.47587271174701" />
+      <inertia
+        ixx="0.000798096322699847"
+        ixy="5.64745979360979E-06"
+        ixz="-1.28380631524876E-05"
+        iyy="0.00104865775024299"
+        iyz="0.00012731798778343"
+        izz="0.000706866652672192" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J4L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J4L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J4L_joint"
+    type="continuous">
+    <origin
+      xyz="0.000624932008138471 0.000320335551636575 -0.368409698080502"
+      rpy="3.14159187457182 -1.57802241912165E-05 1.57913873071322" />
+    <parent
+      link="J3L_link" />
+    <child
+      link="J4L_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J5L_link">
+    <inertial>
+      <origin
+        xyz="-7.6187686968987E-05 -0.0214479805538659 -0.0110278415879103"
+        rpy="0 0 0" />
+      <mass
+        value="5.01698998857097" />
+      <inertia
+        ixx="0.00362652563210155"
+        ixy="1.9730852150557E-06"
+        ixz="1.36140751299553E-06"
+        iyy="0.00378748366330365"
+        iyz="8.8678516068122E-05"
+        izz="0.00473345662088698" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J5L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J5L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J5L_joint"
+    type="continuous">
+    <origin
+      xyz="1.45801891326958E-05 0 -0.526709693938909"
+      rpy="1.6117806021278 1.57078052734728 0.0493266792450724" />
+    <parent
+      link="J4L_link" />
+    <child
+      link="J5L_link" />
+    <axis
+      xyz="0 -0.00834230715685338 0.999965202350178" />
+  </joint>
+  <link
+    name="J6L_link">
+    <inertial>
+      <origin
+        xyz="-0.0097419497623408 0.226422971619934 -5.5333690314574E-05"
+        rpy="0 0 0" />
+      <mass
+        value="2.55591417515122" />
+      <inertia
+        ixx="0.00304722964182847"
+        ixy="1.56623752026595E-05"
+        ixz="-2.20969593646447E-07"
+        iyy="0.00214321806537058"
+        iyz="-2.07658899506394E-06"
+        izz="0.00320921225276819" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J6L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J6L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J6L_joint"
+    type="continuous">
+    <origin
+      xyz="0 -0.359584522014954 0.00960089474472377"
+      rpy="-1.57069940939091 -1.56912528170901 1.57071215468484" />
+    <parent
+      link="J5L_link" />
+    <child
+      link="J6L_link" />
+    <axis
+      xyz="0 0.999999999999646 0" />
+  </joint>
+  <link
+    name="J7L_link">
+    <inertial>
+      <origin
+        xyz="-0.000846389615256571 -0.0633053195215819 -0.000109341078382619"
+        rpy="0 0 0" />
+      <mass
+        value="0.917283018539634" />
+      <inertia
+        ixx="0.000507346524110107"
+        ixy="8.43746095827387E-06"
+        ixz="4.02758717819066E-07"
+        iyy="0.00071146175110963"
+        iyz="3.2922418081486E-06"
+        izz="0.000504611070720881" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J7L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J7L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J7L_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="J6L_link" />
+    <child
+      link="J7L_link" />
+    <axis
+      xyz="0 0 0.999999999999645" />
+  </joint>
+  <link
+    name="J8L_link">
+    <inertial>
+      <origin
+        xyz="0.00245476328674679 0.000242275393224467 -0.0842612524939675"
+        rpy="0 0 0" />
+      <mass
+        value="0.43941704791813" />
+      <inertia
+        ixx="0.000626354041185719"
+        ixy="-1.07063239444951E-07"
+        ixz="1.8587160735747E-05"
+        iyy="0.000677056505036315"
+        iyz="1.61054841973641E-07"
+        izz="0.000133162745028278" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J8L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J8L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J8L_joint"
+    type="continuous">
+    <origin
+      xyz="0 -0.256899999999909 0"
+      rpy="1.57079548497534 4.50832250893743E-05 0" />
+    <parent
+      link="J7L_link" />
+    <child
+      link="J8L_link" />
+    <axis
+      xyz="0 0 -1" />
+  </joint>
+  <link
+    name="J9L_link">
+    <inertial>
+      <origin
+        xyz="0.00409633423222999 -0.00125618185715619 6.66295907336689E-11"
+        rpy="0 0 0" />
+      <mass
+        value="0.00838810699716135" />
+      <inertia
+        ixx="3.28026551851402E-07"
+        ixy="4.70336668636903E-08"
+        ixz="1.4734501884581E-15"
+        iyy="4.82983506136876E-07"
+        iyz="3.74638677774187E-15"
+        izz="4.31204386718701E-07" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J9L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J9L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J9L_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="-0.00675227064225453 -1.57079631189374 1.57754155660849" />
+    <parent
+      link="J8L_link" />
+    <child
+      link="J9L_link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="J10L_link">
+    <inertial>
+      <origin
+        xyz="0.00467559996769007 6.18502971061474E-10 0.00743178186315652"
+        rpy="0 0 0" />
+      <mass
+        value="0.0408046993852596" />
+      <inertia
+        ixx="1.29954605656143E-05"
+        ixy="2.87023985458326E-13"
+        ixz="1.49381987814901E-06"
+        iyy="1.11162841629463E-05"
+        iyz="-2.36513528247453E-13"
+        izz="6.66247329533208E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J10L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J10L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J10L_joint"
+    type="continuous">
+    <origin
+      xyz="0.0120000000000002 0 0"
+      rpy="1.5707963267949 -0.000121331837180341 0" />
+    <parent
+      link="J9L_link" />
+    <child
+      link="J10L_link" />
+    <axis
+      xyz="0 0 -1" />
+  </joint>
+  <link
+    name="J11L_link">
+    <inertial>
+      <origin
+        xyz="-0.0139794394747218 3.25567424686035E-06 -0.000701983476627782"
+        rpy="0 0 0" />
+      <mass
+        value="0.594346775875631" />
+      <inertia
+        ixx="0.000273485266082289"
+        ixy="-4.7324156704317E-09"
+        ixz="-6.53731472133087E-07"
+        iyy="0.000179406661853711"
+        iyz="-1.75570867839526E-08"
+        izz="0.000169023656887016" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J11L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J11L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J11L_joint"
+    type="fixed">
+    <origin
+      xyz="0.0394999999999998 0 0"
+      rpy="0.00105282242370577 0 0" />
+    <parent
+      link="J10L_link" />
+    <child
+      link="J11L_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="J12L_link">
+    <inertial>
+      <origin
+        xyz="0.0903210976461176 0.00425389400070209 -0.00138978743944614"
+        rpy="0 0 0" />
+      <mass
+        value="0.346812297054733" />
+      <inertia
+        ixx="0.000121308474599457"
+        ixy="-7.65224950789118E-06"
+        ixz="4.83404539643954E-06"
+        iyy="0.000144027379079566"
+        iyz="1.1104369472751E-06"
+        izz="0.000225873904551721" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J12L_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://总装-简化urdfv2.4.SLDASM/meshes/J12L_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="J12L_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="J11L_link" />
+    <child
+      link="J12L_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+</robot>
