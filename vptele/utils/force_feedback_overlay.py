@@ -46,6 +46,12 @@ class ForceFeedbackConfig:
         force_guidance_max_vector_px: int = 55,
         force_guidance_max_force_n: float = 40.0,
         force_guidance_max_torque_nm: float = 2.0,
+        torque_guidance_mode: str = "tilt_axes",
+        torque_guidance_min_force_n: float = 5.0,
+        torque_guidance_min_torque_nm: float = 0.05,
+        torque_guidance_max_torque_nm=None,
+        torque_guidance_label_as_posture: bool = True,
+        torque_guidance_show_numeric_values: bool = True,
         force_guidance_draw_numeric_values: bool = True,
         force_guidance_show_caveat_label: bool = True,
         force_guidance_hud_anchor: str = "top_right",
@@ -114,7 +120,20 @@ class ForceFeedbackConfig:
         self.force_guidance_ring_radius_px = max(20, int(force_guidance_ring_radius_px))
         self.force_guidance_max_vector_px = max(10, int(force_guidance_max_vector_px))
         self.force_guidance_max_force_n = max(1e-9, float(force_guidance_max_force_n))
-        self.force_guidance_max_torque_nm = max(1e-9, float(force_guidance_max_torque_nm))
+        torque_max = (
+            force_guidance_max_torque_nm
+            if torque_guidance_max_torque_nm is None
+            else torque_guidance_max_torque_nm
+        )
+        self.force_guidance_max_torque_nm = max(1e-9, float(torque_max))
+        self.torque_guidance_mode = str(torque_guidance_mode)
+        if self.torque_guidance_mode not in {"vector", "tilt_axes", "off"}:
+            self.torque_guidance_mode = "tilt_axes"
+        self.torque_guidance_min_force_n = max(0.0, float(torque_guidance_min_force_n))
+        self.torque_guidance_min_torque_nm = max(0.0, float(torque_guidance_min_torque_nm))
+        self.torque_guidance_max_torque_nm = self.force_guidance_max_torque_nm
+        self.torque_guidance_label_as_posture = bool(torque_guidance_label_as_posture)
+        self.torque_guidance_show_numeric_values = bool(torque_guidance_show_numeric_values)
         self.force_guidance_draw_numeric_values = bool(force_guidance_draw_numeric_values)
         self.force_guidance_show_caveat_label = bool(force_guidance_show_caveat_label)
         self.force_guidance_hud_anchor = str(force_guidance_hud_anchor)
@@ -272,6 +291,24 @@ class ForceFeedbackConfig:
             force_guidance_max_torque_nm=config.get(
                 "force_guidance_max_torque_nm",
                 2.0,
+            ),
+            torque_guidance_mode=config.get("torque_guidance_mode", "tilt_axes"),
+            torque_guidance_min_force_n=config.get("torque_guidance_min_force_n", 5.0),
+            torque_guidance_min_torque_nm=config.get(
+                "torque_guidance_min_torque_nm",
+                0.05,
+            ),
+            torque_guidance_max_torque_nm=config.get(
+                "torque_guidance_max_torque_nm",
+                config.get("force_guidance_max_torque_nm", 2.0),
+            ),
+            torque_guidance_label_as_posture=config.get(
+                "torque_guidance_label_as_posture",
+                True,
+            ),
+            torque_guidance_show_numeric_values=config.get(
+                "torque_guidance_show_numeric_values",
+                True,
             ),
             force_guidance_draw_numeric_values=config.get(
                 "force_guidance_draw_numeric_values",
@@ -647,12 +684,6 @@ def draw_force_guidance_ring_overlay(
 ) -> np.ndarray:
     h, w = frame_bgr.shape[:2]
     radius = int(config.force_guidance_ring_radius_px)
-    panel_w = 2 * radius + 62
-    panel_h = 2 * radius + 126
-    cx, cy = compute_guidance_hud_center(w, h, config, panel_w, panel_h)
-    x0 = max(10, cx - radius - 28)
-    y0 = max(10, cy - radius - 48)
-
     band = feedback["band"]
     force_norm = float(feedback["force_norm"])
     axial = feedback.get("axial")
@@ -662,6 +693,19 @@ def draw_force_guidance_ring_overlay(
     trend = feedback.get("trend", "STABLE")
     contact_state = feedback.get("contact_state", "FREE")
     contact_color = contact_state_color(contact_state, band)
+
+    panel_w = max(2 * radius + 62, 300)
+    panel_h = 2 * radius + 126
+    show_torque_feedback = (
+        config.show_torque_ring
+        and config.torque_guidance_mode != "off"
+        and torque_uv is not None
+    )
+    if show_torque_feedback and config.torque_guidance_mode == "tilt_axes":
+        panel_h += 62
+    cx, cy = compute_guidance_hud_center(w, h, config, panel_w, panel_h)
+    x0 = int(np.clip(cx - panel_w // 2, 10, max(10, w - panel_w - 10)))
+    y0 = max(10, cy - radius - 48)
 
     overlay = frame_bgr.copy()
     cv2.rectangle(
@@ -685,6 +729,7 @@ def draw_force_guidance_ring_overlay(
         band["color_bgr"],
         2,
     )
+    _put_text(frame_bgr, "Position cue", (x0 + 14, y0 + 44), 0.44, (205, 205, 205), 1)
 
     cv2.circle(frame_bgr, (cx, cy), radius, (92, 92, 92), 1, cv2.LINE_AA)
     cv2.circle(frame_bgr, (cx, cy), max(8, radius // 2), (68, 68, 68), 1, cv2.LINE_AA)
@@ -718,7 +763,7 @@ def draw_force_guidance_ring_overlay(
         )
         cv2.circle(frame_bgr, end, 5, contact_color, -1, cv2.LINE_AA)
 
-    if config.show_torque_ring and torque_uv is not None:
+    if show_torque_feedback and config.torque_guidance_mode == "vector":
         end = _vector_endpoint(
             cx,
             cy,
@@ -752,10 +797,27 @@ def draw_force_guidance_ring_overlay(
             1,
         )
 
-    if config.force_guidance_draw_numeric_values and torque_uv is not None:
-        y += 20
-        torque_mag = float(np.linalg.norm(torque_uv))
-        _put_text(frame_bgr, f"Tilt {torque_mag:4.2f} Nm", (x0 + 14, y), 0.48, (255, 210, 130), 1)
+    if show_torque_feedback:
+        y += 22
+        if config.torque_guidance_mode == "tilt_axes":
+            y = _draw_torque_posture_panel(
+                frame_bgr,
+                x0 + 14,
+                y,
+                panel_w - 28,
+                feedback,
+                config,
+            )
+        elif config.force_guidance_draw_numeric_values:
+            torque_mag = float(np.linalg.norm(torque_uv))
+            _put_text(
+                frame_bgr,
+                f"Torque vector {torque_mag:4.2f} Nm",
+                (x0 + 14, y),
+                0.48,
+                (255, 210, 130),
+                1,
+            )
 
     y += 22
     _put_text(frame_bgr, f"{trend}  {contact_state}", (x0 + 14, y), 0.54, contact_color, 2)
@@ -774,6 +836,80 @@ def draw_force_guidance_ring_overlay(
         )
 
     return frame_bgr
+
+
+def _draw_torque_posture_panel(
+    frame_bgr: np.ndarray,
+    x: int,
+    y: int,
+    width: int,
+    feedback: Dict[str, Any],
+    config: ForceFeedbackConfig,
+) -> int:
+    torque_uv = np.asarray(feedback.get("torque_uv"), dtype=float).reshape(2)
+    force_norm = float(feedback.get("force_norm", 0.0))
+    torque_mag = float(np.linalg.norm(torque_uv))
+    force_active = force_norm >= config.torque_guidance_min_force_n
+    torque_active = torque_mag >= config.torque_guidance_min_torque_nm
+    active = force_active and torque_active
+    color = (255, 210, 130) if active else (115, 115, 115)
+    text_color = (230, 230, 230) if active else (150, 150, 150)
+    label = "Posture cue" if config.torque_guidance_label_as_posture else "Tilt cue"
+    status = "" if active else " inactive"
+
+    _put_text(frame_bgr, f"{label}{status}", (x, y), 0.48, text_color, 1)
+
+    bar_x = x + 78
+    bar_w = max(74, min(140, width - 118))
+    center_x = bar_x + bar_w // 2
+    half_w = bar_w // 2
+    max_torque = max(config.torque_guidance_max_torque_nm, 1e-9)
+
+    y += 20
+    _put_text(frame_bgr, "T right", (x, y + 4), 0.42, text_color, 1)
+    _draw_signed_bar(
+        frame_bgr,
+        center_x,
+        y - 8,
+        half_w,
+        10,
+        float(torque_uv[0]),
+        max_torque,
+        color,
+    )
+    if config.torque_guidance_show_numeric_values:
+        _put_text(
+            frame_bgr,
+            f"{float(torque_uv[0]):+4.2f}",
+            (bar_x + bar_w + 8, y + 4),
+            0.38,
+            text_color,
+            1,
+        )
+
+    y += 20
+    _put_text(frame_bgr, "T up", (x, y + 4), 0.42, text_color, 1)
+    _draw_signed_bar(
+        frame_bgr,
+        center_x,
+        y - 8,
+        half_w,
+        10,
+        float(torque_uv[1]),
+        max_torque,
+        color,
+    )
+    if config.torque_guidance_show_numeric_values:
+        _put_text(
+            frame_bgr,
+            f"{float(torque_uv[1]):+4.2f}",
+            (bar_x + bar_w + 8, y + 4),
+            0.38,
+            text_color,
+            1,
+        )
+
+    return y
 
 
 def compute_guidance_hud_center(
@@ -962,6 +1098,25 @@ def _draw_bar(frame, x, y, width, height, value, max_value, color):
     fill = _scaled_bar_length(value, max_value, width)
     cv2.rectangle(frame, (x, y), (x + width, y + height), (70, 70, 70), 1)
     cv2.rectangle(frame, (x, y), (x + fill, y + height), color, -1)
+
+
+def _draw_signed_bar(frame, center_x, y, half_width, height, value, max_value, color):
+    x0 = int(center_x - half_width)
+    x1 = int(center_x + half_width)
+    cv2.rectangle(frame, (x0, y), (x1, y + height), (70, 70, 70), 1)
+    cv2.line(frame, (center_x, y - 2), (center_x, y + height + 2), (155, 155, 155), 1)
+
+    if max_value <= 1e-9:
+        return
+
+    magnitude = int(np.clip(abs(float(value)) / max_value, 0.0, 1.0) * half_width)
+    if magnitude <= 0:
+        return
+
+    if value >= 0.0:
+        cv2.rectangle(frame, (center_x, y), (center_x + magnitude, y + height), color, -1)
+    else:
+        cv2.rectangle(frame, (center_x - magnitude, y), (center_x, y + height), color, -1)
 
 
 def _apply_vector_semantics(vec, config: ForceFeedbackConfig):

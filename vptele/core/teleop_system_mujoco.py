@@ -413,6 +413,30 @@ class TeleopSystemMujoco:
                 "force_guidance_max_torque_nm",
                 2.0,
             ),
+            "torque_guidance_mode": self.config.get(
+                "torque_guidance_mode",
+                "tilt_axes",
+            ),
+            "torque_guidance_min_force_n": self.config.get(
+                "torque_guidance_min_force_n",
+                5.0,
+            ),
+            "torque_guidance_min_torque_nm": self.config.get(
+                "torque_guidance_min_torque_nm",
+                0.05,
+            ),
+            "torque_guidance_max_torque_nm": self.config.get(
+                "torque_guidance_max_torque_nm",
+                self.config.get("force_guidance_max_torque_nm", 2.0),
+            ),
+            "torque_guidance_label_as_posture": self.config.get(
+                "torque_guidance_label_as_posture",
+                True,
+            ),
+            "torque_guidance_show_numeric_values": self.config.get(
+                "torque_guidance_show_numeric_values",
+                True,
+            ),
             "force_guidance_draw_numeric_values": self.config.get(
                 "force_guidance_draw_numeric_values",
                 True,
