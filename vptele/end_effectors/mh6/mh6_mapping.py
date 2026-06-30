@@ -77,6 +77,7 @@ class MappingCalibration:
         }
     )
     opposition_threshold: float = 0.35
+    thumb_abduction_open: Optional[float] = None
 
 
 def validate_points(points: np.ndarray) -> np.ndarray:
@@ -115,6 +116,13 @@ def distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(np.asarray(a, dtype=float) - np.asarray(b, dtype=float)))
 
 
+def safe_normalize(v: np.ndarray) -> Optional[np.ndarray]:
+    norm = float(np.linalg.norm(v))
+    if norm <= 1e-12:
+        return None
+    return np.asarray(v, dtype=float) / norm
+
+
 def normalize(value: float, open_value: float, closed_value: float) -> float:
     denom = float(closed_value) - float(open_value)
     if abs(denom) <= 1e-12:
@@ -131,8 +139,15 @@ def threshold_strength(value: float, threshold: float) -> float:
 
 
 class MH6HandMapper:
-    def __init__(self, calibration: Optional[MappingCalibration] = None) -> None:
+    def __init__(
+        self,
+        calibration: Optional[MappingCalibration] = None,
+        thumb_abduction_sign: float = 1.0,
+        thumb_abduction_range: float = 0.35,
+    ) -> None:
         self.calibration = calibration if calibration is not None else MappingCalibration()
+        self.thumb_abduction_sign = float(thumb_abduction_sign)
+        self.thumb_abduction_range = float(thumb_abduction_range)
 
     def calibrate_open(self, samples: List[np.ndarray]) -> None:
         if not samples:
@@ -140,6 +155,7 @@ class MH6HandMapper:
 
         curls = {finger: [] for finger in FINGER_NAMES}
         opposition_distances = {finger: [] for finger in LONG_FINGERS}
+        thumb_abductions = []
         for sample in samples:
             points = validate_points(sample)
             raw_curls = self.compute_finger_curls(points)
@@ -150,12 +166,19 @@ class MH6HandMapper:
             for finger in LONG_FINGERS:
                 opposition_distances[finger].append(distance(thumb_tip, points[TIP_INDICES[finger]]))
 
+            raw_thumb_abduction = self.compute_raw_thumb_abduction(points)
+            if raw_thumb_abduction is not None:
+                thumb_abductions.append(raw_thumb_abduction)
+
         self.calibration.curl_open = {
             finger: float(np.mean(values)) for finger, values in curls.items()
         }
         self.calibration.opposition_open_dist = {
             finger: float(np.mean(values)) for finger, values in opposition_distances.items()
         }
+        self.calibration.thumb_abduction_open = (
+            float(np.mean(thumb_abductions)) if thumb_abductions else None
+        )
 
     def compute_finger_curls(self, points: np.ndarray) -> Dict[str, float]:
         points = validate_points(points)
@@ -193,12 +216,67 @@ class MH6HandMapper:
             opposition[key] = threshold_strength(raw_strength, self.calibration.opposition_threshold)
         return opposition
 
+    def compute_raw_thumb_abduction(self, points: np.ndarray) -> Optional[float]:
+        """Return signed root-based thumb lateral deviation in the palm plane.
+
+        Uses thumb root direction thumb_mcp - thumb_cmc, not the thumb tip. The
+        sign convention depends on the hand-side coordinate frame and should be
+        empirically verified.
+        """
+
+        points = validate_points(points)
+        wrist = points[0]
+        thumb_cmc = points[1]
+        thumb_mcp = points[2]
+        index_mcp = points[5]
+        middle_mcp = points[9]
+        little_mcp = points[17]
+
+        palm_forward = safe_normalize(middle_mcp - wrist)
+        if palm_forward is None:
+            return None
+
+        palm_lateral_raw = little_mcp - index_mcp
+        palm_lateral_raw = palm_lateral_raw - float(np.dot(palm_lateral_raw, palm_forward)) * palm_forward
+        palm_lateral = safe_normalize(palm_lateral_raw)
+        if palm_lateral is None:
+            return None
+
+        palm_normal = safe_normalize(np.cross(palm_forward, palm_lateral))
+        if palm_normal is None:
+            return None
+
+        thumb_vec = safe_normalize(thumb_mcp - thumb_cmc)
+        if thumb_vec is None:
+            return None
+
+        thumb_vec_plane_raw = thumb_vec - float(np.dot(thumb_vec, palm_normal)) * palm_normal
+        thumb_vec_plane = safe_normalize(thumb_vec_plane_raw)
+        if thumb_vec_plane is None:
+            return None
+
+        return clip(float(np.dot(thumb_vec_plane, palm_lateral)), -1.0, 1.0)
+
+    def compute_thumb_abduction(self, points: np.ndarray) -> float:
+        raw_thumb_abduction = self.compute_raw_thumb_abduction(points)
+        if raw_thumb_abduction is None or self.calibration.thumb_abduction_open is None:
+            return 0.0
+        if self.thumb_abduction_range <= 1e-6:
+            return 0.0
+        delta = raw_thumb_abduction - self.calibration.thumb_abduction_open
+        return clip(
+            self.thumb_abduction_sign * delta / self.thumb_abduction_range,
+            0.0,
+            1.0,
+        )
+
     def compute_low_dim(self, points: np.ndarray) -> Dict[str, float]:
-        """Return the 7D normalized command.
+        """Return the 8D normalized command.
 
         Fingers are 0=open/extended and 1=curled/closed. u_h is 0=open/flat
         palm and 1=maximum palm enclosure/flexion. u_v is -1=index/middle side,
-        0=neutral, and +1=ring/little side.
+        0=neutral, and +1=ring/little side. u_thumb_abduction is 0=calibrated
+        open-hand neutral and 1=maximum configured thumb abduction direction.
         """
 
         return self.step(points)["low_dim"]
@@ -207,13 +285,16 @@ class MH6HandMapper:
         """Return debug-friendly mapping outputs with normalized conventions.
 
         low_dim finger values are 0=open and 1=closed. Palm block values are
-        0=open and 1=maximum corresponding block flexion.
+        0=open and 1=maximum corresponding block flexion. low_dim order is
+        [u_thumb, u_index, u_middle, u_ring, u_little, u_h, u_v,
+        u_thumb_abduction].
         """
 
         points = validate_points(points)
         curl_raw = self.compute_finger_curls(points)
         curl_norm = self.compute_normalized_curls(points)
         opposition = self.compute_opposition(points)
+        u_thumb_abduction = self.compute_thumb_abduction(points)
 
         p_i = opposition["p_I"]
         p_m = opposition["p_M"]
@@ -263,6 +344,7 @@ class MH6HandMapper:
                 "u_little": u_little,
                 "u_h": u_h,
                 "u_v": u_v,
+                "u_thumb_abduction": u_thumb_abduction,
             },
             "palm": {
                 "thumbSide": thumb_side,

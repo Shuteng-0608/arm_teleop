@@ -80,11 +80,16 @@ class MH6HandTeleopROS(EndEffectorBase):
         self.update_frequency = float(self.config.get("update_frequency", 0.05))
         self.calibrate_seconds = float(self.config.get("calibrate_seconds", 2.0))
         self.filter_tau = float(self.config.get("filter_tau", 0.24))
+        self.thumb_abduction_sign = float(self.config.get("thumb_abduction_sign", 1.0))
+        self.thumb_abduction_range = float(self.config.get("thumb_abduction_range", 0.35))
         self.palm_times = self._parse_palm_times(self.config.get("palm_times", [50, 50, 50]))
         self.allow_legacy_25_fingers = bool(self.config.get("allow_legacy_25_fingers", True))
         queue_size = int(self.config.get("queue_size", 1))
 
-        self.mapper = MH6HandMapper()
+        self.mapper = MH6HandMapper(
+            thumb_abduction_sign=self.thumb_abduction_sign,
+            thumb_abduction_range=self.thumb_abduction_range,
+        )
         self.command_filter = CommandLowPassFilter(self.filter_tau) if self.filter_tau > 0.0 else None
         self.calibrated = False
         self.publisher = rospy.Publisher(self.topic, MH6NormalizedCommand, queue_size=queue_size)
@@ -191,6 +196,7 @@ class MH6HandTeleopROS(EndEffectorBase):
             float(low_dim["u_little"]),
             float(low_dim["u_h"]),
             float(low_dim["u_v"]),
+            float(low_dim["u_thumb_abduction"]),
         ]
         msg.intent = [
             float(intent.get("P_opp", 0.0)),

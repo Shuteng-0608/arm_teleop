@@ -8,5 +8,5 @@ float32[5] finger_values
 float32[3] palm_values
 uint16[3] palm_times
 
-float32[7] low_dim
+float32[8] low_dim
 float32[3] intent

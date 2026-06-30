@@ -38,6 +38,8 @@ mh6_config:
   update_frequency: 0.05
   calibrate_seconds: 2.0
   filter_tau: 0.24
+  thumb_abduction_sign: 1.0
+  thumb_abduction_range: 0.35
   palm_times: [50, 50, 50]
   queue_size: 1
   allow_legacy_25_fingers: true
