@@ -105,6 +105,7 @@ add_message_files(
   DualArmMovej.msg
   DualHandTele.msg
   MH6NormalizedCommand.msg
+  PalmAlpha.msg
 )
 
 ## Generate services in the 'srv' folder

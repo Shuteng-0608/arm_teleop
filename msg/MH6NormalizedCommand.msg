@@ -10,3 +10,5 @@ uint16[3] palm_times
 
 float32[8] low_dim
 float32[3] intent
+
+PalmAlpha palm_alpha

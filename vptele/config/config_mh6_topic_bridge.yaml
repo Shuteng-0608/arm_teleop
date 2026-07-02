@@ -33,7 +33,7 @@ arm_config:
   rz_range: [-2.8, -2.5]
 
 mh6_config:
-  hand: "left"
+  hand: "right"
   topic: "/arm_teleop/mh6_normalized_cmd"
   update_frequency: 0.05
   calibrate_seconds: 2.0

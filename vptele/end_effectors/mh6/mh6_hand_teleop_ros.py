@@ -13,9 +13,9 @@ from end_effectors.end_effector_base import EndEffectorBase
 from end_effectors.mh6.mh6_mapping import MH6HandMapper
 from end_effectors.mh6.visionpro_adapter import extract_mh6_points
 from utils.logger import get_logger
+from utils.alpha_from_theta import MH6PalmSolver
 
 logger = get_logger()
-
 
 class CommandLowPassFilter:
     """Time-aware first-order low-pass filter for normalized command sections."""
@@ -73,6 +73,7 @@ class MH6HandTeleopROS(EndEffectorBase):
     def __init__(self, vp_streamer, robot_controller, config=None):
         super().__init__(vp_streamer, robot_controller, config)
         self.hand = self.config.get("hand", "left")
+        self.solver = MH6PalmSolver()
         if self.hand not in ("left", "right"):
             raise ValueError("mh6_config.hand must be 'left' or 'right'")
 
@@ -203,5 +204,23 @@ class MH6HandTeleopROS(EndEffectorBase):
             float(intent.get("g", 0.0)),
             float(intent.get("t", 0.0)),
         ]
+        try:
+            msg.palm_alpha.a1, msg.palm_alpha.a2, msg.palm_alpha.a3, msg.palm_alpha.err = self.solver.solve_alpha(
+                low_dim["u_h"] * 180,
+                low_dim["u_v"] * 180,
+                low_dim["u_thumb_abduction"] * 180,
+                verbose=True,
+            )[0]
+            rospy.logdebug(f"MH6 palm alpha computed: {msg.palm_alpha}")
+        except Exception as e:
+            rospy.logwarn_throttle(5.0, f"MH6 palm alpha computation failed: {e}")
+            msg.palm_alpha.a1 = 0.0
+            msg.palm_alpha.a2 = 0.0
+            msg.palm_alpha.a3 = 0.0
+            msg.palm_alpha.err = 0.0
+        
+        # logger.debug(f"Publishing MH6 normalized command: {msg}")
+        logger.debug(f" low_dim={low_dim['u_h'] * 180, low_dim['u_v'] * 180, low_dim['u_thumb_abduction'] * 180}")
+        logger.debug(f" palm_alpha={msg.palm_alpha.a1, msg.palm_alpha.a2, msg.palm_alpha.a3, msg.palm_alpha.err}")
 
         self.publisher.publish(msg)

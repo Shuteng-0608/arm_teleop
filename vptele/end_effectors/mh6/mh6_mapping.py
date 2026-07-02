@@ -315,7 +315,8 @@ class MH6HandMapper:
 
         b_f = 0.5 * (u_ring + u_little) - 0.5 * (u_index + u_middle)
         o_v = clip(-0.25 * p_i - 0.45 * p_m + 0.75 * p_r + 1.00 * p_l, -1.0, 1.0)
-        u_v = clip(0.30 * b_f + 0.70 * o_v, -1.0, 1.0)
+        u_v_bias = clip(0.30 * b_f + 0.70 * o_v, -1.0, 1.0)
+        u_v = clip(0.5 + 0.5 * u_v_bias, 0.0, 1.0)
 
         # Palm block expansion:
         # - u_h: 0=open/flat, 1=maximum enclosure/flexion
