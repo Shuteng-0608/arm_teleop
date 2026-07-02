@@ -96,7 +96,8 @@ class ArmTeleopROS:
         pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        self.current_arm_angle_right = 0
+        # self.current_arm_angle_right = -1.2
+        self.current_arm_angle_right = -1
         # self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
@@ -120,7 +121,9 @@ class ArmTeleopROS:
                                          self.initial_left_robot_pose_aa[5]], 
                                         degrees=False)
         # self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
-        self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
+        # self.last_left_joint_angles = [-0.0433303, 0.141567, 0.0831955, 1.59424, -1.37614, -0.115441, -0.00507801]
+        self.last_left_joint_angles = [-0.046, 0.2, 0.0, 1.6, -1.32, -0.005, -0.005]
+
         pq_request = MovejServiceRequest()
         pq_request.arm_id = 0
         pq_request.target_joints = self.last_left_joint_angles
@@ -131,7 +134,8 @@ class ArmTeleopROS:
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
-        self.current_arm_angle_left = 0
+        # self.current_arm_angle_left = -1.2
+        self.current_arm_angle_left = -1
         logger.info("LEFT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[LEFT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_left_robot_pose]}")
 
@@ -220,7 +224,7 @@ class ArmTeleopROS:
         self.calibrate_left_hand_position()
 
         self.lastest_head_z_rotation = 0.0
-        self.calibrate_head_position()
+        # self.calibrate_head_position()
 
         # self.head_thread = None
         logger.info("启动 头部数据获取线程...")
@@ -394,10 +398,10 @@ class ArmTeleopROS:
             self.file_handle.close()
             rospy.loginfo(f"CSV文件已安全保存: {self.csv_filename}")
 
-    def arm_angle_callback(self, msg: ArmAngle):
-        """接收机械臂当前臂角的回调函数"""
-        self.current_arm_angle_right = msg.right_arm_angle
-        self.current_arm_angle_left = msg.left_arm_angle
+    # def arm_angle_callback(self, msg: ArmAngle):
+    #     """接收机械臂当前臂角的回调函数"""
+    #     self.current_arm_angle_right = msg.right_arm_angle
+    #     self.current_arm_angle_left = msg.left_arm_angle
     
     def calibrate_head_position(self):
         """校准头部位置，记录初始位置作为参考点"""
@@ -713,6 +717,50 @@ class ArmTeleopROS:
         quaternion_pose = np.concatenate([position, quat_scipy])
         
         return quaternion_pose
+    
+    def aa_loop(self, arm_side='right'):
+        """臂角预测循环"""
+        logger.info(f"============ {arm_side}臂角预测 ============")
+        while self.running:
+            
+            try:
+                # 获取最新的手部数据
+                hand_data = self.vp_streamer.latest
+                hand_data = self.vp_streamer.get_hand_position(hand=arm_side)
+                # 只有当遥操作激活时才执行控制
+                if self.teleop_active:
+                    # 提取右手腕的完整变换矩阵
+                    hand_transform = hand_data[0]
+                    
+                    # 映射到机械臂位置和姿态
+                    target_pose_aa = self.map_hand_to_robot_aa(hand_transform, arm_side)
+                    
+                    target_pose_in_quat_aa = self.euler_to_quaternion_aa(target_pose_aa)
+
+                    aa_req = PredictArmAngleRequest()
+
+                    if arm_side == 'right':
+                        aa_req.arm_side = arm_side
+                        aa_req.pose = target_pose_in_quat_aa
+                        aa_result = self.arm_angle_subscriber.call(aa_req)
+                        self.current_arm_angle_right = aa_result.arm_angle_rad * -1
+                        
+                        
+                    elif arm_side == 'left':
+                        aa_req.arm_side = arm_side
+                        aa_req.pose = target_pose_in_quat_aa
+                        aa_result = self.arm_angle_subscriber.call(aa_req)
+                        self.current_arm_angle_left = aa_result.arm_angle_rad * -1
+
+                
+                
+                time.sleep(0.03)
+
+            except Exception as e:
+                logger.error(f"臂角预测循环出错: {str(e)}", exc_info=True)  # 使用exc_info=True记录完整堆栈
+                time.sleep(1)  # 错误恢复等待
+
+
 
     def control_loop(self, arm_side="left", arm_id=0):
         """控制循环，持续更新机械臂位置和姿态"""
@@ -751,45 +799,45 @@ class ArmTeleopROS:
                     
                     # 映射到机械臂位置和姿态
                     target_pose = self.map_hand_to_robot(hand_transform, arm_side) # [位置(x,y,z) + 欧拉角(rx,ry,rz)]
-                    target_pose_aa = self.map_hand_to_robot_aa(hand_transform, arm_side)
+                    # target_pose_aa = self.map_hand_to_robot_aa(hand_transform, arm_side)
                     # raw_target_pose = 
                     logger.info(f'{arm_side}目标位置: {[round(x, 4) for x in target_pose]}')
                     
                     # 应用平滑过滤到位置
                     target_pose_in_quat = self.euler_to_quaternion(target_pose) # 转为四元数形式 [x, y, z, qw, qx, qy, qz]
-                    target_pose_in_quat_aa = self.euler_to_quaternion_aa(target_pose_aa)
+                    # target_pose_in_quat_aa = self.euler_to_quaternion_aa(target_pose_aa)
                     current_timestamp = time.time()
 
                     self.mapping_time = time.time() - loop_start_time # TIMEPOINT
 
-                    aa_req = PredictArmAngleRequest()
+                    # aa_req = PredictArmAngleRequest()
 
                     if arm_side == 'right':
                         # 对[姿态]进行 1Euro 滤波
                         smooth_target_in_quat = self.pose_filter_right.process(target_pose_in_quat, current_timestamp)
 
-                        smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
+                        # smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
 
                         self.last_target_pose_right = target_pose.copy()
                         self.last_target_pose_right_quat = target_pose_in_quat.copy()
                         self.last_target_pose_right_smooth = smooth_target_in_quat.copy()
 
-                        aa_req.arm_side = arm_side
-                        aa_req.pose = smooth_target_in_quat_aa
+                        # aa_req.arm_side = arm_side
+                        # aa_req.pose = target_pose_in_quat_aa
                         # aa_result = self.arm_angle_subscriber.call(aa_req)
                         
                         
                     elif arm_side == 'left':
                         smooth_target_in_quat = self.pose_filter_left.process(target_pose_in_quat, current_timestamp)
 
-                        smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
+                        # smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
 
                         self.last_target_pose_left = target_pose.copy()
                         self.last_target_pose_left_quat = target_pose_in_quat.copy()
                         self.last_target_pose_left_smooth = smooth_target_in_quat.copy()
 
-                        aa_req.arm_side = arm_side
-                        aa_req.pose = smooth_target_in_quat_aa
+                        # aa_req.arm_side = arm_side
+                        # aa_req.pose = target_pose_in_quat_aa
                         # aa_result = self.arm_angle_subscriber.call(aa_req)
                         
                     
@@ -809,13 +857,18 @@ class ArmTeleopROS:
                     ik_request = ArmIKRequest()
                     # ======================== [feasible method] ========================
                     if arm_side == 'right':
-                        ik_request.method = 'optimal_ref'  # 使用组合方法
+                        ik_request.method = 'feasible_ref'  # 使用组合方法
                         # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
                         ik_request.current_arm_angle = self.current_arm_angle_right
+                        # ik_request.current_arm_angle = -1
+                        logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_right}")
                     elif arm_side == 'left':
-                        ik_request.method = 'optimal_ref'  # 使用组合方法
-                        # ik_request.current_arm_angle = aa_result.arm_angle_rad
+                        ik_request.method = 'feasible_ref'  # 使用组合方法
+                        # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
                         ik_request.current_arm_angle = self.current_arm_angle_left
+                        # ik_request.current_arm_angle = -1
+                        logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_left}")
+                    
                     
                     
                     # ik_request.current_arm_angle = aa_result.arm_angle_rad
@@ -832,7 +885,7 @@ class ArmTeleopROS:
                     search_list = offset_list1 + offset_list2
                     
                     ik_request.offset_list = search_list
-                    ik_request.offset_refer = 0.5
+                    ik_request.offset_refer = 1.0
 
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
@@ -867,6 +920,7 @@ class ArmTeleopROS:
                             self.current_arm_angle_left = response.new_arm_angle
                             self.last_left_joint_angles = [round(angle, 4) for angle in joint_angles]
                         rospy.loginfo(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left}")
+                        logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left}")
                         rospy.loginfo(f"[{arm_side}] 逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")
                         logger.info(f"[{arm_side}] 逆解成功")
                         
@@ -923,6 +977,7 @@ class ArmTeleopROS:
 
                     else:
                         rospy.logwarn(f"[{arm_side}] 逆解失败，无法控制到位置: {joint_angles}")
+                        logger.error(f"[{arm_side}] 逆解失败，无法控制到位置: {joint_angles}")
                     
                     self.filter_time = time.time() - loop_start_time
                     
@@ -1039,6 +1094,16 @@ class ArmTeleopROS:
         self.control_thread_right.daemon = True
         self.control_thread_right.start()
 
+        logger.info("启动 [RIGHT ARM] 机械臂臂角预测线程...")
+        self.aa_thread_right = Thread(
+            target=self.aa_loop, 
+            kwargs={'arm_side': "right"},
+            name="RightArmAAThread")
+        self.aa_thread_right.daemon = True
+        self.aa_thread_right.start()
+
+        
+
         logger.info("启动 [LEFT ARM] 机械臂遥操作控制线程...")
         self.control_thread_left = Thread(
             target=self.control_loop, 
@@ -1047,6 +1112,14 @@ class ArmTeleopROS:
             name="LeftArmTeleopThread")
         self.control_thread_left.daemon = True
         self.control_thread_left.start()
+
+        logger.info("启动 [LEFTT ARM] 机械臂臂角预测线程...")
+        self.aa_thread_left = Thread(
+            target=self.aa_loop, 
+            kwargs={'arm_side': "left"},
+            name="LeftArmAAThread")
+        self.aa_thread_left.daemon = True
+        self.aa_thread_left.start()
 
         # logger.info("启动 头部数据获取线程...")
         # self.head_thread = Thread(target=self.head_loop, daemon=True) 
