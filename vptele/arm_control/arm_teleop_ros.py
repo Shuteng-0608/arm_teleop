@@ -274,8 +274,8 @@ class ArmTeleopROS:
 
         # 4. 创建 ROS 服务，用于控制记录的启停
         """
-        rosservice call /teleop_data_logger/toggle_data_recording "data: true"
-        rosservice call /teleop_data_logger/toggle_data_recording "data: false"
+        rosservice call /toggle_data_recording "data: true"
+        rosservice call /toggle_data_recording "data: false"
         """
         self.record_srv = rospy.Service(
             '/toggle_data_recording', 
