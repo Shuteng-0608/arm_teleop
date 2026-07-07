@@ -96,8 +96,8 @@ class ArmTeleopROS:
         pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        # self.current_arm_angle_right = -1.2
-        self.current_arm_angle_right = -1
+        self.current_arm_angle_right = -1.2
+        # self.current_arm_angle_right = -1
         # self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
@@ -134,8 +134,8 @@ class ArmTeleopROS:
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
-        # self.current_arm_angle_left = -1.2
-        self.current_arm_angle_left = -1
+        self.current_arm_angle_left = -1.2
+        # self.current_arm_angle_left = -1
         logger.info("LEFT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[LEFT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_left_robot_pose]}")
 
@@ -232,6 +232,9 @@ class ArmTeleopROS:
         # self.head_thread.start()
 
         # For data logging
+        # 【修改】使用 perf_counter 作为基准时间，用于高精度耗时计算
+        self._base_perf_time = time.perf_counter()
+        
         self.vp_time = 0.0
         self.mapping_time = 0.0
         self.euro_time = 0.0
@@ -297,12 +300,15 @@ class ArmTeleopROS:
         
         while not rospy.is_shutdown():
             if self.is_recording:
-                # current_timestamp = rospy.get_time()
-                current_timestamp = time.time()
-                row_data = [current_timestamp]
+                # 【修改】使用 time.time() 记录绝对时间，用于后期对齐日志
+                abs_timestamp = time.time()
+                # 【修改】使用 perf_counter 记录相对时间，用于精确计算耗时
+                rel_timestamp = time.perf_counter() - self._base_perf_time
                 
-                # 使用锁安全地复制所有当前数据
+                # 【修改】使用锁安全地复制所有当前数据，防止数据撕裂
                 with self.data_lock:
+                    row_data = [abs_timestamp, rel_timestamp]
+                    
                     # 1. 写入位姿数据
                     row_data.extend(self.last_target_pose_right_smooth)
                     row_data.extend(self.last_target_pose_right_quat)
@@ -323,11 +329,18 @@ class ArmTeleopROS:
                     # 32-45列: 左臂原始7个关节角 + 左臂平滑7个关节角 + 右臂原始7个关节角 + 右臂平滑7个关节角
 
                     # 4. 耗时
-                    row_data.append(self.vp_time)
-                    row_data.append(self.mapping_time - self.vp_time) 
-                    row_data.append(self.euro_time - self.mapping_time)
-                    row_data.append(self.ik_time - self.euro_time)
-                    row_data.append(self.filter_time - self.ik_time)
+                    # 【修改】使用 max(0.0, ...) 防止浮点误差导致负数
+                    vp_dur = self.vp_time
+                    map_dur = max(0.0, self.mapping_time - self.vp_time)
+                    euro_dur = max(0.0, self.euro_time - self.mapping_time)
+                    ik_dur = max(0.0, self.ik_time - self.euro_time)
+                    filter_dur = max(0.0, self.filter_time - self.ik_time)
+                    
+                    row_data.append(vp_dur)
+                    row_data.append(map_dur)
+                    row_data.append(euro_dur)
+                    row_data.append(ik_dur)
+                    row_data.append(filter_dur)
                     row_data.append(self.loop_cost_time)
 
                 
@@ -338,7 +351,7 @@ class ArmTeleopROS:
     
     def _write_csv_header(self):
         """生成并写入CSV表头"""
-        header = ['timestamp']
+        header = ['abs_timestamp', 'rel_timestamp']  # 【修改】增加两列时间戳
         prefixes = ['r_smooth', 'r_raw', 'l_smooth', 'l_raw']
         suffixes = ['px', 'py', 'pz', 'qw', 'qx', 'qy', 'qz']
         
@@ -769,17 +782,18 @@ class ArmTeleopROS:
         
         # 添加 FPS 计算相关变量
         frame_count = 0
-        last_fps_time = time.time()
+        last_fps_time = time.time()  # 【保留原样】FPS计算用time.time没问题
         max_record_time = 0.0
         recorded_time = 0.0
         # loop_time = 0.0
         # max_loop_time = 0.0
         while self.running:
-            loop_start_time = time.time() # TIMEPOINT
+            # 【修改】使用 perf_counter 作为循环起点，不受系统时间调整影响
+            loop_start_time = time.perf_counter()
             try:
                 # 增加帧计数
                 frame_count += 1
-                current_time = time.time()
+                current_time = time.time()  # 【保留原样】FPS计算
                 
                 # 每秒计算并显示一次 FPS
                 # if current_time - last_fps_time >= 1.0:
@@ -791,7 +805,8 @@ class ArmTeleopROS:
                 # 获取最新的手部数据
                 hand_data = self.vp_streamer.latest
                 hand_data = self.vp_streamer.get_hand_position(hand=arm_side)
-                self.vp_time = time.time() - loop_start_time # TIMEPOINT
+                # 【修改】使用 perf_counter 计算耗时
+                self.vp_time = time.perf_counter() - loop_start_time
                 # 只有当遥操作激活时才执行控制
                 if self.teleop_active:
                     # 提取右手腕的完整变换矩阵
@@ -806,9 +821,10 @@ class ArmTeleopROS:
                     # 应用平滑过滤到位置
                     target_pose_in_quat = self.euler_to_quaternion(target_pose) # 转为四元数形式 [x, y, z, qw, qx, qy, qz]
                     # target_pose_in_quat_aa = self.euler_to_quaternion_aa(target_pose_aa)
-                    current_timestamp = time.time()
+                    current_timestamp = time.time()  # 【保留原样】滤波器接口可能需要time.time
 
-                    self.mapping_time = time.time() - loop_start_time # TIMEPOINT
+                    # 【修改】使用 perf_counter 计算耗时
+                    self.mapping_time = time.perf_counter() - loop_start_time
 
                     # aa_req = PredictArmAngleRequest()
 
@@ -818,9 +834,11 @@ class ArmTeleopROS:
 
                         # smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
 
-                        self.last_target_pose_right = target_pose.copy()
-                        self.last_target_pose_right_quat = target_pose_in_quat.copy()
-                        self.last_target_pose_right_smooth = smooth_target_in_quat.copy()
+                        # 【修改】加锁保护共享数据
+                        with self.data_lock:
+                            self.last_target_pose_right = target_pose.copy()
+                            self.last_target_pose_right_quat = target_pose_in_quat.copy()
+                            self.last_target_pose_right_smooth = smooth_target_in_quat.copy()
 
                         # aa_req.arm_side = arm_side
                         # aa_req.pose = target_pose_in_quat_aa
@@ -832,9 +850,11 @@ class ArmTeleopROS:
 
                         # smooth_target_in_quat_aa = self.pose_filter_right.process(target_pose_in_quat_aa, current_timestamp)
 
-                        self.last_target_pose_left = target_pose.copy()
-                        self.last_target_pose_left_quat = target_pose_in_quat.copy()
-                        self.last_target_pose_left_smooth = smooth_target_in_quat.copy()
+                        # 【修改】加锁保护共享数据
+                        with self.data_lock:
+                            self.last_target_pose_left = target_pose.copy()
+                            self.last_target_pose_left_quat = target_pose_in_quat.copy()
+                            self.last_target_pose_left_smooth = smooth_target_in_quat.copy()
 
                         # aa_req.arm_side = arm_side
                         # aa_req.pose = target_pose_in_quat_aa
@@ -847,7 +867,8 @@ class ArmTeleopROS:
                     if not hasattr(self, 'last_log_time') or current_time - self.last_log_time > 0.1:
                         # logger.info(f"目标位置: {[round(x, 4) for x in smooth_target]}")
                         self.last_log_time = current_time
-                    self.euro_time = time.time() - loop_start_time # TIMEPOINT
+                    # 【修改】使用 perf_counter 计算耗时
+                    self.euro_time = time.perf_counter() - loop_start_time
 
 
 
@@ -859,13 +880,17 @@ class ArmTeleopROS:
                     if arm_side == 'right':
                         ik_request.method = 'feasible_ref'  # 使用组合方法
                         # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
-                        ik_request.current_arm_angle = self.current_arm_angle_right
+                        # 【修改】加锁读取臂角
+                        with self.data_lock:
+                            ik_request.current_arm_angle = self.current_arm_angle_right
                         # ik_request.current_arm_angle = -1
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_right}")
                     elif arm_side == 'left':
                         ik_request.method = 'feasible_ref'  # 使用组合方法
                         # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
-                        ik_request.current_arm_angle = self.current_arm_angle_left
+                        # 【修改】加锁读取臂角
+                        with self.data_lock:
+                            ik_request.current_arm_angle = self.current_arm_angle_left
                         # ik_request.current_arm_angle = -1
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_left}")
                     
@@ -879,9 +904,13 @@ class ArmTeleopROS:
                     offset_list1 = [0, -0.1, -0.2, -0.3, -0.4, -0.5]
                     # ⚠️ 注意这里：也必须改为围绕修正后的 `ik_phi` 进行搜索，而不是原来的 `predicted_arm_angle_rad`
                     if arm_side == "right":
-                        offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                        # 【修改】加锁读取臂角
+                        with self.data_lock:
+                            offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
                     else:
-                        offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                        # 【修改】加锁读取臂角
+                        with self.data_lock:
+                            offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
                     search_list = offset_list1 + offset_list2
                     
                     ik_request.offset_list = search_list
@@ -896,10 +925,14 @@ class ArmTeleopROS:
                     ik_request.target_pose.orientation.y = smooth_target_in_quat[5]
                     ik_request.target_pose.orientation.z = smooth_target_in_quat[6]
                     if arm_side == 'right':
-                        ik_request.init_joints = self.last_right_joint_angles if self.last_right_joint_angles is not None else []
+                        # 【修改】加锁读取关节角
+                        with self.data_lock:
+                            ik_request.init_joints = self.last_right_joint_angles if self.last_right_joint_angles is not None else []
                         response = self.right_ik_service.call(ik_request)
                     elif arm_side == 'left':
-                        ik_request.init_joints = self.last_left_joint_angles if self.last_left_joint_angles is not None else []
+                        # 【修改】加锁读取关节角
+                        with self.data_lock:
+                            ik_request.init_joints = self.last_left_joint_angles if self.last_left_joint_angles is not None else []
                         response = self.left_ik_service.call(ik_request)
                     success = response.success
                     joint_angles = response.solution
@@ -907,18 +940,23 @@ class ArmTeleopROS:
                     max_record_time = recorded_time if recorded_time > max_record_time else max_record_time 
                     rospy.loginfo(f"{arm_side}逆解耗时: {time.time() - start_time:.4f} 秒")
                     rospy.loginfo(f"当前最大逆解耗时: {max_record_time:.4f} 秒")
-                    self.ik_time = time.time() - loop_start_time # TIMEPOINT
+                    # 【修改】使用 perf_counter 计算耗时
+                    self.ik_time = time.perf_counter() - loop_start_time
                     
 
                     
                     if success:
                         # 更新最后使用的关节角度
                         if arm_side == 'right':
-                            self.current_arm_angle_right = response.new_arm_angle
-                            self.last_right_joint_angles = [round(angle, 4) for angle in joint_angles]
+                            # 【修改】加锁保护所有共享数据
+                            with self.data_lock:
+                                self.current_arm_angle_right = response.new_arm_angle
+                                self.last_right_joint_angles = [round(angle, 4) for angle in joint_angles]
                         elif arm_side == 'left':
-                            self.current_arm_angle_left = response.new_arm_angle
-                            self.last_left_joint_angles = [round(angle, 4) for angle in joint_angles]
+                            # 【修改】加锁保护所有共享数据
+                            with self.data_lock:
+                                self.current_arm_angle_left = response.new_arm_angle
+                                self.last_left_joint_angles = [round(angle, 4) for angle in joint_angles]
                         rospy.loginfo(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left}")
                         logger.info(f"[{arm_side}] 当前臂角: {self.current_arm_angle_right if arm_side == 'right' else self.current_arm_angle_left}")
                         rospy.loginfo(f"[{arm_side}] 逆解成功，关节角度: {[round(angle, 4) for angle in joint_angles]}")
@@ -927,37 +965,40 @@ class ArmTeleopROS:
                         # 对计算的关节角度进行平滑处理
                         
                         if arm_side == 'right':
-                        #     # 对[关节角度]进行 1Euro 滤波
-                        #     # if self.last_smooth_joints_right is not None:
-                        #     #     smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
-                        #     #     self.last_smooth_joints_right = list(smooth_joints).copy()
-                            if self.last_smooth_joints_right is not None:
-                                smooth_joint_angles, self.joints_buffer_right = smooth_values(
-                                    joint_angles,
-                                    self.last_smooth_joints_right,
-                                    self.joints_buffer_right,
-                                    self.joints_smoothing_factor
-                                )
-                                self.last_smooth_joints_right = smooth_joint_angles.copy()
-                            else:
-                                smooth_joint_angles = joint_angles
-                                self.last_smooth_joints_right = joint_angles.copy()
+                            #     # 对[关节角度]进行 1Euro 滤波
+                            #     # if self.last_smooth_joints_right is not None:
+                            #     #     smooth_joints = self.joints_filter_right(current_timestamp, np.array(joint_angles))
+                            #     #     self.last_smooth_joints_right = list(smooth_joints).copy()
+                            # 【修改】加锁保护共享数据
+                            with self.data_lock:
+                                if self.last_smooth_joints_right is not None:
+                                    smooth_joint_angles, self.joints_buffer_right = smooth_values(
+                                        joint_angles,
+                                        self.last_smooth_joints_right,
+                                        self.joints_buffer_right,
+                                        self.joints_smoothing_factor
+                                    )
+                                    self.last_smooth_joints_right = smooth_joint_angles.copy()
+                                else:
+                                    smooth_joint_angles = joint_angles
+                                    self.last_smooth_joints_right = joint_angles.copy()
                         elif arm_side == 'left':
-                        #     # if self.last_smooth_joints_left is not None:
-                        #     #     smooth_joints = self.joints_filter_left(current_timestamp, np.array(joint_angles))
-                        #     #     self.last_smooth_joints_left = list(smooth_joints).copy()
-                            
-                            if self.last_smooth_joints_left is not None:
-                                smooth_joint_angles, self.joints_buffer_left = smooth_values(
-                                    joint_angles,
-                                    self.last_smooth_joints_left,
-                                    self.joints_buffer_left,
-                                    self.joints_smoothing_factor
-                                )
-                                self.last_smooth_joints_left = smooth_joint_angles.copy()
-                            else:
-                                smooth_joint_angles = joint_angles
-                                self.last_smooth_joints_left = joint_angles.copy()
+                            #     # if self.last_smooth_joints_left is not None:
+                            #     #     smooth_joints = self.joints_filter_left(current_timestamp, np.array(joint_angles))
+                            #     #     self.last_smooth_joints_left = list(smooth_joints).copy()
+                            # 【修改】加锁保护共享数据
+                            with self.data_lock:
+                                if self.last_smooth_joints_left is not None:
+                                    smooth_joint_angles, self.joints_buffer_left = smooth_values(
+                                        joint_angles,
+                                        self.last_smooth_joints_left,
+                                        self.joints_buffer_left,
+                                        self.joints_smoothing_factor
+                                    )
+                                    self.last_smooth_joints_left = smooth_joint_angles.copy()
+                                else:
+                                    smooth_joint_angles = joint_angles
+                                    self.last_smooth_joints_left = joint_angles.copy()
                         
                         # for i in range(len(joint_angles)):
                         #     if arm_side == "right":
@@ -979,11 +1020,13 @@ class ArmTeleopROS:
                         rospy.logwarn(f"[{arm_side}] 逆解失败，无法控制到位置: {joint_angles}")
                         logger.error(f"[{arm_side}] 逆解失败，无法控制到位置: {joint_angles}")
                     
-                    self.filter_time = time.time() - loop_start_time
+                    # 【修改】使用 perf_counter 计算耗时
+                    self.filter_time = time.perf_counter() - loop_start_time
                     
                 
                 # 等待一段时间再更新
-                self.loop_cost_time = time.time() - loop_start_time
+                # 【修改】使用 perf_counter 计算耗时
+                self.loop_cost_time = time.perf_counter() - loop_start_time
 
                 if self.loop_cost_time > 0.03:
                     continue
@@ -1023,7 +1066,6 @@ class ArmTeleopROS:
                 # if abs(head_z_rotation) > 0.1:
                 #     rospy.loginfo(f"更新头部绕Z轴旋转角度: {head_z_rotation}")
                 #     self.lastest_head_z_rotation = head_z_rotation
-                #     dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
                 # else:
                 #     rospy.loginfo(f"保持头部绕Z轴旋转角度不变: {self.lastest_head_z_rotation}")
                 #     dual_arm_msg.head_z_rotation = self.lastest_head_z_rotation
@@ -1033,17 +1075,19 @@ class ArmTeleopROS:
                 dual_arm_msg.header = Header()
                 dual_arm_msg.header.stamp = rospy.Time.now()
                 dual_arm_msg.header.frame_id = "pangu_base"
-                dual_arm_msg.sequence = self.sequence
-                self.sequence += 1
+                # 【修改】加锁保护 sequence 和关节角
+                with self.data_lock:
+                    dual_arm_msg.sequence = self.sequence
+                    self.sequence += 1
+                    
+                    # 更新左右臂数据
+                    dual_arm_msg.right_arm.arm_id = 1
+                    dual_arm_msg.left_arm.arm_id = 0
+                    
+                    dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
+                    dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
                 
-                # 更新左右臂数据
-                dual_arm_msg.right_arm.arm_id = 1
-                dual_arm_msg.left_arm.arm_id = 0
-                
-                dual_arm_msg.right_arm.arm_joints = self.last_smooth_joints_right
-            
                 # dual_arm_msg.right_arm.arm_joints = [0,0,0,0,0,0,0]
-                dual_arm_msg.left_arm.arm_joints = self.last_smooth_joints_left
                 # dual_arm_msg.left_arm.arm_joints =  [0.314957,   0.238734,   -0.658534,   1.496385,   -1.000000,   -0.080329,   -0.113492 ]
                 # dual_arm_msg.left_arm.arm_joints = [0.555753,   0.369511,   -0.749425,   1.503231,   -0.766683,   -0.061464,   -0.051642]
 

@@ -85,7 +85,9 @@ struct IKResult {
     std::vector<std::tuple<Matrix3d, Matrix3d, Matrix3d, double, double, double, double>> log_ofst_phi_params;
     Vector3d vec_sw;
 
-
+    // ================== 新增 ==================
+    // int cnt;                   // 逆解搜索次数（-1：未执行 / 失败）
+    // =========================================
 
     IKResult() :
         final_sol(SerialZeros),
@@ -97,7 +99,8 @@ struct IKResult {
         n_ref(0,0,0),
         log_phis({0.0, 0.0, 0.0, 0.0}),
         log_ofst_phi_params(),
-        vec_sw(0,0,0)
+        vec_sw(0,0,0),
+        cnt(-1)                // 初始化为 -1
         {}
 };
 

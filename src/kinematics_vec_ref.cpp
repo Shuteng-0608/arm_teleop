@@ -919,7 +919,7 @@ IKResult ArmKineOfst::calculateIK_vec_ref(
 
     // 临时修改区域
     if (SELECT_SINGLE_SOL_LOG == true){
-        std::optional<SerialJoints> selected_solution = 
+        std::optional<SerialJoints> selected_solution = s
             select_sol_from_possible(SELECT_OFST_ID, possible_serial_joints);
         if (selected_solution.has_value()){
             // std::cout << "\n >>>>> 选择了第 " << SELECT_OFST_ID << " 个解  <<<<< \n";
@@ -1027,6 +1027,7 @@ IKResult ArmKineComb::cal_IK_feasible_armAngle_vec_ref(
     // 检查偏差解是否有效，以及检查偏差距离
     if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
         // 初始臂角计算成功且解符合要求，直接返回
+        // initial_result.cnt = 0;
         // std::cout << "Optimal IK solution found with initial Arm Angle: " << current_arm_angle << std::endl;
         return initial_result;
     }
