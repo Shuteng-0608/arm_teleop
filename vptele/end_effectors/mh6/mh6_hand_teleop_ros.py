@@ -13,7 +13,7 @@ from end_effectors.end_effector_base import EndEffectorBase
 from end_effectors.mh6.mh6_mapping import MH6HandMapper
 from end_effectors.mh6.visionpro_adapter import extract_mh6_points
 from utils.logger import get_logger
-from utils.alpha_from_theta import MH6PalmSolver
+from mh6_palm_solver.solve_from_arpha2_arpha3_theta1 import MH6PalmSolver
 
 logger = get_logger()
 
