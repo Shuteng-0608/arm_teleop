@@ -188,6 +188,7 @@ public:
             // // std::get<0>(ik_res.final_solution) *= -1;
 
             res.new_arm_angle = ik_res.arm_angle;
+            res.search_cnt= ik_res.search_cnt;  // ✅ 新增这一行
             
             // 验证结果
             bool verified = verifyIKSolution(solver_, Tee, ik_res);

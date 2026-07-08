@@ -96,8 +96,8 @@ class ArmTeleopROS:
         pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        self.current_arm_angle_right = -1.2
-        # self.current_arm_angle_right = -1
+        # self.current_arm_angle_right = -1.2
+        self.current_arm_angle_right = -1
         # self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
@@ -134,8 +134,8 @@ class ArmTeleopROS:
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
-        self.current_arm_angle_left = -1.2
-        # self.current_arm_angle_left = -1
+        # self.current_arm_angle_left = -1.2
+        self.current_arm_angle_left = -1
         logger.info("LEFT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[LEFT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_left_robot_pose]}")
 
@@ -153,7 +153,9 @@ class ArmTeleopROS:
             logger.error("通知底层控制节点启动双臂遥操作模式失败")
         
         
-
+        # ================== IK搜索次数记录 ==================
+        self.right_ik_cnt = -1  # 右臂逆解搜索次数，-1表示未执行
+        self.left_ik_cnt = -1   # 左臂逆解搜索次数，-1表示未执行
         
         # ================= 安全范围设置 ==================
         # 设置安全操作范围
@@ -320,6 +322,9 @@ class ArmTeleopROS:
                     row_data.append(self.current_arm_angle_left)
                     row_data.append(self.current_arm_angle_right)
                     # 30-31列: 左臂臂角 + 右臂臂角
+                    # ================== 新增：IK搜索次数 ==================
+                    row_data.append(self.left_ik_cnt)
+                    row_data.append(self.right_ik_cnt)
                     
                     # 3. 写入关节角度数据 (列表，用 extend)
                     row_data.extend(self.last_left_joint_angles)
@@ -361,6 +366,8 @@ class ArmTeleopROS:
         
         # 2. 新增：臂角表头 (2列)
         header.extend(['arm_angle_left', 'arm_angle_right'])
+        # ================== 新增：IK搜索次数列 ==================
+        header.extend(['ik_search_cnt_left', 'ik_search_cnt_right'])
         
         # 3. 新增：关节角度表头 (4 * num_joints 列)
         for i in range(7):
@@ -929,11 +936,15 @@ class ArmTeleopROS:
                         with self.data_lock:
                             ik_request.init_joints = self.last_right_joint_angles if self.last_right_joint_angles is not None else []
                         response = self.right_ik_service.call(ik_request)
+                        with self.data_lock:
+                              self.right_ik_cnt = response.search_cnt  # ✅ 新增：记录右臂搜索次数
                     elif arm_side == 'left':
                         # 【修改】加锁读取关节角
                         with self.data_lock:
                             ik_request.init_joints = self.last_left_joint_angles if self.last_left_joint_angles is not None else []
                         response = self.left_ik_service.call(ik_request)
+                        with self.data_lock:
+                            self.left_ik_cnt = response.search_cnt   # ✅ 新增：记录左臂搜索次数
                     success = response.success
                     joint_angles = response.solution
                     recorded_time = time.time() - start_time
