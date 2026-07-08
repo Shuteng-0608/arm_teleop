@@ -111,6 +111,7 @@ data_log/
 *.bag
 *.csv
 *.txt
+*.pdf
 data/
 bagfiles/
 

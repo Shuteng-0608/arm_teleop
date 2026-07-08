@@ -205,22 +205,20 @@ class MH6HandTeleopROS(EndEffectorBase):
             float(intent.get("t", 0.0)),
         ]
         try:
-            msg.palm_alpha.a1, msg.palm_alpha.a2, msg.palm_alpha.a3, msg.palm_alpha.err = self.solver.solve_alpha(
-                low_dim["u_h"] * 180,
-                low_dim["u_v"] * 180,
-                low_dim["u_thumb_abduction"] * 180,
-                verbose=True,
+            msg.palm_alpha.alpha1, msg.palm_alpha.alpha2, msg.palm_alpha.alpha3 = self.solver.solve_from_normalized(
+                low_dim["u_h"],                 # alpha2: horizontal palm rotation
+                low_dim["u_thumb_abduction"],   # alpha3: thumb abduction
+                low_dim["u_v"],                 # theta1: vertical palm rotation
             )[0]
             rospy.logdebug(f"MH6 palm alpha computed: {msg.palm_alpha}")
         except Exception as e:
             rospy.logwarn_throttle(5.0, f"MH6 palm alpha computation failed: {e}")
-            msg.palm_alpha.a1 = 0.0
-            msg.palm_alpha.a2 = 0.0
-            msg.palm_alpha.a3 = 0.0
-            msg.palm_alpha.err = 0.0
+            msg.palm_alpha.alpha1 = 0.0 # motor 3
+            msg.palm_alpha.alpha2 = 0.0 # motor 2
+            msg.palm_alpha.alpha3 = 0.0 # motor 1
         
         # logger.debug(f"Publishing MH6 normalized command: {msg}")
-        logger.debug(f" low_dim={low_dim['u_h'] * 180, low_dim['u_v'] * 180, low_dim['u_thumb_abduction'] * 180}")
-        logger.debug(f" palm_alpha={msg.palm_alpha.a1, msg.palm_alpha.a2, msg.palm_alpha.a3, msg.palm_alpha.err}")
+        # logger.debug(f" low_dim={low_dim['u_h'] * 180, low_dim['u_v'] * 180, low_dim['u_thumb_abduction'] * 180}")
+        logger.debug(f" palm_alpha={msg.palm_alpha.alpha1, msg.palm_alpha.alpha2, msg.palm_alpha.alpha3}")
 
         self.publisher.publish(msg)

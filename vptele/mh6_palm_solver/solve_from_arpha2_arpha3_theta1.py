@@ -35,25 +35,45 @@
 
 归一化输入映射:
   u1,u2,u3 ∈ [0,1] -> arpha2 = 90*u1
-                       arpha3 = 180*u2
+                       arpha3 = -180*u2
                        theta1 = -40*u3
 
-用法:
-    from mh6_palm_solver.solve_from_arpha2_arpha3_theta1 import MH6PalmSolver
+物理限位:
+  arpha2  ∈ [0, 90]     (输入硬限位)
+  arpha3  ∈ [-180, 0]   (输入硬限位)
+  theta1  ∈ [-40, 0]    (输入硬限位)
+  theta2  ∈ 无限制
+  arpha1  ∈ 无限制
 
-  solutions = solve_remaining(arpha2, arpha3, theta1)
-  # 每条结果为 (theta2, theta3, arpha1, 旋转误差, 平移误差|p|)
+电机输入值换算:
+  电机值 = 角度 × 0.239
+  例如: arpha1=-4.4° → 电机值 ≈ -1.05
+
+输出约定:
+  arpha2* = -arpha2 （即输出时 arpha2 取负）
+
+用法:
+  from mh6_palm_solver.solve_from_arpha2_arpha3_theta1 import MH6PalmSolver
+
+  solver = MH6PalmSolver()
+
+  # 电机值输出（推荐）
+  solutions = solver.solve_motor(arpha2, arpha3, theta1)        # 角度输入
+  solutions = solver.solve_motor_from_normalized(u1, u2, u3)    # [0,1]归一化输入
+  # 返回 [[motor1, motor2, motor3], ...]
+
+  # 角度输出
+  solutions = solver.solve_arpha(arpha2, arpha3, theta1)        # 角度输入
+  solutions = solver.solve_arpha_from_normalized(u1, u2, u3)    # [0,1]归一化输入
+  # 返回 [[arpha1, arpha2*, arpha3], ...]
 """
 import math
 import numpy as np
 
 
-
 class MH6PalmSolver:
 
     def __init__(self):
-        
-
         # 常量
         self.C35 = math.cos(math.radians(35))
         self.S35 = math.sin(math.radians(35))
@@ -69,7 +89,6 @@ class MH6PalmSolver:
         self.P5 = self.p_from_RyTz(135.16303, 19.2719)
         self.P6 = self.p_from_RyTz(119.75471, 29.11805)
 
-
     def RyRz(self, phi_deg, psi_deg):
         """Ry(phi)*Rz(psi) rotation matrix"""
         cp = math.cos(math.radians(phi_deg))
@@ -82,15 +101,10 @@ class MH6PalmSolver:
             [-sp*cq,  sp*sq,  cp]
         ])
 
-
-    # ---- 平移参数 ----
     def p_from_RyTz(self, phi_deg, d):
         sa = math.sin(math.radians(phi_deg))
         ca = math.cos(math.radians(phi_deg))
         return np.array([d * sa, 0, d * ca])
-
-    
-
 
     def compute_translation_error(self, arpha2_deg, arpha3_deg, arpha1_deg, theta1_deg, theta2_deg, theta3_deg):
         """计算平移约束误差 |p_total|"""
@@ -104,7 +118,6 @@ class MH6PalmSolver:
         p_total = self.P1 + R1 @ self.P2 + R12 @ self.P3 + R123 @ self.P4 + R1234 @ self.P5 + R12345 @ self.P6
         return np.linalg.norm(p_total)
 
-
     def check_theta1_range(self, t1_deg, verbose=False):
         """Check theta1 input limit [-40, 0]"""
         ok = -40 <= t1_deg <= 0
@@ -112,27 +125,8 @@ class MH6PalmSolver:
             print(f"  theta1 = {t1_deg:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-40, 0])")
         return ok
 
-
-    def check_theta2_range(self, t2_deg, verbose=False):
-        """Check theta2 physical limit [-90, 0]"""
-        ok = -90 <= t2_deg <= 0
-        if verbose:
-            print(f"  theta2 = {t2_deg:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-90, 0])")
-        return ok
-
-
     def _norm_to_180(self, deg):
         return (deg + 180) % 360 - 180
-
-
-    def check_arpha1_range(self, a1_deg, verbose=False):
-        """Check arpha1 global limit [0, 20]"""
-        v = self._norm_to_180(a1_deg)
-        ok = 0 <= v <= 20
-        if verbose:
-            print(f"  arpha1 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [0, 20])")
-        return ok
-
 
     def check_arpha2_range(self, a2_deg, verbose=False):
         """Check arpha2 input limit [0, 90]"""
@@ -142,33 +136,41 @@ class MH6PalmSolver:
             print(f"  arpha2 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [0, 90])")
         return ok
 
-
     def check_arpha3_range(self, a3_deg, verbose=False):
-        """Check arpha3 input limit [0, 180]"""
+        """Check arpha3 input limit [-180, 0]"""
         v = self._norm_to_180(a3_deg)
-        ok = 0 <= v <= 180
+        ok = -180 <= v <= 0
         if verbose:
-            print(f"  arpha3 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [0, 180])")
+            print(f"  arpha3 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-180, 0])")
         return ok
-
 
     def map_normalized(self, u1, u2, u3):
         """
         将 [0,1]^3 映射到物理限位区间。
 
         参数:
-        u1: arpha2 归一化输入 [0,1] -> [0, 90]
-        u2: arpha3 归一化输入 [0,1] -> [0, 180]
-        u3: theta1 归一化输入 [0,1] -> [-40, 0]
+          u1: arpha2 归一化输入 [0,1] -> [0, 90]
+          u2: arpha3 归一化输入 [0,1] -> [-180, 0]
+          u3: theta1 归一化输入 [0,1] -> [-40, 0]
+
+        实际测量范围：
+        a1 = id3 - [536-500-401] - [8.6, 0, -23.7]
+        a2* = id2 - [630-500-120] - [31.1, 0, -90.8] 
+        a3 = id1 - [0-247-1000] - [59, 0, -180]
+        a2 = [-31.1, 0, 90.8]
+
 
         返回:
-        (arpha2, arpha3, theta1) in degrees
+          (arpha2, arpha3, theta1) in degrees
         """
-        arpha2 = 90.0 * u1
-        arpha3 = 180.0 * u2
-        theta1 = -40.0 * u3
-        return arpha2, arpha3, theta1
+        arpha2 = 121.9 * u1 - 31.1
+        """
+        arpha2 是正数时内折叠，与其他相反
+        """
+        arpha3 = -239 * u2 + 59
+        theta1 = -32.3 * u3 + 8.6 #theta1 范围 -23.7 ～ 8.6
 
+        return arpha2, arpha3, theta1
 
     def solve_remaining(self, arpha2_deg, arpha3_deg, theta1_deg):
         """
@@ -250,7 +252,7 @@ class MH6PalmSolver:
             R6 = self.RyRz(225, a1_deg)
             Rloop = R1 @ R2 @ R3 @ R4 @ R5 @ R6
             rot_err = np.max(np.abs(Rloop - np.eye(3)))
-
+a2
             # ---- verify translation ----
             trans_err = self.compute_translation_error(
                 arpha2_deg, arpha3_deg, a1_deg, theta1_deg, t2_deg, t3_deg)
@@ -265,7 +267,6 @@ class MH6PalmSolver:
         unique.sort(key=lambda x: x[3])
         return unique
 
-
     def solve_from_normalized(self, u1, u2, u3):
         """
         从归一化输入 [0,1]³ 直接求解。
@@ -274,6 +275,54 @@ class MH6PalmSolver:
         """
         a2, a3, t1 = self.map_normalized(u1, u2, u3)
         return self.solve_remaining(a2, a3, t1)
+
+    def solve_arpha(self, arpha2_deg, arpha3_deg, theta1_deg):
+        """
+        角度输入，仅输出 arpha 三元组，不含误差信息。
+
+        返回: [[arpha1, arpha2, arpha3], ...]  每个解一个三元组
+        """
+        raw = self.solve_remaining(arpha2_deg, arpha3_deg, theta1_deg)
+        return [[self._norm_to_180(r[2]), -arpha2_deg, arpha3_deg] for r in raw]
+
+    def solve_arpha_from_normalized(self, u1, u2, u3):
+        """
+        归一化输入，仅输出 arpha 三元组，不含误差信息。
+
+        返回: [[arpha1, arpha2, arpha3], ...]  每个解一个三元组
+        """
+        a2, a3, t1 = self.map_normalized(u1, u2, u3)
+        return self.solve_arpha(a2, a3, t1)
+
+    # ---- 电机值转换 ----
+    # 电机输入值 = 角度 × MOTOR_SCALE
+    MOTOR_SCALE = 0.239
+
+    def solve_motor(self, arpha2_deg, arpha3_deg, theta1_deg):
+        """
+        角度输入，输出三个电机的输入值。
+
+        返回: [[motor1, motor2, motor3], ...]  每个解一个三元组
+        """
+        # raw = self.solve_arpha(arpha2_deg, arpha3_deg, theta1_deg)
+        [a1, a2, a3] = self.solve_arpha(arpha2_deg, arpha3_deg, theta1_deg)
+        """
+        a1 = id3 - [536-500-401] - [8.6, 0, -23.7]
+        a2 = id2 - [630-500-120] - [31.1, 0, -90.8] 
+        a3 = id1 - [0-247-1000] - [-59, 0, 180]
+        
+        """
+        
+        # return [[round(v * self.MOTOR_SCALE, 4) for v in row] for row in raw]
+
+    def solve_motor_from_normalized(self, u1, u2, u3):
+        """
+        归一化输入，输出三个电机的输入值。
+
+        返回: [[motor1, motor2, motor3], ...]  每个解一个三元组
+        """
+        a2, a3, t1 = self.map_normalized(u1, u2, u3)
+        return self.solve_motor(a2, a3, t1)
 
 
 # ============================================================
@@ -300,24 +349,20 @@ if __name__ == "__main__":
     if not sols:
         print("  (no solution)")
 
-    # Test 3: normalized (1,1,1) -> (90,180,-40)
-    print("\nTest 3: normalized (u1=1, u2=1, u3=1) -> (90, 180, -40)")
-    sols = mh6_solver.solve_from_normalized(1.0, 1.0, 1.0)
+    # Test 3: SolidWorks verification
+    print("\nTest 3: SolidWorks (arpha2=47, arpha3=-80, theta1=-20)")
+    sols = mh6_solver.solve_remaining(47, -80, -20)
     for t2, t3, a1, rot_err, trans_err in sols:
-        t2d = t2 if t2 <= 180 else t2 - 360
-        a1_ok = mh6_solver.check_arpha1_range(a1)
-        print(f"  theta2={t2:.4f} deg [{t2d:.2f}], theta3={t3:.4f} deg, arpha1={a1:.4f} deg  a1_limit={'OK' if a1_ok else 'NO'}  rot_err={rot_err:.2e}  |p|={trans_err:.2e}")
+        t2n = t2 if t2 <= 180 else t2 - 360
+        a1n = a1 if a1 <= 180 else a1 - 360
+        print(f"  theta2={t2n:.4f} deg, theta3={t3:.4f} deg, arpha1={a1n:.4f} deg  rot_err={rot_err:.2e}  |p|={trans_err:.2e}")
     if not sols:
         print("  (no solution)")
 
-    # Test 4: midpoint (0.5, 0.5, 0.5) -> (45, 90, -20)
-    print("\nTest 4: normalized (u1=0.5, u2=0.5, u3=0.5) -> (45, 90, -20)")
-    sols = mh6_solver.solve_from_normalized(0.5, 0.5, 0.5)
-    for t2, t3, a1, rot_err, trans_err in sols:
-        t2d = t2 if t2 <= 180 else t2 - 360
-        a1_ok = mh6_solver.check_arpha1_range(a1)
-        print(f"  theta2={t2:.4f} deg [{t2d:.2f}], theta3={t3:.4f} deg, arpha1={a1:.4f} deg  a1_limit={'OK' if a1_ok else 'NO'}  rot_err={rot_err:.2e}  |p|={trans_err:.2e}")
-    if not sols:
-        print("  (no solution)")
+    # Test 4: simplified output solve_arpha
+    print("\nTest 4: solve_arpha (arpha2=47, arpha3=-80, theta1=-20)")
+    arpha_sols = mh6_solver.solve_arpha(47, -80, -20)
+    for i, a_trip in enumerate(arpha_sols):
+        print(f"  [{a_trip[0]:.4f}, {a_trip[1]:.0f}, {a_trip[2]:.0f}]")
 
     print(f"\n{'=' * 60}")
