@@ -134,6 +134,7 @@ public:
         } catch (const std::exception& e) {
             res.success = false;
             res.message = "IK calculation failed: " + std::string(e.what());
+            res.search_cnt = -1;  // ✅ 异常时明确标记为-1
             return true;
         }
 
@@ -152,13 +153,13 @@ public:
             // 验证结果
             bool verified = verifyIKSolution(solver_, Tee, ik_res);
             std::cout << "  FK验证: " << (verified ? "通过" : "失败") << "\n\n";
-            
+            res.search_cnt = ik_res.search_cnt;  // ✅ 传递真实搜索次数
             res.success = true;
             res.message = "Success! ovo";
         } else {
             res.success = false;
             res.message = "Failed qwq";
-        
+            res.search_cnt = -1;  // ✅ 失败时明确标记为-1
         }
         return true; // 服务处理成功
     }

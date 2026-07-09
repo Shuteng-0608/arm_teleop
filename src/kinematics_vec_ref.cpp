@@ -1004,58 +1004,42 @@ IKResult ArmKineComb::cal_IK_feasible_armAngle_vec_ref(
     const Matrix4d& target_pose,
     double current_joints_array[],
     double current_arm_angle,
-    const std::vector<double>& arm_angle_deviation_list , // 默认臂角偏差列表
-    double offset_ref  // 默认最大关节跳变阈值
+    const std::vector<double>& arm_angle_deviation_list,
+    double offset_ref
 ) {
     IKResult feasible_res;
     feasible_res.is_valid = false;
-    std::vector<IKResult> feasible_solutions; // 存储所有满足跳变要求的解
-    int cnt=0;
+    feasible_res.search_cnt = -1;  // ✅ 初始化为-1（失败标记）
+    int cnt = 1;  // 从1开始计数
 
     
     // --- 步骤 1: 尝试初始的 current_arm_angle ---
     
     double initial_arm_angle = current_arm_angle;
-    
-    IKResult initial_result = ArmKineComb::calculateIK_vec_ref(
+    IKResult initial_result = calculateIK_vec_ref(
         target_pose,
         current_joints_array,
-        initial_arm_angle, // 初始臂角
+        initial_arm_angle,
         std::nullopt
     );
 
-    // 检查偏差解是否有效，以及检查偏差距离
     if (is_solution_acceptable(initial_result, current_joints_array, offset_ref)) {
-        // 初始臂角计算成功且解符合要求，直接返回
-        // initial_result.cnt = 0;
-        // std::cout << "Optimal IK solution found with initial Arm Angle: " << current_arm_angle << std::endl;
+        initial_result.search_cnt = cnt;  // ✅ 成功：记录真实次数
         return initial_result;
     }
     
     // --- 步骤 2: 遍历偏差列表，尝试 new_arm_angle = current_arm_angle + deviation ---
     std::vector<double> tested_angles;
     tested_angles.push_back(initial_arm_angle);
-    // 检查偏差列表是否为空
-    if (arm_angle_deviation_list.empty()) {
-        std::cerr << "Warning: Initial arm angle failed and deviation list is empty." << std::endl;
-        return IKResult{}; // 返回一个无效结果
-    }
 
-    // 遍历臂角偏差列表
     for (double deviation : arm_angle_deviation_list) {
-        cnt ++;
-        // 跳过偏差为0的情况，因为已经在步骤1中计算过了
-        if (std::abs(deviation) < 1e-6) { // 使用一个小的阈值判断是否接近0
-            continue; 
-        }
+        if (std::abs(deviation) < 1e-6) continue;
         
-        // 计算新的臂角
+        cnt++;
         double new_arm_angle = current_arm_angle + deviation;
-
-        // double clamp_arm_angle = std::clamp(new_arm_angle, -100.0/180.0*M_PI, 0.0); 
         double clamp_arm_angle = new_arm_angle;
-        
-        // 检查该臂角是否已经计算过（例如多次钳位到边缘值）
+
+        // 检查是否已计算过
         bool is_calculated = false;
         for (double angle : tested_angles) {
             if (std::abs(angle - clamp_arm_angle) < 1e-6) {
@@ -1063,16 +1047,10 @@ IKResult ArmKineComb::cal_IK_feasible_armAngle_vec_ref(
                 break;
             }
         }
-
-        if (is_calculated) {
-            continue;
-        }
+        if (is_calculated) continue;
         tested_angles.push_back(clamp_arm_angle);
 
-
-
-
-        IKResult result = calculateIK(
+        IKResult result = calculateIK_vec_ref(
             target_pose,
             current_joints_array,
             clamp_arm_angle,
@@ -1080,11 +1058,16 @@ IKResult ArmKineComb::cal_IK_feasible_armAngle_vec_ref(
         );
 
         if (is_solution_acceptable(result, current_joints_array, offset_ref)) {
-            result.arm_angle = clamp_arm_angle;
-            feasible_solutions.push_back(result);
+            result.search_cnt = cnt;  // ✅ 成功：记录真实次数
+            return result;  // 立即返回第一个有效解
         }
     }
 
+    // ✅ 所有尝试都失败，返回search_cnt=-1
+    ROS_WARN("[IK Feasible] No valid solution found after %d attempts", cnt);
+    feasible_res.search_cnt = -1;  // 明确标记为失败
+    return feasible_res;
+}
 
         // // 调用原始的 IK 计算函数
         // IKResult result = calculateIK_vec_ref(
