@@ -1,69 +1,67 @@
-# 归一化求解器使用说明
+# MH6PalmSolver — st_7_7 版本
+
+## 快速使用
+
+三个归一化值 [0,1]³ → 三组电机值：
+
+```python
+from solve_from_arpha2_arpha3_theta1 import MH6PalmSolver
+
+solver = MH6PalmSolver()
+
+motors = solver.solve_motor_from_normalized(0.641, 0.582, 0.885)
+# → [[420.6, 303.1, 582.1], [480.6, 303.1, 582.1]]
+#     [m1,    m2,    m3  ]   每个解一个三元组
+```
+
+## SolidWorks 验证
+
+输入 `(arpha2, arpha3, theta1) = (47°, -80°, -20°)`：
+
+| 参数 | SolidWorks 实测 | 求解器输出 | 误差 |
+|:---:|:---:|:---:|:---:|
+| theta2 | -54.2312° | -54.2312° | < 1e-4° |
+| theta3 | 75.66174° | 75.6617° | < 1e-4° |
+| arpha1 | -4.4° | -4.3990° | 0.001° |
+
+旋转闭合误差 `rot_err ≈ 2e-16`，平移闭合误差 `|p| ≈ 5e-6 mm`。
 
 ## 用法
 
 ```python
-from solve_from_arpha2_arpha3_theta1 import solve_from_normalized
+from solve_from_arpha2_arpha3_theta1 import MH6PalmSolver
 
-# 输入：三个 [0,1] 之间的数
-u1, u2, u3 = 0.5, 0.5, 0.0
+solver = MH6PalmSolver()
 
-# 输出：六组关节角 + 验证信息
-solutions = solve_from_normalized(u1, u2, u3)
-# 每条结果为 (theta2, theta3, arpha1, 旋转误差, 平移误差|p|)
+# 角度输入 -> arpha 三元组
+solutions = solver.solve_arpha(47, -80, -20)
+# → [[-4.3990, -47, -80], [-19.0601, -47, -80]]
+
+# 归一化输入 -> arpha 三元组
+solutions = solver.solve_arpha_from_normalized(0.641, 0.582, 0.885)
+# → [[-4.6139, -47, -80], ...]
+
+# 电机值输出
+motors = solver.solve_motor(47, -80, -20)
+# → [[m1, m2, m3], ...]
 ```
 
 ## 归一化映射
 
-| 用户输入 u ∈ [0,1] | 物理角度 | 限位范围 |
-|:-:|:-:|:-:|
-| u₁ → arpha2 | arpha2 = 90 × u₁ | [0°, 90°] |
-| u₂ → arpha3 | arpha3 = 180 × u₂ | [0°, 180°] |
-| u₃ → theta1 | theta1 = −40 × u₃ | [−40°, 0°] |
+| u ∈ [0,1] | 物理角度 | 范围 |
+|:---:|:---:|:---:|
+| u₁ → arpha2 | 121.9·u₁ − 31.1 | [-31.1°, 90.8°] |
+| u₂ → arpha3 | −239·u₂ + 59 | [-180°, 59°] |
+| u₃ → theta1 | −32.3·u₃ + 8.6 | [-23.7°, 8.6°] |
 
-### 示例
+## 电机标定
 
-| (u₁, u₂, u₃) | (arpha2, arpha3, theta1) |
-|:---:|:---:|
-| (0, 0, 0) | (0°, 0°, 0°) |
-| (1, 1, 1) | (90°, 180°, −40°) |
-| (0.5, 0.5, 0) | (45°, 90°, 0°) |
+| 关节 | 公式 | 校准点 |
+|:---:|:---|:---:|
+| arpha1 | 500 + (99.0/23.6)·arpha1 | 0°→500, −23.6°→401 |
+| arpha2 | 500 − (380.0/90.8)·arpha2 | 0°→500, 90.8°→120 |
+| arpha3 | 247 − (753.0/180.0)·arpha3 | 0°→247, −180°→1000 |
 
-## 输出说明
+## 输出约定
 
-`solve_from_normalized` 返回 `[(theta2, theta3, arpha1, rot_err, trans_err), ...]`
-
-| 输出 | 含义 |
-|:---:|:---|
-| theta2 | W₂→W₃ 的 Rz 转角（关节角） |
-| theta3 | W₃→W₄ 的 Rz 转角（关节角） |
-| arpha1 | W₅→Wb 的 Rz 转角（关节角） |
-| rot_err | 旋转闭合误差（~1e-15 为精确闭合） |
-| trans_err | 平移闭合误差 \|p\|，单位 mm（~6e-6 为精确闭合） |
-
-可能会返回多个解（不同分支），通常第一个解误差最小。
-
-## 物理限位总结
-
-| 参数 | 限位范围 | 说明 |
-|:---:|:---:|:---|
-| arpha2 | [0°, 90°] | 输入限位 |
-| arpha3 | [0°, 180°] | 输入限位 |
-| theta1 | [−40°, 0°] | 输入限位 |
-| theta2 | [−90°, 0°] | 输出限位（需求解后自行检查） |
-
-## 文件结构
-
-```
-alpha1_theta1_alpha3已知求解器封装包/
-├── solve_from_arpha2_arpha3_theta1.py    ← 主求解器（归一化输入 + 角度输入）
-├── solve_from_alpha1.py                   ← 旧求解器（arpha2,theta1,arpha1 → theta2,theta3,arpha3）
-├── alpha_from_theta.py                    ← 正向求解器（theta1,theta2,theta3 → arpha2,arpha3,arpha1）
-├── README.md                              ← 本文件
-└── 使用说明.txt
-```
-
-## 依赖
-
-- Python ≥ 3.8
-- numpy
+`arpha2* = -arpha2`（输出时取负，输入用原始值）

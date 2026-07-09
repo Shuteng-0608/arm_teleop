@@ -33,21 +33,22 @@
   已知 t2,t3 -> arpha1 = atan2(J[1,0], J[1,1])
   其中 J = Ry(-225)*(R1*R2*R3*R4*R5)^T
 
-归一化输入映射:
-  u1,u2,u3 ∈ [0,1] -> arpha2 = 90*u1
-                       arpha3 = -180*u2
-                       theta1 = -40*u3
+归一化输入映射 (基于电机标定):
+  u1,u2,u3 ∈ [0,1] -> arpha2 = 121.9*u1 - 31.1     [-31.1°, 90.8°]
+                       arpha3 = -239*u2 + 59         [-180°, 59°]
+                       theta1 = -32.3*u3 + 8.6       [-23.7°, 8.6°]
 
-物理限位:
-  arpha2  ∈ [0, 90]     (输入硬限位)
-  arpha3  ∈ [-180, 0]   (输入硬限位)
-  theta1  ∈ [-40, 0]    (输入硬限位)
+物理限位 (基于电机标定):
+  arpha2  ∈ [-31.1, 90.8]   (输入硬限位)
+  arpha3  ∈ [-180, 59]      (输入硬限位)
+  theta1  ∈ [-23.7, 8.6]    (输入硬限位)
   theta2  ∈ 无限制
   arpha1  ∈ 无限制
 
-电机输入值换算:
-  电机值 = 角度 × 0.239
-  例如: arpha1=-4.4° → 电机值 ≈ -1.05
+电机输入值换算 (三组独立标定):
+  arpha1: 500 + (99.0/23.6) * arpha1      0°→500, -23.6°→401
+  arpha2: 500 - (380.0/90.8) * arpha2      0°→500, 90.8°→120   (原始 arpha2)
+  arpha3: 247 - (753.0/180.0) * arpha3     0°→247, -180°→1000
 
 输出约定:
   arpha2* = -arpha2 （即输出时 arpha2 取负）
@@ -119,57 +120,46 @@ class MH6PalmSolver:
         return np.linalg.norm(p_total)
 
     def check_theta1_range(self, t1_deg, verbose=False):
-        """Check theta1 input limit [-40, 0]"""
-        ok = -40 <= t1_deg <= 0
+        """Check theta1 input limit [-23.7, 8.6]"""
+        ok = -23.7 <= t1_deg <= 8.6
         if verbose:
-            print(f"  theta1 = {t1_deg:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-40, 0])")
+            print(f"  theta1 = {t1_deg:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-23.7, 8.6])")
         return ok
 
     def _norm_to_180(self, deg):
         return (deg + 180) % 360 - 180
 
     def check_arpha2_range(self, a2_deg, verbose=False):
-        """Check arpha2 input limit [0, 90]"""
+        """Check arpha2 input limit [-31.1, 90.8]"""
         v = self._norm_to_180(a2_deg)
-        ok = 0 <= v <= 90
+        ok = -31.1 <= v <= 90.8
         if verbose:
-            print(f"  arpha2 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [0, 90])")
+            print(f"  arpha2 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-31.1, 90.8])")
         return ok
 
     def check_arpha3_range(self, a3_deg, verbose=False):
-        """Check arpha3 input limit [-180, 0]"""
+        """Check arpha3 input limit [-180, 59]"""
         v = self._norm_to_180(a3_deg)
-        ok = -180 <= v <= 0
+        ok = -180 <= v <= 59
         if verbose:
-            print(f"  arpha3 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-180, 0])")
+            print(f"  arpha3 = {v:.2f} deg -> {'OK' if ok else 'OUT OF RANGE'} (limit [-180, 59])")
         return ok
 
     def map_normalized(self, u1, u2, u3):
         """
-        将 [0,1]^3 映射到物理限位区间。
+        将 [0,1]^3 映射到物理角度值（基于三组电机标定数据）。
 
         参数:
-          u1: arpha2 归一化输入 [0,1] -> [0, 90]
-          u2: arpha3 归一化输入 [0,1] -> [-180, 0]
-          u3: theta1 归一化输入 [0,1] -> [-40, 0]
-
-        实际测量范围：
-        a1 = id3 - [536-500-401] - [8.6, 0, -23.7]
-        a2* = id2 - [630-500-120] - [31.1, 0, -90.8] 
-        a3 = id1 - [0-247-1000] - [59, 0, -180]
-        a2 = [-31.1, 0, 90.8]
-
+          u1: arpha2 归一化输入 [0,1] -> [-31.1, 90.8]
+          u2: arpha3 归一化输入 [0,1] -> [-180, 59]
+          u3: theta1 归一化输入 [0,1] -> [-23.7, 8.6]
 
         返回:
           (arpha2, arpha3, theta1) in degrees
         """
         arpha2 = 121.9 * u1 - 31.1
-        """
-        arpha2 是正数时内折叠，与其他相反
-        """
         arpha3 = -239 * u2 + 59
-        theta1 = -32.3 * u3 + 8.6 #theta1 范围 -23.7 ～ 8.6
-
+        theta1 = -32.3 * u3 + 8.6
         return arpha2, arpha3, theta1
 
     def solve_remaining(self, arpha2_deg, arpha3_deg, theta1_deg):
@@ -252,12 +242,12 @@ class MH6PalmSolver:
             R6 = self.RyRz(225, a1_deg)
             Rloop = R1 @ R2 @ R3 @ R4 @ R5 @ R6
             rot_err = np.max(np.abs(Rloop - np.eye(3)))
-a2
+
             # ---- verify translation ----
             trans_err = self.compute_translation_error(
                 arpha2_deg, arpha3_deg, a1_deg, theta1_deg, t2_deg, t3_deg)
 
-            results.append((t2_deg_norm % 360, t3_deg, a1_deg_norm % 360, rot_err, trans_err))
+            results.append((t2_deg_norm, t3_deg, a1_deg_norm, rot_err, trans_err))
 
         # dedup + sort by error
         unique = []
@@ -295,25 +285,31 @@ a2
         return self.solve_arpha(a2, a3, t1)
 
     # ---- 电机值转换 ----
-    # 电机输入值 = 角度 × MOTOR_SCALE
-    MOTOR_SCALE = 0.239
 
     def solve_motor(self, arpha2_deg, arpha3_deg, theta1_deg):
         """
         角度输入，输出三个电机的输入值。
 
+        注意: arpha2 用原始角度（未取负）计算电机值。
+
+        校准:
+          arpha1: 0°→500, -23.6°→401
+          arpha2: 0°→500, 90.8°→120   (原始 arpha2，非 arpha2*)
+          arpha3: 0°→247, -180°→1000
+
         返回: [[motor1, motor2, motor3], ...]  每个解一个三元组
         """
-        # raw = self.solve_arpha(arpha2_deg, arpha3_deg, theta1_deg)
-        [a1, a2, a3] = self.solve_arpha(arpha2_deg, arpha3_deg, theta1_deg)
-        """
-        a1 = id3 - [536-500-401] - [8.6, 0, -23.7]
-        a2 = id2 - [630-500-120] - [31.1, 0, -90.8] 
-        a3 = id1 - [0-247-1000] - [-59, 0, 180]
-        
-        """
-        
-        # return [[round(v * self.MOTOR_SCALE, 4) for v in row] for row in raw]
+        raw = self.solve_arpha(arpha2_deg, arpha3_deg, theta1_deg)
+        results = []
+        for a1, a2_star, a3 in raw:
+            # a1 = arpha1 (已归一化到 -180~180)
+            # a2_star = -arpha2 (已取负)
+            # a3 = arpha3
+            m1 = 500 + (99.0 / 23.6) * a1
+            m2 = 500 - (380.0 / 90.8) * arpha2_deg  # 用原始 arpha2
+            m3 = 247 - (753.0 / 180.0) * arpha3_deg
+            results.append([round(m1, 4), round(m2, 4), round(m3, 4)])
+        return results
 
     def solve_motor_from_normalized(self, u1, u2, u3):
         """
