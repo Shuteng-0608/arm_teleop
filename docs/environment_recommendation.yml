@@ -1,0 +1,38 @@
+# Audit-generated proposal only. Do not treat this as a proven lock file.
+# Basis:
+# - Current shell on this machine has no usable project Python environment.
+# - vptele/environment.yaml comments show python=3.9.21 and pip packages.
+# - config/environment.yaml pins python=3.13.5, which is not recommended for ROS1 Noetic.
+# - Runtime imports require packages missing from both committed env files: mujoco, h5py, scipy.
+name: arm_teleop_mujoco_noetic
+channels:
+  - conda-forge
+dependencies:
+  # Recommended for ROS1 Noetic interop on Ubuntu 20.04. If using apt ROS Python
+  # modules directly, prefer /usr/bin/python3.8 or create this env around Python 3.8.
+  - python=3.8
+  - pip
+  - setuptools
+  - wheel
+  - numpy=1.24.*      # conservative for Python 3.8 + h5py/scipy/OpenCV wheels
+  - scipy=1.10.*      # last broad Python 3.8-friendly SciPy line
+  - h5py=3.10.*
+  - pyyaml=6.*
+  - matplotlib
+  - pillow
+  - requests
+  - pip:
+      # Required by runtime code. Exact working version could not be verified locally.
+      # Pin after Stage A-D smoke tests on the target machine.
+      - mujoco==3.2.6
+      # GUI-enabled OpenCV is required. Do not replace with opencv-python-headless.
+      - opencv-python==4.9.0.80
+      # AVP package appears in committed env files. Verify source/reproducibility.
+      - avp-stream==1.0
+      # Optional/legacy real-arm package from committed env files; not required for
+      # current peg-tool MuJoCo path unless real-arm code is used.
+      - robotic-arm==1.0.6
+      # ROS helpers are useful only if the Conda Python must import ROS metadata.
+      # Prefer apt ROS Noetic Python packages for rospy itself.
+      - catkin-pkg==1.0.0
+      - rospkg==1.6.0

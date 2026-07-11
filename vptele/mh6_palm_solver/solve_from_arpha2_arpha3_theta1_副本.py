@@ -71,6 +71,23 @@
 import math
 import numpy as np
 
+try:
+    from .alpha_normalization import alpha_triplet_to_signed
+    from .motor_mapping import (
+        ARPHA2_STAR_RANGE,
+        ARPHA3_RANGE,
+        require_arpha1_range,
+        signed_to_motor_triplet,
+    )
+except ImportError:  # Support running this file directly.
+    from alpha_normalization import alpha_triplet_to_signed
+    from motor_mapping import (
+        ARPHA2_STAR_RANGE,
+        ARPHA3_RANGE,
+        require_arpha1_range,
+        signed_to_motor_triplet,
+    )
+
 
 class MH6PalmSolver:
 
@@ -161,6 +178,28 @@ class MH6PalmSolver:
         arpha3 = -239 * u2 + 59
         theta1 = -32.3 * u3 + 8.6
         return arpha2, arpha3, theta1
+
+    def map_normalized_safe(self, u1, u2, u3, *, clip=True):
+        """
+        Validate normalized inputs before applying the legacy linear mapping.
+
+        With clip=True, finite values are clipped to [0,1]. With clip=False,
+        out-of-range values raise ValueError. map_normalized() remains unchanged.
+        """
+        values = []
+        for name, value in (("u1", u1), ("u2", u2), ("u3", u3)):
+            try:
+                value = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name} must be a finite number") from exc
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number")
+            if clip:
+                value = min(max(value, 0.0), 1.0)
+            elif not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1], got {value}")
+            values.append(value)
+        return self.map_normalized(*values)
 
     def solve_remaining(self, arpha2_deg, arpha3_deg, theta1_deg):
         """
@@ -284,6 +323,62 @@ class MH6PalmSolver:
         a2, a3, t1 = self.map_normalized(u1, u2, u3)
         return self.solve_arpha(a2, a3, t1)
 
+    # ---- signed [-1, 1] angle conversion ----
+
+    def solve_signed(
+        self,
+        arpha2_deg,
+        arpha3_deg,
+        theta1_deg,
+        *,
+        arpha1_range=None,
+        clip=True,
+    ):
+        """
+        Return all solutions as signed (arpha1, arpha2_star, arpha3).
+
+        arpha1_range is mandatory because the positive arpha1 limit is unknown.
+        """
+        arpha1_range = require_arpha1_range(arpha1_range)
+        ranges = (arpha1_range, ARPHA2_STAR_RANGE, ARPHA3_RANGE)
+        return [
+            list(alpha_triplet_to_signed(solution, ranges, clip=clip))
+            for solution in self.solve_arpha(
+                arpha2_deg,
+                arpha3_deg,
+                theta1_deg,
+            )
+        ]
+
+    def solve_signed_from_normalized(
+        self,
+        u1,
+        u2,
+        u3,
+        *,
+        arpha1_range=None,
+        clip=True,
+    ):
+        """
+        Map safe [0,1]^3 input to all signed angle solutions.
+
+        The legacy solve_arpha_from_normalized() behavior remains unchanged.
+        """
+        arpha1_range = require_arpha1_range(arpha1_range)
+        arpha2_deg, arpha3_deg, theta1_deg = self.map_normalized_safe(
+            u1,
+            u2,
+            u3,
+            clip=clip,
+        )
+        return self.solve_signed(
+            arpha2_deg,
+            arpha3_deg,
+            theta1_deg,
+            arpha1_range=arpha1_range,
+            clip=clip,
+        )
+
     # ---- 电机值转换 ----
 
     def solve_motor(self, arpha2_deg, arpha3_deg, theta1_deg):
@@ -319,6 +414,39 @@ class MH6PalmSolver:
         """
         a2, a3, t1 = self.map_normalized(u1, u2, u3)
         return self.solve_motor(a2, a3, t1)
+
+    def solve_motor_via_signed(
+        self,
+        arpha2_deg,
+        arpha3_deg,
+        theta1_deg,
+        *,
+        arpha1_range=None,
+        clip=True,
+    ):
+        """
+        Solve via signed (arpha1, arpha2_star, arpha3), then map to motors.
+
+        All geometry branches are retained. With clip=False and in-range
+        calibration data, results are locked by tests to the legacy
+        solve_motor() output.
+        """
+        arpha1_range = require_arpha1_range(arpha1_range)
+        signed_solutions = self.solve_signed(
+            arpha2_deg,
+            arpha3_deg,
+            theta1_deg,
+            arpha1_range=arpha1_range,
+            clip=clip,
+        )
+        return [
+            signed_to_motor_triplet(
+                signed,
+                arpha1_range=arpha1_range,
+                clip=clip,
+            )
+            for signed in signed_solutions
+        ]
 
 
 # ============================================================

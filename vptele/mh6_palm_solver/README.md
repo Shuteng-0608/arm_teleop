@@ -65,3 +65,22 @@ motors = solver.solve_motor(47, -80, -20)
 ## 输出约定
 
 `arpha2* = -arpha2`（输出时取负，输入用原始值）
+
+## Signed 角度接口
+
+新增接口使用固定顺序：
+
+```text
+(arpha1, arpha2_star, arpha3)
+```
+
+每个角度通过 `minimum -> -1`、`zero -> 0`、`maximum -> 1`
+的两段线性映射转换到 `[-1, 1]`。`arpha1` 的正向极限尚未标定，
+因此 `solve_signed()`、`solve_signed_from_normalized()` 和
+`solve_motor_via_signed()` 都必须显式传入 `arpha1_range`，不会假定
+`+23.6°` 或其他默认值。
+
+`solve_motor_via_signed()` 会先将 `arpha2_star` 转回
+`arpha2_raw = -arpha2_star`，再应用电机 2 的原始标定。新接口支持
+`clip=True/False`；旧的 `map_normalized()`、`solve_arpha*()` 和
+`solve_motor*()` 行为保持不变。
