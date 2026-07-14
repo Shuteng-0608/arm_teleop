@@ -96,8 +96,8 @@ class ArmTeleopROS:
         pq_response = self.pq_movej_service.call(pq_request)
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
-        self.current_arm_angle_right = -1.2
-        # self.current_arm_angle_right = -1
+        self.current_arm_angle_right = -1.2 + 0.5
+        # self.current_arm_angle_right = 0
         # self.current_arm_angle_right = 145 * np.pi / 180.0  # 初始臂角，单位为弧度
         logger.info("RIGHT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[RIGHT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_right_robot_pose]}")
@@ -134,8 +134,8 @@ class ArmTeleopROS:
         self.last_left_joint_angles = [round(angle, 4) for angle in self.last_left_joint_angles]
         self.initial_left_robot_pose_in_quat = self.euler_to_quaternion(self.initial_left_robot_pose)
         self.initial_left_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_left_robot_pose_in_quat]
-        self.current_arm_angle_left = -1.2
-        # self.current_arm_angle_left = -1
+        self.current_arm_angle_left = -1.2 + 0.5
+        # self.current_arm_angle_left = 0
         logger.info("LEFT ARM 已连接到逆运动学服务, 初始化完成。")
         rospy.loginfo(f"[LEFT ARM]机械臂末端初始位置: {[round(x, 4) for x in self.initial_left_robot_pose]}")
 
@@ -763,14 +763,14 @@ class ArmTeleopROS:
                         aa_req.arm_side = arm_side
                         aa_req.pose = target_pose_in_quat_aa
                         aa_result = self.arm_angle_subscriber.call(aa_req)
-                        self.current_arm_angle_right = aa_result.arm_angle_rad * -1
+                        self.current_arm_angle_right = aa_result.arm_angle_rad * -1 + 0.5
                         
                         
                     elif arm_side == 'left':
                         aa_req.arm_side = arm_side
                         aa_req.pose = target_pose_in_quat_aa
                         aa_result = self.arm_angle_subscriber.call(aa_req)
-                        self.current_arm_angle_left = aa_result.arm_angle_rad * -1
+                        self.current_arm_angle_left = aa_result.arm_angle_rad * -1 + 0.5
 
                 
                 
@@ -890,7 +890,7 @@ class ArmTeleopROS:
                         # 【修改】加锁读取臂角
                         with self.data_lock:
                             ik_request.current_arm_angle = self.current_arm_angle_right
-                        # ik_request.current_arm_angle = -1
+                        # ik_request.current_arm_angle = -1 + 0.5
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_right}")
                     elif arm_side == 'left':
                         ik_request.method = 'feasible_ref'  # 使用组合方法
@@ -898,7 +898,7 @@ class ArmTeleopROS:
                         # 【修改】加锁读取臂角
                         with self.data_lock:
                             ik_request.current_arm_angle = self.current_arm_angle_left
-                        # ik_request.current_arm_angle = -1
+                        # ik_request.current_arm_angle = -1 + 0.5
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_left}")
                     
                     
@@ -921,7 +921,7 @@ class ArmTeleopROS:
                     search_list = offset_list1 + offset_list2
                     
                     ik_request.offset_list = search_list
-                    ik_request.offset_refer = 1.0
+                    ik_request.offset_refer = 0.45
 
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
