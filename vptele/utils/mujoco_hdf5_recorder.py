@@ -16,6 +16,7 @@ Public API is compatible with the previous recorder:
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from pathlib import Path
@@ -43,6 +44,9 @@ class MujocoHDF5Recorder:
         image_format: str = "hdf5_rgb",   # compatibility only; images are stored in HDF5
         jpg_quality: int = 90,            # compatibility only; unused
         max_buffer_rows: int = 500000,
+        async_io: bool = True,
+        async_queue_size: int = 4096,
+        write_batch_size: int = 128,
 
         enable_ft_tare: bool = True,
         # record_ft_wrench_raw: bool = True,
@@ -65,6 +69,10 @@ class MujocoHDF5Recorder:
         ft_torque_sensor_name: str = "peg_ft_torque",
         peg_tip_site_name: str = "peg_tip_site",
         hole_center_site_name: str = "hole_center_site",
+        peg_geom_name: str = "cylindrical_peg",
+        hole_ring_reference_geom_name: str = "wall_hole_ring_00",
+        hole_back_stop_geom_name: str = "hole_back_stop",
+        task_success_metadata: Optional[Dict[str, Any]] = None,
         image_compression: Optional[str] = "lzf",   # "lzf", "gzip", or None
         image_compression_level: int = 1,
         numeric_compression: Optional[str] = None,
@@ -90,6 +98,9 @@ class MujocoHDF5Recorder:
         self.image_width = int(image_width)
         self.image_height = int(image_height)
         self.max_buffer_rows = int(max_buffer_rows)
+        self.async_io = bool(async_io)
+        self.async_queue_size = max(1, int(async_queue_size))
+        self.write_batch_size = max(1, int(write_batch_size))
 
         self.enable_ft_tare = bool(enable_ft_tare)
         # self.record_ft_wrench_raw = bool(record_ft_wrench_raw)
@@ -121,6 +132,11 @@ class MujocoHDF5Recorder:
         self.ft_torque_sensor_name = ft_torque_sensor_name
         self.peg_tip_site_name = peg_tip_site_name
         self.hole_center_site_name = hole_center_site_name
+        self.peg_geom_name = str(peg_geom_name)
+        self.hole_ring_reference_geom_name = str(hole_ring_reference_geom_name)
+        self.hole_back_stop_geom_name = str(hole_back_stop_geom_name)
+        self.task_success_metadata = dict(task_success_metadata or {})
+        self.task_model_metadata: Dict[str, Any] = {}
 
         self.image_compression = image_compression
         self.image_compression_level = int(image_compression_level)
@@ -130,7 +146,12 @@ class MujocoHDF5Recorder:
         self.chunk_size_image = int(chunk_size_image)
 
         self.active = False
+        self._lifecycle_lock = threading.RLock()
         self._io_lock = threading.RLock()
+        self._sample_queue = None
+        self._writer_thread: Optional[threading.Thread] = None
+        self._writer_error: Optional[BaseException] = None
+        self._writer_stop_token = object()
         self.session_dir: Optional[Path] = None
         self.hdf5_path: Optional[Path] = None
         self.h5: Optional[h5py.File] = None
@@ -145,6 +166,9 @@ class MujocoHDF5Recorder:
         self.n_state = 0
         self.n_force = 0
         self.n_image = 0
+        self.enqueued_state = 0
+        self.enqueued_force = 0
+        self.enqueued_image = 0
         self.event_rows: List[Dict[str, Any]] = []
 
         self.joint_ids = [
@@ -196,6 +220,19 @@ class MujocoHDF5Recorder:
 
         self.peg_tip_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.peg_tip_site_name)
         self.hole_center_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.hole_center_site_name)
+        self.peg_geom_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_GEOM, self.peg_geom_name
+        )
+        self.hole_ring_reference_geom_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            self.hole_ring_reference_geom_name,
+        )
+        self.hole_back_stop_geom_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            self.hole_back_stop_geom_name,
+        )
 
         self.camera_ids: Dict[str, int] = {}
         if self.record_images:
@@ -253,7 +290,7 @@ class MujocoHDF5Recorder:
     #     return self.hdf5_path
     
     def start_episode(self, label: str = "teleop") -> Optional[Path]:
-        with self._io_lock:
+        with self._lifecycle_lock, self._io_lock:
             if self.active:
                 print("[CompactHDF5Recorder] Episode already active.")
                 return self.hdf5_path
@@ -276,7 +313,11 @@ class MujocoHDF5Recorder:
             self.n_state = 0
             self.n_force = 0
             self.n_image = 0
+            self.enqueued_state = 0
+            self.enqueued_force = 0
+            self.enqueued_image = 0
             self.event_rows = []
+            self._writer_error = None
 
             # self.h5 = h5py.File(self.hdf5_path, "w")
             # self._create_file_structure()
@@ -297,6 +338,15 @@ class MujocoHDF5Recorder:
 
             self.active = True
             self.add_event("record_start")
+
+            if self.async_io:
+                self._sample_queue = queue.Queue(maxsize=self.async_queue_size)
+                self._writer_thread = threading.Thread(
+                    target=self._writer_loop,
+                    name="mujoco-hdf5-writer",
+                    daemon=True,
+                )
+                self._writer_thread.start()
 
             print(f"[CompactHDF5Recorder] Started: {self.session_dir}")
             return self.hdf5_path
@@ -320,7 +370,7 @@ class MujocoHDF5Recorder:
     #     print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
     #     return self.hdf5_path
     
-    def stop_episode(self, status: str = "manual_stop") -> Optional[Path]:
+    def _stop_episode_legacy(self, status: str = "manual_stop") -> Optional[Path]:
         with self._io_lock:
             if not self.active:
                 print("[CompactHDF5Recorder] No active episode.")
@@ -345,6 +395,64 @@ class MujocoHDF5Recorder:
             print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
             return self.hdf5_path
 
+    def stop_episode(self, status: str = "manual_stop") -> Optional[Path]:
+        """Stop accepting samples, drain the writer, then finalize the file."""
+        with self._lifecycle_lock:
+            with self._io_lock:
+                if not self.active:
+                    print("[CompactHDF5Recorder] No active episode.")
+                    return self.hdf5_path
+                self.add_event(status)
+                self.active = False
+
+            writer_thread = self._writer_thread
+            sample_queue = self._sample_queue
+            if (
+                self.async_io
+                and writer_thread is not None
+                and writer_thread.is_alive()
+                and sample_queue is not None
+            ):
+                sample_queue.put(self._writer_stop_token)
+
+        if writer_thread is not None:
+            writer_thread.join()
+
+        with self._io_lock:
+            writer_error = self._writer_error
+            final_status = "writer_error" if writer_error is not None else status
+            finalize_error = None
+            try:
+                if writer_error is not None and self.h5 is not None:
+                    self.h5["episode_metadata"].attrs["writer_error"] = repr(
+                        writer_error
+                    )
+                self._write_final_metadata(status=final_status)
+                self._write_events()
+                if self.h5 is not None:
+                    self.h5.flush()
+            except BaseException as exc:
+                finalize_error = exc
+            finally:
+                if self.h5 is not None:
+                    self.h5.close()
+                    self.h5 = None
+
+            if finalize_error is None:
+                self._write_sidecar_json(status=final_status)
+            self._writer_thread = None
+            self._sample_queue = None
+
+        if writer_error is not None:
+            raise RuntimeError(f"HDF5 writer failed: {writer_error}") from writer_error
+        if finalize_error is not None:
+            raise RuntimeError(
+                f"HDF5 finalization failed: {finalize_error}"
+            ) from finalize_error
+
+        print(f"[CompactHDF5Recorder] Saved: {self.hdf5_path}")
+        return self.hdf5_path
+
     # def close(self) -> None:
     #     if self.active:
     #         self.stop_episode(status="controller_shutdown")
@@ -353,10 +461,9 @@ class MujocoHDF5Recorder:
     #         self.renderer = None
     
     def close(self) -> None:
+        if self.active:
+            self.stop_episode(status="controller_shutdown")
         with self._io_lock:
-            if self.active:
-                self.stop_episode(status="controller_shutdown")
-
             if self.renderer is not None:
                 self.renderer.close()
                 self.renderer = None
@@ -425,33 +532,280 @@ class MujocoHDF5Recorder:
         """
         Call immediately after mujoco.mj_step().
 
-        This function may be called from the MuJoCo simulation thread, while
-        start_episode()/stop_episode() may be called from a ROS service thread.
-        Therefore all HDF5 access must be protected by self._io_lock.
+        The simulation thread captures immutable samples.  When async_io is
+        enabled, rendering and HDF5 access happen only in the writer thread.
         """
-        with self._io_lock:
+        if not self.async_io:
+            with self._io_lock:
+                if not self.active or self.h5 is None:
+                    return
+                self._record_sync_if_needed()
+            return
+
+        with self._lifecycle_lock:
             if not self.active or self.h5 is None:
                 return
+            if self._writer_error is not None:
+                raise RuntimeError(
+                    f"HDF5 writer failed: {self._writer_error}"
+                ) from self._writer_error
 
             t = float(self.data.time)
+            sample: Dict[str, Any] = {}
 
             if t + 1e-12 >= self.next_force_t:
-                self._append_force_sample()
+                raw = self._ft_wrench_raw()
+                gravity = self._ft_gravity_wrench()
+                sample["force"] = {
+                    "t": t,
+                    "t_episode": self._t_episode(),
+                    "raw": raw,
+                    "gravity": gravity,
+                    "compensated": self._compensate_ft_wrench(raw, gravity),
+                }
+                self.enqueued_force += 1
                 while self.next_force_t <= t + 1e-12:
                     self.next_force_t += self.force_period
 
             if t + 1e-12 >= self.next_state_t:
-                self._append_state_sample()
+                state = {
+                    "t": t,
+                    "t_episode": self._t_episode(),
+                    "ee_pose": self._ee_pose(),
+                    "joint_pos": self._joint_pos(),
+                    "joint_vel": self._joint_vel(),
+                    "joint_torque": self._joint_torque(),
+                }
+                if self.record_actions:
+                    state["joint_pos_command"] = self._joint_pos_command()
+                sample["state"] = state
+                self.enqueued_state += 1
                 while self.next_state_t <= t + 1e-12:
                     self.next_state_t += self.state_period
 
             if self.record_images and t + 1e-12 >= self.next_image_t:
-                self._append_image_sample()
+                capture = getattr(controller, "_capture_render_state_locked", None)
+                if callable(capture):
+                    render_state = capture()
+                else:
+                    render_state = self._capture_render_state()
+                sample["image"] = {
+                    "t": t,
+                    "t_episode": self._t_episode(),
+                    "render_state": render_state,
+                }
+                self.enqueued_image += 1
                 while self.next_image_t <= t + 1e-12:
                     self.next_image_t += self.image_period
 
-            if max(self.n_state, self.n_force, self.n_image) > self.max_buffer_rows:
-                self.stop_episode(status="buffer_limit")
+            if max(
+                self.enqueued_state,
+                self.enqueued_force,
+                self.enqueued_image,
+            ) > self.max_buffer_rows:
+                raise RuntimeError("HDF5 recording reached max_buffer_rows")
+
+            if sample:
+                if self._sample_queue is None:
+                    raise RuntimeError("HDF5 writer queue is not initialized")
+                try:
+                    self._sample_queue.put(sample, timeout=1.0)
+                except queue.Full as exc:
+                    raise RuntimeError(
+                        "HDF5 writer queue remained full for 1 second"
+                    ) from exc
+
+    def _record_sync_if_needed(self) -> None:
+        t = float(self.data.time)
+        if t + 1e-12 >= self.next_force_t:
+            self._append_force_sample()
+            while self.next_force_t <= t + 1e-12:
+                self.next_force_t += self.force_period
+        if t + 1e-12 >= self.next_state_t:
+            self._append_state_sample()
+            while self.next_state_t <= t + 1e-12:
+                self.next_state_t += self.state_period
+        if self.record_images and t + 1e-12 >= self.next_image_t:
+            self._append_image_sample()
+            while self.next_image_t <= t + 1e-12:
+                self.next_image_t += self.image_period
+        if max(self.n_state, self.n_force, self.n_image) > self.max_buffer_rows:
+            raise RuntimeError("HDF5 recording reached max_buffer_rows")
+
+    def _capture_render_state(self) -> Dict[str, np.ndarray]:
+        return {
+            "time": np.asarray(float(self.data.time), dtype=np.float64),
+            "qpos": self.data.qpos.copy(),
+            "qvel": self.data.qvel.copy(),
+            "act": self.data.act.copy(),
+            "mocap_pos": self.data.mocap_pos.copy(),
+            "mocap_quat": self.data.mocap_quat.copy(),
+            "body_pos": self.model.body_pos.copy(),
+            "body_quat": self.model.body_quat.copy(),
+            "geom_rgba": self.model.geom_rgba.copy(),
+            "mat_rgba": self.model.mat_rgba.copy(),
+        }
+
+    def _writer_loop(self) -> None:
+        render_model = None
+        render_data = None
+        renderer = None
+        render_camera_ids = None
+        try:
+            while True:
+                if self._sample_queue is None:
+                    return
+                first = self._sample_queue.get()
+                if first is self._writer_stop_token:
+                    break
+
+                batch = [first]
+                stop_after_batch = False
+                for _ in range(self.write_batch_size - 1):
+                    try:
+                        item = self._sample_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if item is self._writer_stop_token:
+                        stop_after_batch = True
+                        break
+                    batch.append(item)
+
+                if any("image" in item for item in batch):
+                    if render_model is None:
+                        render_model = mujoco.MjModel.from_xml_path(self.model_path)
+                        render_data = mujoco.MjData(render_model)
+                        renderer = mujoco.Renderer(
+                            render_model,
+                            height=self.image_height,
+                            width=self.image_width,
+                        )
+                        render_camera_ids = {
+                            name: mujoco.mj_name2id(
+                                render_model,
+                                mujoco.mjtObj.mjOBJ_CAMERA,
+                                name,
+                            )
+                            for name in self.camera_ids
+                        }
+
+                with self._io_lock:
+                    self._write_async_batch(
+                        batch,
+                        render_model,
+                        render_data,
+                        renderer,
+                        render_camera_ids,
+                    )
+
+                if stop_after_batch:
+                    break
+        except BaseException as exc:
+            self._writer_error = exc
+        finally:
+            if renderer is not None:
+                renderer.close()
+
+    def _write_async_batch(
+        self,
+        batch,
+        render_model,
+        render_data,
+        renderer,
+        render_camera_ids,
+    ) -> None:
+        force_rows = [item["force"] for item in batch if "force" in item]
+        if force_rows:
+            self._append_1d_batch("timestamps/force", [r["t"] for r in force_rows])
+            self._append_1d_batch(
+                "timestamps/force_episode",
+                [r["t_episode"] for r in force_rows],
+            )
+            if self.record_ft_wrench_raw:
+                self._append_2d_batch(
+                    "observations/ft_wrench_raw",
+                    [r["raw"] for r in force_rows],
+                )
+            if self.record_ft_wrench_gravity:
+                self._append_2d_batch(
+                    "observations/ft_wrench_gravity",
+                    [r["gravity"] for r in force_rows],
+                )
+            self._append_2d_batch(
+                "observations/ft_wrench",
+                [r["compensated"] for r in force_rows],
+            )
+            self.n_force += len(force_rows)
+
+        state_rows = [item["state"] for item in batch if "state" in item]
+        if state_rows:
+            self._append_1d_batch("timestamps/state", [r["t"] for r in state_rows])
+            self._append_1d_batch(
+                "timestamps/state_episode",
+                [r["t_episode"] for r in state_rows],
+            )
+            for path, key in (
+                ("observations/ee_pose", "ee_pose"),
+                ("observations/joint_pos", "joint_pos"),
+                ("observations/joint_vel", "joint_vel"),
+                ("observations/joint_torque", "joint_torque"),
+            ):
+                self._append_2d_batch(path, [r[key] for r in state_rows])
+            if self.record_actions:
+                commands = [r["joint_pos_command"] for r in state_rows]
+                self._append_2d_batch("actions/joint_pos_command", commands)
+                if self.record_action_alias:
+                    self._append_2d_batch("action", commands)
+            self.n_state += len(state_rows)
+
+        image_rows = [item["image"] for item in batch if "image" in item]
+        if image_rows:
+            if renderer is None or render_model is None or render_data is None:
+                raise RuntimeError("image renderer was not initialized")
+            frames_by_camera = {name: [] for name in self.camera_ids}
+            for row in image_rows:
+                self._apply_render_state(
+                    render_model,
+                    render_data,
+                    row["render_state"],
+                )
+                for camera_name in self.camera_ids:
+                    camera_id = render_camera_ids[camera_name]
+                    if camera_id == -1:
+                        raise RuntimeError(f"camera not found in render model: {camera_name}")
+                    renderer.update_scene(render_data, camera=camera_id)
+                    rgb = renderer.render()
+                    if rgb.dtype != np.uint8:
+                        rgb = np.asarray(np.clip(rgb, 0, 255), dtype=np.uint8)
+                    frames_by_camera[camera_name].append(rgb.copy())
+
+            self._append_1d_batch("timestamps/image", [r["t"] for r in image_rows])
+            self._append_1d_batch(
+                "timestamps/image_episode",
+                [r["t_episode"] for r in image_rows],
+            )
+            for camera_name, frames in frames_by_camera.items():
+                self._append_image_batch(
+                    f"observations/images/{camera_name}",
+                    frames,
+                )
+            self.n_image += len(image_rows)
+
+    @staticmethod
+    def _apply_render_state(model, data, state) -> None:
+        data.time = float(state["time"])
+        data.qpos[:] = state["qpos"]
+        data.qvel[:] = state["qvel"]
+        if data.act.size:
+            data.act[:] = state["act"]
+        if data.mocap_pos.size:
+            data.mocap_pos[:] = state["mocap_pos"]
+            data.mocap_quat[:] = state["mocap_quat"]
+        model.body_pos[:] = state["body_pos"]
+        model.body_quat[:] = state["body_quat"]
+        model.geom_rgba[:] = state["geom_rgba"]
+        model.mat_rgba[:] = state["mat_rgba"]
+        mujoco.mj_forward(model, data)
 
     # ------------------------------------------------------------------
     # File structure
@@ -736,9 +1090,159 @@ class MujocoHDF5Recorder:
         d.resize((i + 1, self.image_height, self.image_width, 3))
         d[i, :, :, :] = frame
 
+    def _append_1d_batch(self, path: str, values) -> None:
+        assert self.h5 is not None
+        arr = np.asarray(values)
+        if arr.size == 0:
+            return
+        d = self.h5[path]
+        start = d.shape[0]
+        d.resize((start + arr.shape[0],))
+        d[start:] = arr
+
+    def _append_2d_batch(self, path: str, rows) -> None:
+        assert self.h5 is not None
+        arr = np.asarray(rows, dtype=np.float64)
+        if arr.size == 0:
+            return
+        d = self.h5[path]
+        start = d.shape[0]
+        d.resize((start + arr.shape[0], d.shape[1]))
+        d[start:, :] = arr
+
+    def _append_image_batch(self, path: str, frames) -> None:
+        assert self.h5 is not None
+        arr = np.asarray(frames, dtype=np.uint8)
+        if arr.size == 0:
+            return
+        d = self.h5[path]
+        start = d.shape[0]
+        d.resize(
+            (
+                start + arr.shape[0],
+                self.image_height,
+                self.image_width,
+                3,
+            )
+        )
+        d[start:, :, :, :] = arr
+
     # ------------------------------------------------------------------
     # Metadata
     # ------------------------------------------------------------------
+    def _collect_task_model_metadata(self) -> Dict[str, Any]:
+        """Return model-derived peg/hole metadata with explicit conventions."""
+        metadata: Dict[str, Any] = {
+            "metadata_schema_version": "peg_hole_task_v1",
+            "model_path": self.model_path,
+            "robot_model_file": Path(self.model_path).name,
+            "peg_geom_name": self.peg_geom_name,
+            "hole_ring_reference_geom_name": self.hole_ring_reference_geom_name,
+            "hole_back_stop_geom_name": self.hole_back_stop_geom_name,
+            "hole_goal_site_name": self.hole_center_site_name,
+        }
+
+        if self.peg_geom_id != -1:
+            peg_size = np.asarray(
+                self.model.geom_size[self.peg_geom_id], dtype=np.float64
+            ).copy()
+            metadata["peg_geom_size"] = peg_size
+            metadata["peg_radius_m"] = float(peg_size[0])
+            metadata["peg_diameter_m"] = float(2.0 * peg_size[0])
+            metadata["peg_half_length_m"] = float(peg_size[1])
+            metadata["peg_length_m"] = float(2.0 * peg_size[1])
+
+        ring_pos = None
+        ring_size = None
+        if self.hole_ring_reference_geom_id != -1:
+            ring_pos = np.asarray(
+                self.model.geom_pos[self.hole_ring_reference_geom_id],
+                dtype=np.float64,
+            ).copy()
+            ring_size = np.asarray(
+                self.model.geom_size[self.hole_ring_reference_geom_id],
+                dtype=np.float64,
+            ).copy()
+            metadata["hole_ring_reference_pos_local"] = ring_pos
+            metadata["hole_ring_reference_size"] = ring_size
+
+            ring_center_radius = float(np.linalg.norm(ring_pos[[0, 2]]))
+            metadata["hole_ring_center_radius_m"] = ring_center_radius
+            metadata["hole_inner_radius_m"] = max(
+                0.0,
+                ring_center_radius - float(ring_size[0]),
+            )
+            metadata["hole_inner_diameter_m"] = float(
+                2.0 * metadata["hole_inner_radius_m"]
+            )
+
+        back_pos = None
+        back_size = None
+        if self.hole_back_stop_geom_id != -1:
+            back_pos = np.asarray(
+                self.model.geom_pos[self.hole_back_stop_geom_id],
+                dtype=np.float64,
+            ).copy()
+            back_size = np.asarray(
+                self.model.geom_size[self.hole_back_stop_geom_id],
+                dtype=np.float64,
+            ).copy()
+            metadata["hole_back_stop_pos_local"] = back_pos
+            metadata["hole_back_stop_size"] = back_size
+
+        if ring_pos is not None and ring_size is not None and back_pos is not None and back_size is not None:
+            # pangu_all_right.xml inserts along local -Y.  Depth is measured
+            # from the ring entrance-facing surface to the back-stop surface.
+            entrance_surface_y = float(ring_pos[1] + ring_size[1])
+            back_stop_surface_y = float(back_pos[1] + back_size[1])
+            metadata["hole_entrance_surface_y_local_m"] = entrance_surface_y
+            metadata["hole_back_stop_surface_y_local_m"] = back_stop_surface_y
+            metadata["hole_depth_m"] = abs(
+                entrance_surface_y - back_stop_surface_y
+            )
+            metadata["hole_depth_convention"] = (
+                "local_y_distance_from_ring_front_surface_to_back_stop_front_surface"
+            )
+
+        if self.hole_center_site_id != -1:
+            metadata["hole_goal_site_pos_local"] = np.asarray(
+                self.model.site_pos[self.hole_center_site_id], dtype=np.float64
+            ).copy()
+            metadata["hole_goal_site_size"] = np.asarray(
+                self.model.site_size[self.hole_center_site_id], dtype=np.float64
+            ).copy()
+            metadata["hole_goal_site_pos_world_initial"] = self._site_pos(
+                self.hole_center_site_id
+            )
+
+        metadata.update(self.task_success_metadata)
+        return metadata
+
+    @staticmethod
+    def _metadata_json_value(value):
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, np.generic):
+            return value.item()
+        return value
+
+    def _write_task_model_metadata(self, parent_group) -> None:
+        task_group = parent_group.require_group("task")
+        metadata = self._collect_task_model_metadata()
+        self.task_model_metadata = metadata
+
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple, np.ndarray)):
+                if key in task_group:
+                    del task_group[key]
+                task_group.create_dataset(key, data=np.asarray(value))
+            elif isinstance(value, (bool, int, float, np.integer, np.floating)):
+                task_group.attrs[key] = value
+            else:
+                task_group.attrs[key] = str(value)
+
     def _write_initial_metadata(self) -> None:
         assert self.h5 is not None
         g = self.h5["episode_metadata"]
@@ -759,6 +1263,9 @@ class MujocoHDF5Recorder:
         g.attrs["task_name"] = "wall_peg_in_hole"
         g.attrs["task_success"] = "unknown"
         g.attrs["random_seed"] = -1
+        g.attrs["metadata_schema_version"] = "peg_hole_task_v1"
+
+        self._write_task_model_metadata(g)
 
         self._write_string_dataset("episode_metadata/joint_names", self.joint_names)
         self._write_string_dataset("episode_metadata/actuator_names", self.actuator_names)
@@ -851,6 +1358,13 @@ class MujocoHDF5Recorder:
         assert self.h5 is not None
         g = self.h5["episode_metadata"]
         g.attrs["status"] = status
+        task_success_detected = any(
+            row.get("event") == "task_success_site_reached"
+            for row in self.event_rows
+        )
+        g.attrs["task_success"] = (
+            "true" if task_success_detected else "unknown"
+        )
         g.attrs["episode_end_sim_time"] = float(self.data.time)
         g.attrs["episode_end_wall_time"] = float(time.time())
         g.attrs["duration_sim"] = float(self.data.time - self.episode_start_sim_time)
@@ -886,6 +1400,16 @@ class MujocoHDF5Recorder:
             if name in g:
                 del g[name]
             g.create_dataset(name, data=value)
+
+        task_group = g.require_group("task")
+        task_group.attrs["task_success_detected"] = int(task_success_detected)
+        if self.hole_center_site_id != -1:
+            if "hole_goal_site_pos_world_final" in task_group:
+                del task_group["hole_goal_site_pos_world_final"]
+            task_group.create_dataset(
+                "hole_goal_site_pos_world_final",
+                data=self._site_pos(self.hole_center_site_id),
+            )
 
         final_err_xyz = self._site_pos(self.peg_tip_site_id) - self._site_pos(self.hole_center_site_id)
         g.attrs["final_align_err_xz"] = float(np.linalg.norm([final_err_xyz[0], final_err_xyz[2]]))
@@ -935,6 +1459,14 @@ class MujocoHDF5Recorder:
             "camera_names": list(self.camera_ids.keys()),
             "image_storage": "inside_hdf5_uint8_rgb",
             "schema_version": "compact_mujoco_hdf5_v1",
+            "task_success_detected": any(
+                row.get("event") == "task_success_site_reached"
+                for row in self.event_rows
+            ),
+            "task_metadata": {
+                key: self._metadata_json_value(value)
+                for key, value in self.task_model_metadata.items()
+            },
         }
         with (self.session_dir / "metadata.json").open("w", encoding="utf-8") as f:
             json.dump(sidecar, f, indent=2, ensure_ascii=False)

@@ -23,13 +23,13 @@ from __future__ import annotations
 
 import time
 import threading
+import queue
 from typing import List, Optional, Dict, Any
 
 import numpy as np
 import cv2
 import mujoco
 import mujoco.viewer
-import h5py
 import shutil
 
 from utils.mujoco_data_recorder import MujocoDataRecorder
@@ -61,6 +61,8 @@ class RobotControllerMuJoCoPegTool:
 
         self.config = config or {}
         self.model_path = model_path
+        self.lock = threading.RLock()
+        self.recording_transition_lock = threading.Lock()
 
 
 
@@ -87,6 +89,44 @@ class RobotControllerMuJoCoPegTool:
         default_arm_joints = [f"joint_{i}" for i in range(1, 8)]
         self.arm_joint_names = self.config.get("arm_joints", default_arm_joints)
         self.arm_joint_names = [j for j in self.arm_joint_names if j in self.joint_names]
+
+        self.joint_id_by_name = {
+            name: mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                name,
+            )
+            for name in self.joint_names
+        }
+        self.joint_qpos_addr_by_name = {
+            name: int(self.model.jnt_qposadr[joint_id])
+            for name, joint_id in self.joint_id_by_name.items()
+            if joint_id != -1
+        }
+        self.joint_dof_addr_by_name = {
+            name: int(self.model.jnt_dofadr[joint_id])
+            for name, joint_id in self.joint_id_by_name.items()
+            if joint_id != -1
+        }
+        self.arm_qpos_addrs = np.asarray(
+            [self.joint_qpos_addr_by_name[name] for name in self.arm_joint_names],
+            dtype=np.int32,
+        )
+        self.arm_dof_addrs = np.asarray(
+            [self.joint_dof_addr_by_name[name] for name in self.arm_joint_names],
+            dtype=np.int32,
+        )
+        self.sensor_slice_by_name = {}
+        for sensor_id in range(self.model.nsensor):
+            sensor_name = mujoco.mj_id2name(
+                self.model,
+                mujoco.mjtObj.mjOBJ_SENSOR,
+                sensor_id,
+            )
+            if sensor_name:
+                adr = int(self.model.sensor_adr[sensor_id])
+                dim = int(self.model.sensor_dim[sensor_id])
+                self.sensor_slice_by_name[sensor_name] = slice(adr, adr + dim)
 
         if len(self.arm_joint_names) != 7:
             print(
@@ -156,7 +196,7 @@ class RobotControllerMuJoCoPegTool:
 
         self.monitor_camera_names = self.config.get(
             "monitor_camera_names",
-            ["cctv_cam", "ee_cam", "base_top_cam"]
+            ["cctv_cam"]
         )
 
         self.separate_cctv_window = bool(
@@ -192,6 +232,13 @@ class RobotControllerMuJoCoPegTool:
 
         self.camera_renderer = None
         self.monitor_camera_ids = {}
+        self.camera_stream_async = bool(
+            self.config.get("camera_stream_async", True)
+        )
+        self.camera_display_queue = queue.Queue(maxsize=1)
+        self.camera_display_stop = threading.Event()
+        self.camera_display_thread: Optional[threading.Thread] = None
+        self.camera_display_error: Optional[BaseException] = None
 
         if self.show_camera_streams:
             for cam_name in self.monitor_camera_names:
@@ -385,6 +432,13 @@ class RobotControllerMuJoCoPegTool:
                 image_format=self.config.get("hdf5_image_format", "jpg"),
                 jpg_quality=int(self.config.get("hdf5_jpg_quality", 90)),
                 max_buffer_rows=int(self.config.get("hdf5_max_buffer_rows", 500000)),
+                async_io=bool(self.config.get("hdf5_async_io", True)),
+                async_queue_size=int(
+                    self.config.get("hdf5_async_queue_size", 4096)
+                ),
+                write_batch_size=int(
+                    self.config.get("hdf5_write_batch_size", 128)
+                ),
 
                 enable_ft_tare=bool(self.config.get("hdf5_enable_ft_tare", False)),
                 # record_ft_wrench_raw=bool(self.config.get("hdf5_record_ft_wrench_raw", True)),
@@ -418,12 +472,67 @@ class RobotControllerMuJoCoPegTool:
                 ft_gravity_sensor_sign=float(
                     self.config.get("hdf5_ft_gravity_sensor_sign", -1.0)
                 ),
+                hole_center_site_name=self.config.get(
+                    "hdf5_hole_reference_site_name",
+                    self.config.get(
+                        "task_success_hole_site_name",
+                        "hole_goal_site",
+                    ),
+                ),
+                peg_geom_name=self.config.get(
+                    "hdf5_peg_geom_name",
+                    "cylindrical_peg",
+                ),
+                hole_ring_reference_geom_name=self.config.get(
+                    "hdf5_hole_ring_reference_geom_name",
+                    "wall_hole_ring_00",
+                ),
+                hole_back_stop_geom_name=self.config.get(
+                    "hdf5_hole_back_stop_geom_name",
+                    "hole_back_stop",
+                ),
+                task_success_metadata={
+                    "task_success_condition_type": "site_distance_dwell",
+                    "task_success_enabled": bool(
+                        self.config.get("enable_task_success_auto_stop", True)
+                    ),
+                    "task_success_peg_site_name": self.config.get(
+                        "task_success_peg_site_name", "peg_tip_site"
+                    ),
+                    "task_success_hole_site_name": self.config.get(
+                        "task_success_hole_site_name", "hole_goal_site"
+                    ),
+                    "task_success_distance_threshold_m": float(
+                        self.config.get("task_success_distance", 0.006)
+                    ),
+                    "task_success_dwell_time_s": float(
+                        self.config.get("task_success_dwell_time", 0.15)
+                    ),
+                    "task_success_only_when_recording": bool(
+                        self.config.get("task_success_only_when_recording", True)
+                    ),
+                    "task_success_stop_accepting_teleop": bool(
+                        self.config.get(
+                            "task_success_stop_accepting_teleop", True
+                        )
+                    ),
+                    "task_success_terminal_hold_time_s": float(
+                        self.config.get("task_success_terminal_hold_time", 1.0)
+                    ),
+                    "task_success_blend_to_qpos_time_s": float(
+                        self.config.get("task_success_blend_to_qpos_time", 0.2)
+                    ),
+                    "task_success_pending_manual_review": bool(
+                        self.config.get(
+                            "task_success_pending_manual_review", True
+                        )
+                    ),
+                },
             )
 
-            if bool(self.config.get("hdf5_auto_start", False)):
-                self.hdf5_recorder.start_episode(
-                    label=self.config.get("hdf5_episode_label", "teleop")
-                )
+            self.hdf5_auto_start_requested = bool(
+                self.config.get("hdf5_auto_start", False)
+            )
 
 
         
@@ -801,12 +910,11 @@ class RobotControllerMuJoCoPegTool:
         # ----- Launching Initialization ----- #
         # #################################### #
 
-        self.launch_viewer = bool(self.config.get("launch_viewer", True))
+        self.launch_viewer = bool(self.config.get("launch_viewer", False))
         self.viewer_start_wait = float(self.config.get("viewer_start_wait", 1.0))
 
         self.running = False
         self.viewer_running = False
-        self.lock = threading.RLock()
         self.vis_thread: Optional[threading.Thread] = None
 
         # State targets.
@@ -854,6 +962,15 @@ class RobotControllerMuJoCoPegTool:
         self._apply_actuator_targets(self.command_joints)
         mujoco.mj_forward(self.model, self.data)
 
+        if (
+            getattr(self, "hdf5_auto_start_requested", False)
+            and self.hdf5_recorder is not None
+        ):
+            with self.lock:
+                self.hdf5_recorder.start_episode(
+                    label=self.config.get("hdf5_episode_label", "teleop")
+                )
+
         print("MuJoCo peg-tool 仿真器初始化完成")
         print(f"控制模式: {self.control_mode}")
         print(f"MuJoCo timestep: {self.sim_timestep:.6f} s")
@@ -897,6 +1014,10 @@ class RobotControllerMuJoCoPegTool:
             return False
     
     def _auto_stop_recording_for_task_success(self):
+        with self.recording_transition_lock:
+            return self._auto_stop_recording_for_task_success_serialized()
+
+    def _auto_stop_recording_for_task_success_serialized(self):
         """
         Stop HDF5 recording after terminal hold.
 
@@ -917,9 +1038,10 @@ class RobotControllerMuJoCoPegTool:
             except Exception as e:
                 print(f"[TaskSuccessAutoStop] Failed to add auto-stop event: {e}")
 
-            hdf5_path = self.hdf5_recorder.stop_episode(
-                status="auto_stop_task_success"
-            )
+            with self.lock:
+                hdf5_path = self.hdf5_recorder.stop_episode(
+                    status="auto_stop_task_success"
+                )
 
             episode_path = str(hdf5_path) if hdf5_path is not None else ""
             episode_dir = str(hdf5_path.parent) if hdf5_path is not None else ""
@@ -956,6 +1078,10 @@ class RobotControllerMuJoCoPegTool:
 
     
     def _handle_recording_service(self, req):
+        with self.recording_transition_lock:
+            return self._handle_recording_service_serialized(req)
+
+    def _handle_recording_service_serialized(self, req):
         """
         ROS service callback for starting/stopping HDF5 episode recording.
 
@@ -1039,7 +1165,8 @@ class RobotControllerMuJoCoPegTool:
                     )
 
                 # 5. 开始 HDF5 记录
-                hdf5_path = self.hdf5_recorder.start_episode(label=label)
+                with self.lock:
+                    hdf5_path = self.hdf5_recorder.start_episode(label=label)
 
                 # 6. 开启 controller 命令入口
                 self.accept_teleop_commands = True
@@ -1054,7 +1181,10 @@ class RobotControllerMuJoCoPegTool:
                     self.accept_teleop_commands = False
 
                     if self.hdf5_recorder.active:
-                        self.hdf5_recorder.stop_episode(status="teleop_start_failed")
+                        with self.lock:
+                            self.hdf5_recorder.stop_episode(
+                                status="teleop_start_failed"
+                            )
 
                     return SetRecordingResponse(
                         success=False,
@@ -1213,9 +1343,10 @@ class RobotControllerMuJoCoPegTool:
                 # 3. 先保存 stop 前的路径，避免 stop_episode 返回 None 时丢失路径
                 hdf5_path_before_stop = self.hdf5_recorder.hdf5_path
 
-                hdf5_path = self.hdf5_recorder.stop_episode(
-                    status="manual_keep" if req.keep else "manual_discard"
-                )
+                with self.lock:
+                    hdf5_path = self.hdf5_recorder.stop_episode(
+                        status="manual_keep" if req.keep else "manual_discard"
+                    )
 
                 if hdf5_path is None:
                     hdf5_path = hdf5_path_before_stop
@@ -1451,12 +1582,10 @@ class RobotControllerMuJoCoPegTool:
         joint_angles = []
         with self.lock:
             for joint_name in self.joint_names:
-                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-                if joint_id == -1:
+                qpos_addr = self.joint_qpos_addr_by_name.get(joint_name)
+                if qpos_addr is None:
                     joint_angles.append(0.0)
                     continue
-
-                qpos_addr = self.model.jnt_qposadr[joint_id]
                 if qpos_addr < len(self.data.qpos):
                     joint_angles.append(round(float(self.data.qpos[qpos_addr]), 3))
                 else:
@@ -1474,18 +1603,30 @@ class RobotControllerMuJoCoPegTool:
                 width=self.camera_stream_width,
             )
     
-    def _render_camera_rgb(self, camera_name: str):
+    def _render_camera_rgb(
+        self,
+        camera_name: str,
+        renderer=None,
+        render_data=None,
+        camera_ids=None,
+    ):
         """
         渲染指定 MuJoCo camera，返回 RGB 图像。
         """
-        if camera_name not in self.monitor_camera_ids:
+        if camera_ids is None:
+            camera_ids = self.monitor_camera_ids
+        if camera_name not in camera_ids:
             return None
 
-        self._ensure_camera_renderer()
+        if renderer is None:
+            self._ensure_camera_renderer()
+            renderer = self.camera_renderer
+        if render_data is None:
+            render_data = self.data
 
-        cam_id = self.monitor_camera_ids[camera_name]
-        self.camera_renderer.update_scene(self.data, camera=cam_id)
-        rgb = self.camera_renderer.render()
+        cam_id = camera_ids[camera_name]
+        renderer.update_scene(render_data, camera=cam_id)
+        rgb = renderer.render()
         return rgb
 
     def update_camera_stream_windows(self):
@@ -1499,14 +1640,52 @@ class RobotControllerMuJoCoPegTool:
         if now - self.last_camera_stream_time < self.camera_stream_period:
             return
 
+        if self.camera_stream_async:
+            with self.lock:
+                item = (
+                    self._capture_render_state_locked(),
+                    self._get_force_feedback_snapshot(),
+                )
+            try:
+                self.camera_display_queue.put_nowait(item)
+            except queue.Full:
+                try:
+                    self.camera_display_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self.camera_display_queue.put_nowait(item)
+                except queue.Full:
+                    pass
+            self.last_camera_stream_time = now
+            return
+
+        self._display_camera_stream_windows(
+            renderer=None,
+            render_data=self.data,
+            camera_ids=self.monitor_camera_ids,
+            feedback=self._get_force_feedback_snapshot(),
+        )
+        self.last_camera_stream_time = now
+
+    def _display_camera_stream_windows(
+        self,
+        renderer,
+        render_data,
+        camera_ids,
+        feedback,
+    ):
+        """Render configured operator cameras using the supplied render state."""
+
         frames = []
-        labels = []
-        feedback = self._get_force_feedback_snapshot()
 
         if self.separate_cctv_window:
             cctv_bgr = self._render_cctv_window_bgr(
                 camera_name=self.cctv_camera,
                 feedback=feedback,
+                renderer=renderer,
+                render_data=render_data,
+                camera_ids=camera_ids,
             )
             if cctv_bgr is not None:
                 self._ensure_cctv_window()
@@ -1523,12 +1702,14 @@ class RobotControllerMuJoCoPegTool:
             bgr = self._render_display_camera_bgr(
                 camera_name=cam_name,
                 feedback=feedback,
+                renderer=renderer,
+                render_data=render_data,
+                camera_ids=camera_ids,
             )
             if bgr is None:
                 continue
 
             frames.append(bgr)
-            labels.append(cam_name)
 
         if len(frames) > 0:
             # 如果只有一个相机，就单独显示
@@ -1551,10 +1732,21 @@ class RobotControllerMuJoCoPegTool:
             )
         cv2.waitKey(1)
 
-        self.last_camera_stream_time = now
-
-    def _render_display_camera_bgr(self, camera_name: str, feedback=None, size=None):
-        rgb = self._render_camera_rgb(camera_name)
+    def _render_display_camera_bgr(
+        self,
+        camera_name: str,
+        feedback=None,
+        size=None,
+        renderer=None,
+        render_data=None,
+        camera_ids=None,
+    ):
+        rgb = self._render_camera_rgb(
+            camera_name,
+            renderer=renderer,
+            render_data=render_data,
+            camera_ids=camera_ids,
+        )
         if rgb is None:
             return None
 
@@ -1585,8 +1777,20 @@ class RobotControllerMuJoCoPegTool:
 
         return bgr
 
-    def _render_cctv_window_bgr(self, camera_name: str, feedback=None):
-        rgb = self._render_camera_rgb(camera_name)
+    def _render_cctv_window_bgr(
+        self,
+        camera_name: str,
+        feedback=None,
+        renderer=None,
+        render_data=None,
+        camera_ids=None,
+    ):
+        rgb = self._render_camera_rgb(
+            camera_name,
+            renderer=renderer,
+            render_data=render_data,
+            camera_ids=camera_ids,
+        )
         if rgb is None:
             return None
 
@@ -1650,6 +1854,91 @@ class RobotControllerMuJoCoPegTool:
             print(f"[Camera Monitor] CCTV window setup failed: {e}")
 
         self.cctv_window_initialized = True
+
+    @staticmethod
+    def _apply_copied_render_state(model, data, state):
+        data.time = float(state["time"])
+        data.qpos[:] = state["qpos"]
+        data.qvel[:] = state["qvel"]
+        if data.act.size:
+            data.act[:] = state["act"]
+        if data.mocap_pos.size:
+            data.mocap_pos[:] = state["mocap_pos"]
+            data.mocap_quat[:] = state["mocap_quat"]
+        model.body_pos[:] = state["body_pos"]
+        model.body_quat[:] = state["body_quat"]
+        model.geom_rgba[:] = state["geom_rgba"]
+        model.mat_rgba[:] = state["mat_rgba"]
+        mujoco.mj_forward(model, data)
+
+    def _camera_display_worker(self):
+        renderer = None
+        try:
+            render_model = mujoco.MjModel.from_xml_path(self.model_path)
+            render_data = mujoco.MjData(render_model)
+            camera_ids = {}
+            for camera_name in self.monitor_camera_names:
+                camera_id = mujoco.mj_name2id(
+                    render_model,
+                    mujoco.mjtObj.mjOBJ_CAMERA,
+                    camera_name,
+                )
+                if camera_id != -1:
+                    camera_ids[camera_name] = camera_id
+
+            renderer = mujoco.Renderer(
+                render_model,
+                height=self.camera_stream_height,
+                width=self.camera_stream_width,
+            )
+
+            while not self.camera_display_stop.is_set():
+                try:
+                    render_state, feedback = self.camera_display_queue.get(
+                        timeout=0.1
+                    )
+                except queue.Empty:
+                    continue
+
+                self._apply_copied_render_state(
+                    render_model,
+                    render_data,
+                    render_state,
+                )
+                self._display_camera_stream_windows(
+                    renderer=renderer,
+                    render_data=render_data,
+                    camera_ids=camera_ids,
+                    feedback=feedback,
+                )
+        except BaseException as exc:
+            self.camera_display_error = exc
+            print(f"[Camera Monitor] async display failed: {exc}")
+        finally:
+            if renderer is not None:
+                renderer.close()
+
+    def _start_camera_display_worker(self):
+        if not self.show_camera_streams or not self.camera_stream_async:
+            return
+        if self.camera_display_thread is not None and self.camera_display_thread.is_alive():
+            return
+        self.camera_display_stop.clear()
+        self.camera_display_error = None
+        self.camera_display_thread = threading.Thread(
+            target=self._camera_display_worker,
+            name="mujoco-cctv-display",
+            daemon=True,
+        )
+        self.camera_display_thread.start()
+
+    def _stop_camera_display_worker(self):
+        self.camera_display_stop.set()
+        if self.camera_display_thread is not None:
+            self.camera_display_thread.join(timeout=5.0)
+            if self.camera_display_thread.is_alive():
+                print("[Camera Monitor] display worker did not stop within 5 seconds.")
+        self.camera_display_thread = None
 
     def _should_overlay_force_feedback(self, camera_name: str) -> bool:
         cfg = self.force_feedback_config
@@ -1995,12 +2284,10 @@ class RobotControllerMuJoCoPegTool:
             return
 
         for i, joint_name in enumerate(self.joint_names):
-            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-            if joint_id == -1:
+            qpos_addr = self.joint_qpos_addr_by_name.get(joint_name)
+            dof_addr = self.joint_dof_addr_by_name.get(joint_name)
+            if qpos_addr is None or dof_addr is None:
                 continue
-
-            qpos_addr = self.model.jnt_qposadr[joint_id]
-            dof_addr = self.model.jnt_dofadr[joint_id]
 
             if qpos_addr < len(self.data.qpos):
                 self.data.qpos[qpos_addr] = target_joints[i]
@@ -2127,6 +2414,21 @@ class RobotControllerMuJoCoPegTool:
             if actuator_id is not None and actuator_id >= 0:
                 self.data.ctrl[actuator_id] = target_joints[i]
 
+    def _capture_render_state_locked(self) -> Dict[str, np.ndarray]:
+        """Copy the minimum dynamic/visual state needed by async renderers."""
+        return {
+            "time": np.asarray(float(self.data.time), dtype=np.float64),
+            "qpos": self.data.qpos.copy(),
+            "qvel": self.data.qvel.copy(),
+            "act": self.data.act.copy(),
+            "mocap_pos": self.data.mocap_pos.copy(),
+            "mocap_quat": self.data.mocap_quat.copy(),
+            "body_pos": self.model.body_pos.copy(),
+            "body_quat": self.model.body_quat.copy(),
+            "geom_rgba": self.model.geom_rgba.copy(),
+            "mat_rgba": self.model.mat_rgba.copy(),
+        }
+
     def _physics_step(self):
         with self.lock:
             if not getattr(self, "terminal_hold_active", False):
@@ -2143,34 +2445,28 @@ class RobotControllerMuJoCoPegTool:
                     )
 
             self._apply_actuator_targets(self.command_joints)
+            mujoco.mj_step(self.model, self.data)
 
-        mujoco.mj_step(self.model, self.data)
+            # All post-step state reads happen while MuJoCo data is stable.
+            self._update_joint_torque_alarm_locked()
+            self._update_ft_wrench_alarm_locked()
+            self._update_task_success_auto_stop_locked()
 
-        # Online data-quality alarm.
-        # If any joint torque exceeds its limit during recording,
-        # turn the peg green and latch the alarm.
-        self._update_joint_torque_alarm_locked()
-        self._update_ft_wrench_alarm_locked()
+            if self.data_recorder is not None:
+                self.data_recorder.record_if_needed(self)
 
-        # Task success auto-stop and terminal hold
-        self._update_task_success_auto_stop_locked()
-
-
-        # Data Recording
-        if self.data_recorder is not None:
-            self.data_recorder.record_if_needed(self)
-
-        # if self.hdf5_recorder is not None:
-        #     self.hdf5_recorder.record_if_needed(self)
-        if self.hdf5_recorder is not None:
-            try:
-                self.hdf5_recorder.record_if_needed(self)
-            except Exception as e:
-                print(f"[HDF5Recorder] record_if_needed failed: {e}")
+            if self.hdf5_recorder is not None:
                 try:
-                    self.hdf5_recorder.active = False
-                except Exception:
-                    pass
+                    self.hdf5_recorder.record_if_needed(self)
+                except Exception as e:
+                    print(f"[HDF5Recorder] record_if_needed failed: {e}")
+                    try:
+                        if self.hdf5_recorder.active:
+                            self.hdf5_recorder.stop_episode(
+                                status="record_if_needed_failed"
+                            )
+                    except Exception as stop_error:
+                        print(f"[HDF5Recorder] failed to finalize error episode: {stop_error}")
 
         # Camera Streaming
         if self.show_camera_streams:
@@ -2196,14 +2492,11 @@ class RobotControllerMuJoCoPegTool:
             return self.data.xpos[body_id].copy().tolist()
 
     def get_sensor_data(self, sensor_name: str) -> Optional[List[float]]:
-        sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_name)
-        if sensor_id == -1:
+        sensor_slice = self.sensor_slice_by_name.get(sensor_name)
+        if sensor_slice is None:
             return None
-
-        adr = self.model.sensor_adr[sensor_id]
-        dim = self.model.sensor_dim[sensor_id]
         with self.lock:
-            return self.data.sensordata[adr:adr + dim].copy().tolist()
+            return self.data.sensordata[sensor_slice].copy().tolist()
 
     def get_peg_ft_sensor(self) -> Optional[List[float]]:
         """
@@ -2292,17 +2585,10 @@ class RobotControllerMuJoCoPegTool:
         return " Quality warning: " + " | ".join(msgs) + "."
     
     def _get_sensor_data_locked(self, sensor_name: str):
-        sensor_id = mujoco.mj_name2id(
-            self.model,
-            mujoco.mjtObj.mjOBJ_SENSOR,
-            sensor_name,
-        )
-        if sensor_id == -1:
+        sensor_slice = self.sensor_slice_by_name.get(sensor_name)
+        if sensor_slice is None:
             return None
-
-        adr = int(self.model.sensor_adr[sensor_id])
-        dim = int(self.model.sensor_dim[sensor_id])
-        return self.data.sensordata[adr:adr + dim].copy()
+        return self.data.sensordata[sensor_slice].copy()
 
 
     def _get_peg_ft_sensor_locked(self):
@@ -2422,24 +2708,9 @@ class RobotControllerMuJoCoPegTool:
         For hinge joints in MuJoCo, data.qfrc_actuator[dof_addr] is in Nm.
         The order follows self.arm_joint_names.
         """
-        torques = np.full(len(self.arm_joint_names), np.nan, dtype=float)
-
-        for i, joint_name in enumerate(self.arm_joint_names):
-            joint_id = mujoco.mj_name2id(
-                self.model,
-                mujoco.mjtObj.mjOBJ_JOINT,
-                joint_name,
-            )
-
-            if joint_id == -1:
-                continue
-
-            dof_addr = int(self.model.jnt_dofadr[joint_id])
-
-            if 0 <= dof_addr < self.data.qfrc_actuator.shape[0]:
-                torques[i] = float(self.data.qfrc_actuator[dof_addr])
-
-        return torques
+        if self.arm_dof_addrs.size == 0:
+            return np.empty(0, dtype=float)
+        return self.data.qfrc_actuator[self.arm_dof_addrs].copy()
 
 
     def reset_joint_torque_alarm(self):
@@ -2559,24 +2830,9 @@ class RobotControllerMuJoCoPegTool:
         Current actual qpos of arm joints in internal MuJoCo sign convention.
         Order follows self.arm_joint_names.
         """
-        q = np.zeros(len(self.arm_joint_names), dtype=float)
-
-        for i, joint_name in enumerate(self.arm_joint_names):
-            joint_id = mujoco.mj_name2id(
-                self.model,
-                mujoco.mjtObj.mjOBJ_JOINT,
-                joint_name,
-            )
-
-            if joint_id == -1:
-                continue
-
-            qpos_addr = int(self.model.jnt_qposadr[joint_id])
-
-            if 0 <= qpos_addr < self.data.qpos.shape[0]:
-                q[i] = float(self.data.qpos[qpos_addr])
-
-        return q
+        if self.arm_qpos_addrs.size == 0:
+            return np.empty(0, dtype=float)
+        return self.data.qpos[self.arm_qpos_addrs].copy()
 
 
     def _start_terminal_hold_locked(self, distance: float, now: float):
@@ -2970,10 +3226,9 @@ class RobotControllerMuJoCoPegTool:
                     self.set_viewer_fixed_camera(viewer, self.cctv_camera)
                     self.viewer_running = True
                     last_sync = time.perf_counter()
+                    next_step_deadline = time.perf_counter()
 
                     while viewer.is_running() and self.running:
-                        step_start = time.perf_counter()
-
                         if self.control_mode == "actuator":
                             self._physics_step()
                         else:
@@ -2989,17 +3244,19 @@ class RobotControllerMuJoCoPegTool:
                             last_sync = now
 
                         if self.realtime:
-                            elapsed = time.perf_counter() - step_start
-                            sleep_time = self.sim_timestep - elapsed
+                            next_step_deadline += self.sim_timestep
+                            now = time.perf_counter()
+                            sleep_time = next_step_deadline - now
                             if sleep_time > 0:
                                 time.sleep(sleep_time)
+                            elif -sleep_time > 0.1:
+                                next_step_deadline = now
 
                     self.viewer_running = False
                     print("可视化窗口关闭，仿真结束")
             else:
+                next_step_deadline = time.perf_counter()
                 while self.running:
-                    step_start = time.perf_counter()
-
                     if self.control_mode == "actuator":
                         self._physics_step()
                     else:
@@ -3007,10 +3264,13 @@ class RobotControllerMuJoCoPegTool:
                             self.update_positions(self.target_joints)
 
                     if self.realtime:
-                        elapsed = time.perf_counter() - step_start
-                        sleep_time = self.sim_timestep - elapsed
+                        next_step_deadline += self.sim_timestep
+                        now = time.perf_counter()
+                        sleep_time = next_step_deadline - now
                         if sleep_time > 0:
                             time.sleep(sleep_time)
+                        elif -sleep_time > 0.1:
+                            next_step_deadline = now
 
         except Exception as e:
             print(f"可视化/仿真错误: {e}")
@@ -3024,16 +3284,24 @@ class RobotControllerMuJoCoPegTool:
             return
 
         self.running = True
+        self._start_camera_display_worker()
         self.vis_thread = threading.Thread(target=self.visualization_thread, daemon=True)
         self.vis_thread.start()
 
-        time.sleep(self.viewer_start_wait)
+        if self.launch_viewer and self.viewer_start_wait > 0.0:
+            time.sleep(self.viewer_start_wait)
         print("仿真已启动，按 Ctrl+C 停止主程序...")
 
     def disconnect(self):
         self.running = False
         if self.vis_thread is not None and self.vis_thread.is_alive():
-            self.vis_thread.join(timeout=1.0)
+            self.vis_thread.join(timeout=10.0)
+        if self.vis_thread is not None and self.vis_thread.is_alive():
+            raise RuntimeError(
+                "MuJoCo simulation thread did not stop; shared resources remain open."
+            )
+
+        self._stop_camera_display_worker()
 
         # Stop and close data recorder
         if self.data_recorder is not None:
@@ -3046,7 +3314,11 @@ class RobotControllerMuJoCoPegTool:
             self.camera_renderer.close()
             self.camera_renderer = None
         
-        cv2.destroyAllWindows()
+        if self.show_camera_streams:
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error as exc:
+                print(f"[Camera Monitor] window cleanup skipped: {exc}")
 
         print("仿真停止")
 

@@ -31,6 +31,15 @@ hdf5_jpg_quality: 90
 hdf5_auto_start: false
 hdf5_episode_label: "teleop"
 hdf5_max_buffer_rows: 500000
+hdf5_async_io: true
+hdf5_async_queue_size: 4096
+hdf5_write_batch_size: 128
+
+# Model-derived task metadata names for pangu_all_right.xml
+hdf5_peg_geom_name: "cylindrical_peg"
+hdf5_hole_ring_reference_geom_name: "wall_hole_ring_00"
+hdf5_hole_back_stop_geom_name: "hole_back_stop"
+hdf5_hole_reference_site_name: "hole_goal_site"
 
 # Force/torque sensor recording
 hdf5_enable_ft_tare: false
@@ -62,12 +71,18 @@ recording_service_name: "/mujoco_hdf5_recording/set_recording"
 # mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall.xml"
 mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/pangu_all_right.xml"
 enable_hand: false
+launch_viewer: false
+viewer_rate: 60
+realtime: true
 enable_visual_guides: false
 cctv_camera: "cctv_cam"
+show_camera_streams: true
+camera_stream_width: 640
+camera_stream_height: 480
+camera_stream_fps: 15.0
+camera_stream_async: true
 monitor_camera_names:
   - "cctv_cam"
-  - "ee_cam"
-  - "base_top_cam"
 separate_cctv_window: true
 cctv_window_name: "CCTV Camera"
 cctv_window_width: 1280

@@ -106,17 +106,17 @@ class TeleopSystemMujoco:
             "control_mode": "actuator",
 
             # 是否打开 MuJoCo viewer
-            "launch_viewer": True,
+            "launch_viewer": self.config.get("launch_viewer", False),
 
             # 构造 controller 后自动启动仿真线程
             "auto_start": True,
 
             # viewer 刷新频率，不等于物理仿真频率
             # 物理仿真频率由 XML 里的 timestep 决定
-            "viewer_rate": 60,
+            "viewer_rate": self.config.get("viewer_rate", 60),
 
             # 尽量按真实时间运行仿真
-            "realtime": True,
+            "realtime": self.config.get("realtime", True),
 
             # 关节目标速度限制，单位 rad/s
             # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
@@ -213,14 +213,15 @@ class TeleopSystemMujoco:
             "record_all_500hz": self.config.get("record_all_500hz", True),
 
             # video stream config
-            "show_camera_streams": True,
-            "camera_stream_width": 640,
-            "camera_stream_height": 480,
-            "camera_stream_fps": 15.0,
+            "show_camera_streams": self.config.get("show_camera_streams", True),
+            "camera_stream_width": self.config.get("camera_stream_width", 640),
+            "camera_stream_height": self.config.get("camera_stream_height", 480),
+            "camera_stream_fps": self.config.get("camera_stream_fps", 15.0),
+            "camera_stream_async": self.config.get("camera_stream_async", True),
 
             "monitor_camera_names": self.config.get(
                 "monitor_camera_names",
-                ["cctv_cam", "ee_cam", "base_top_cam"],
+                ["cctv_cam"],
             ),
             "separate_cctv_window": self.config.get(
                 "separate_cctv_window",
@@ -527,6 +528,22 @@ class TeleopSystemMujoco:
             "hdf5_auto_start": self.config.get("hdf5_auto_start", False),
             "hdf5_episode_label": self.config.get("hdf5_episode_label", "teleop"),
             "hdf5_max_buffer_rows": self.config.get("hdf5_max_buffer_rows", 500000),
+            "hdf5_async_io": self.config.get("hdf5_async_io", True),
+            "hdf5_async_queue_size": self.config.get("hdf5_async_queue_size", 4096),
+            "hdf5_write_batch_size": self.config.get("hdf5_write_batch_size", 128),
+            "hdf5_peg_geom_name": self.config.get(
+                "hdf5_peg_geom_name", "cylindrical_peg"
+            ),
+            "hdf5_hole_ring_reference_geom_name": self.config.get(
+                "hdf5_hole_ring_reference_geom_name", "wall_hole_ring_00"
+            ),
+            "hdf5_hole_back_stop_geom_name": self.config.get(
+                "hdf5_hole_back_stop_geom_name", "hole_back_stop"
+            ),
+            "hdf5_hole_reference_site_name": self.config.get(
+                "hdf5_hole_reference_site_name",
+                self.config.get("task_success_hole_site_name", "hole_goal_site"),
+            ),
 
             # ROS recording service
             "enable_recording_service": self.config.get("enable_recording_service", True),
