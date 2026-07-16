@@ -737,7 +737,7 @@ class RobotControllerMuJoCoPegTool:
         # ######################################################### #
 
         self.enable_hole_randomization = bool(
-            self.config.get("enable_hole_randomization", False)
+            self.config.get("enable_hole_randomization", True)
         )
 
         self.randomize_hole_on_record_start = bool(
@@ -1022,7 +1022,7 @@ class RobotControllerMuJoCoPegTool:
                     self._reset_task_success_state_locked()
 
                 # 3. 每条 episode 开始前随机孔洞位置
-                if getattr(self, "randomize_hole_on_record_start", False):
+                if getattr(self, "randomize_hole_on_record_start", True):
                     self.randomize_hole_position()
 
                 # 4. 重新标定当前 Vision Pro 手部参考

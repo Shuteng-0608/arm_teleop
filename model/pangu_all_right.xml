@@ -74,7 +74,7 @@
                   <body name="peg_tool" pos="0 -0.0125 0.0025" quat="0.707107 -0.707107 0 0">
                     <!-- END-EFFECTOR CAMERA: attached near the flange-peg connection; camera optical axis follows local -Z, aligned with the peg direction -->
                     <camera name="ee_cam" pos="0.15 0.000 0.05" quat="0.984808 0 0.173648 0" fovy="80" />
-                    <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.010000 0.045000" material="mat_peg" mass="0.115" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="cylindrical_peg" type="cylinder" pos="0 0 -0.045000" size="0.011000 0.045000" material="mat_peg" mass="0.115" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
                     <site name="peg_tip_site"
                           type="sphere"
                           pos="0 0 -0.090000"
@@ -174,7 +174,7 @@
           solimp="0.90 0.95 0.001" />
       <site name="hole_goal_site"
             type="sphere"
-            pos="0 -0.016 0"
+            pos="0 -0.021 0"
             size="0.006"
             rgba="0.0 0.0 0.0 0.0" />
       <!-- <site name="hole_center_site" pos="0 0 0" size="0.001" rgba="0 1 0 0" /> -->

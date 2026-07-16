@@ -343,10 +343,10 @@ class ArmTeleopMujoco:
         s = self.scaling_factor
 
         target_position[0] += hand_offset[1] * s
-        target_position[1] += hand_offset[2] * s
-        target_position[2] += hand_offset[0] * s
+        target_position[1] += hand_offset[2] * s * 0.8
+        target_position[2] += hand_offset[0] * s * 0.8
 
-        
+        """
         # 从变换矩阵中提取旋转信息，转为欧拉角
         rotation_matrix = hand_transform[:3, :3]
         
@@ -370,6 +370,11 @@ class ArmTeleopMujoco:
         target_position[3] = new_rx
         target_position[4] = new_ry
         target_position[5] = new_rz
+        """
+        
+        target_position[3] = self.initial_right_robot_pose[3]
+        target_position[4] = self.initial_right_robot_pose[4]
+        target_position[5] = self.initial_right_robot_pose[5]
 
         
         # 转换成 numpy 数组

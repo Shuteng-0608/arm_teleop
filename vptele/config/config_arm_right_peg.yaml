@@ -8,7 +8,7 @@ record_all_500hz: true
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_hole_try"
+hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/hole_random_60mm_hmj"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -131,7 +131,7 @@ force_guidance_ring_radius_px: 70
 force_guidance_max_vector_px: 55
 force_guidance_max_force_n: 40.0
 force_guidance_max_torque_nm: 2.0
-torque_guidance_mode: "tilt_axes"   # vector | tilt_axes | off
+torque_guidance_mode: "off"   # vector | tilt_axes | off
 torque_guidance_min_force_n: 5.0
 torque_guidance_min_torque_nm: 0.05
 torque_guidance_max_torque_nm: 2.0
@@ -139,10 +139,10 @@ torque_guidance_label_as_posture: true
 torque_guidance_show_numeric_values: true
 force_guidance_draw_numeric_values: true
 force_guidance_show_caveat_label: true
-force_guidance_hud_anchor: "top_right"   # top_left | top_right | bottom_left | bottom_right | center | custom
+force_guidance_hud_anchor: "custom"   # top_left | top_right | bottom_left | bottom_right | center | custom
 force_guidance_hud_margin_px: [40, 40]
 force_guidance_hud_offset_px: [0, 0]
-force_guidance_hud_center_norm: [0.78, 0.28]
+force_guidance_hud_center_norm: [0.50, 0.18]
 force_guidance_basis_mode: "camera_screen"   # camera_screen | task_world | manual_world | sensor_debug
 force_guidance_basis_camera: "cctv_cam"
 force_guidance_screen_right_sign: 1.0
@@ -233,8 +233,8 @@ logging:
   log_prefix: "mujoco" # pangu or mujoco
 
 # # hole randomization
-# enable_hole_randomization: true
-# randomize_hole_on_record_start: true
+enable_hole_randomization: true
+randomize_hole_on_record_start: true
 
 # # 当前 pangu_all_right.xml 中实际存在的任务 body
 # hole_random_body_name: "wall_task"
@@ -268,7 +268,7 @@ initial_arm_joints:
   - 0.005
 
 # Force-aware actuator command velocity scaling
-max_joint_velocity: 0.1
+max_joint_velocity: 0.2
 enable_force_velocity_scaling: true
 force_velocity_medium_threshold: 40.0
 force_velocity_high_threshold: 80.0
@@ -282,12 +282,12 @@ high_force_hold_dwell_time: 0.15
 high_force_hold_release_ratio: 0.8
 
 # Hole randomization
-enable_hole_randomization: false
-randomize_hole_on_record_start: false
+enable_hole_randomization: true
+randomize_hole_on_record_start: true
 hole_random_body_name: "wall_task"
-hole_random_x_range: [-0.010, 0.010]
+hole_random_x_range: [-0.06, 0.06]
 hole_random_y_range: [0.000, 0.000]
-hole_random_z_range: [-0.010, 0.010]
+hole_random_z_range: [-0.06, 0.06]
 
 # HDF5
 hdf5_auto_start: false
@@ -350,7 +350,7 @@ task_success_hole_site_name: "hole_goal_site"
 
 # 两个 site 的距离小于该阈值，认为到达成功区域
 # 初期建议稍微宽松，确认稳定后再收紧到 0.005
-task_success_distance: 0.008
+task_success_distance: 0.003
 
 # 连续满足距离阈值多久才算成功，避免单帧误触发
 task_success_dwell_time: 0.10
