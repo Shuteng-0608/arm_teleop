@@ -1022,8 +1022,8 @@ class RobotControllerMuJoCoPegTool:
                     self._reset_task_success_state_locked()
 
                 # 3. 每条 episode 开始前随机孔洞位置
-                if getattr(self, "randomize_hole_on_record_start", True):
-                    self.randomize_hole_position()
+                # if getattr(self, "randomize_hole_on_record_start", True):
+                #     self.randomize_hole_position()
 
                 # 4. 重新标定当前 Vision Pro 手部参考
                 ok = self._call_teleop_trigger_service(
@@ -1226,6 +1226,9 @@ class RobotControllerMuJoCoPegTool:
                 # if getattr(self, "reset_arm_on_record_stop", True):
                 #     self.reset_arm_to_initial_pose()
                 self._reset_after_episode_stop()
+
+                if getattr(self, "randomize_hole_on_record_start", True):
+                    self.randomize_hole_position()
 
                 # 5. 不保留则删除 episode 文件夹
                 if not req.keep:
