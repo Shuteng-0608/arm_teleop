@@ -31,6 +31,14 @@ hdf5_jpg_quality: 90
 hdf5_auto_start: false
 hdf5_episode_label: "teleop"
 hdf5_max_buffer_rows: 500000
+hdf5_hole_center_site_name: "hole_goal_site"
+
+# Task geometry metadata is read from these compiled MuJoCo objects.
+hdf5_peg_geom_name: "cylindrical_peg"
+hdf5_peg_tip_site_name: "peg_tip_site"
+hdf5_hole_goal_site_name: "hole_goal_site"
+hdf5_hole_ring_geom_prefix: "wall_hole_ring_"
+hdf5_hole_axis_body: [0.0, -1.0, 0.0]
 
 # Force/torque sensor recording
 hdf5_enable_ft_tare: false
@@ -232,20 +240,6 @@ logging:
   backup_count: 5  # 备份日志文件数量
   log_prefix: "mujoco" # pangu or mujoco
 
-# # hole randomization
-enable_hole_randomization: true
-randomize_hole_on_record_start: true
-
-# # 当前 pangu_all_right.xml 中实际存在的任务 body
-# hole_random_body_name: "wall_task"
-
-# # 第一阶段建议只随机墙面平面内的 x 和 z
-# hole_random_x_range: [-0.020, 0.020]
-# hole_random_y_range: [0.010, 0.010]
-# hole_random_z_range: [-0.020, 0.020]
-
-hole_random_seed: null
-
 # Episode-level teleoperation lifecycle
 teleop_controlled_by_recording: true
 accept_teleop_when_not_recording: false
@@ -281,13 +275,29 @@ high_force_hold_threshold: 100.0
 high_force_hold_dwell_time: 0.15
 high_force_hold_release_ratio: 0.8
 
-# Hole randomization
-enable_hole_randomization: true
-randomize_hole_on_record_start: true
-hole_random_body_name: "wall_task"
-hole_random_x_range: [-0.06, 0.06]
-hole_random_y_range: [0.000, 0.000]
-hole_random_z_range: [-0.06, 0.06]
+# Hole position sampling: cover all 25 X-Z cells once per cycle.
+hole_sampling_mode: "grid"             # grid | uniform_random | fixed
+hole_body_name: "wall_task"
+
+hole_grid_rows: 5
+hole_grid_cols: 5
+hole_grid_x_range: [-0.060, 0.060]
+hole_grid_y_offset: 0.000
+hole_grid_z_range: [-0.060, 0.060]
+
+# center: fixed cell center; uniform_in_cell: deterministic point inside each cell
+hole_grid_sample_mode: "center"
+
+# shuffled: visit every cell once in a seeded random order; row_major: R1C1 -> R5C5
+hole_grid_traversal_order: "shuffled"
+hole_grid_seed: 42
+
+# Kept episodes advance; discarded episodes retry the same cell.
+hole_grid_advance_policy: "on_keep"    # on_keep | on_attempt
+
+# Zero-based resume cursor. Change these only when resuming an interrupted run.
+hole_grid_start_cycle: 0
+hole_grid_start_index: 0
 
 # HDF5
 hdf5_auto_start: false

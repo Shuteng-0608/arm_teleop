@@ -63,8 +63,12 @@ class MujocoHDF5Recorder:
         ee_body_name: str = "peg_tool",
         ft_force_sensor_name: str = "peg_ft_force",
         ft_torque_sensor_name: str = "peg_ft_torque",
+        peg_geom_name: str = "cylindrical_peg",
         peg_tip_site_name: str = "peg_tip_site",
-        hole_center_site_name: str = "hole_center_site",
+        hole_center_site_name: str = "hole_goal_site",
+        hole_goal_site_name: Optional[str] = None,
+        hole_ring_geom_prefix: str = "wall_hole_ring_",
+        hole_axis_body: Optional[List[float]] = None,
         image_compression: Optional[str] = "lzf",   # "lzf", "gzip", or None
         image_compression_level: int = 1,
         numeric_compression: Optional[str] = None,
@@ -119,8 +123,16 @@ class MujocoHDF5Recorder:
         self.ee_body_name = ee_body_name
         self.ft_force_sensor_name = ft_force_sensor_name
         self.ft_torque_sensor_name = ft_torque_sensor_name
+        self.peg_geom_name = peg_geom_name
         self.peg_tip_site_name = peg_tip_site_name
-        self.hole_center_site_name = hole_center_site_name
+        self.hole_goal_site_name = hole_goal_site_name or hole_center_site_name
+        # Compatibility alias for existing HDF5 field names and callers.
+        self.hole_center_site_name = self.hole_goal_site_name
+        self.hole_ring_geom_prefix = str(hole_ring_geom_prefix)
+        self.hole_axis_body = np.asarray(
+            hole_axis_body if hole_axis_body is not None else [0.0, -1.0, 0.0],
+            dtype=np.float64,
+        )
 
         self.image_compression = image_compression
         self.image_compression_level = int(image_compression_level)
@@ -137,6 +149,7 @@ class MujocoHDF5Recorder:
         self.renderer: Optional[mujoco.Renderer] = None
 
         self.episode_label = ""
+        self.episode_context: Dict[str, Any] = {}
         self.episode_start_sim_time = 0.0
         self.episode_start_wall_time = 0.0
         self.next_state_t = 0.0
@@ -194,8 +207,19 @@ class MujocoHDF5Recorder:
             print(f"  sign        = {self.ft_gravity_sensor_sign}")
 
 
+        self.peg_geom_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            self.peg_geom_name,
+        )
         self.peg_tip_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.peg_tip_site_name)
-        self.hole_center_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.hole_center_site_name)
+        self.hole_goal_site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            self.hole_goal_site_name,
+        )
+        self.hole_center_site_id = self.hole_goal_site_id
+        self.task_geometry_metadata = self._infer_task_geometry_metadata()
 
         self.camera_ids: Dict[str, int] = {}
         if self.record_images:
@@ -217,6 +241,103 @@ class MujocoHDF5Recorder:
         print(f"  record_images = {self.record_images}")
         if self.record_images:
             print(f"  cameras       = {list(self.camera_ids.keys())}")
+
+    def _infer_task_geometry_metadata(self) -> Dict[str, Any]:
+        """Read peg/hole dimensions from the compiled MuJoCo model.
+
+        The hole is represented by box segments rather than a cylinder. For
+        each segment, project its half extents onto the radial and insertion
+        directions. The median inner radius and depth are recorded so metadata
+        follows the actual XML geometry instead of duplicated constants.
+        """
+        if self.peg_geom_id == -1:
+            raise ValueError(f"Peg geom not found: {self.peg_geom_name}")
+        if int(self.model.geom_type[self.peg_geom_id]) != int(
+            mujoco.mjtGeom.mjGEOM_CYLINDER
+        ):
+            raise ValueError(f"Peg geom must be a cylinder: {self.peg_geom_name}")
+        if self.peg_tip_site_id == -1:
+            raise ValueError(f"Peg tip site not found: {self.peg_tip_site_name}")
+        if self.hole_goal_site_id == -1:
+            raise ValueError(f"Hole goal site not found: {self.hole_goal_site_name}")
+
+        axis = np.asarray(self.hole_axis_body, dtype=np.float64)
+        if axis.shape != (3,) or not np.all(np.isfinite(axis)):
+            raise ValueError("hole_axis_body must be a finite 3-vector")
+        axis_norm = float(np.linalg.norm(axis))
+        if axis_norm <= 1e-12:
+            raise ValueError("hole_axis_body must be non-zero")
+        axis = axis / axis_norm
+        self.hole_axis_body = axis
+
+        ring_ids = []
+        ring_names = []
+        for geom_id in range(self.model.ngeom):
+            geom_name = mujoco.mj_id2name(
+                self.model,
+                mujoco.mjtObj.mjOBJ_GEOM,
+                geom_id,
+            )
+            if geom_name and geom_name.startswith(self.hole_ring_geom_prefix):
+                ring_ids.append(geom_id)
+                ring_names.append(geom_name)
+
+        if not ring_ids:
+            raise ValueError(
+                f"No hole ring geoms match prefix: {self.hole_ring_geom_prefix}"
+            )
+
+        radii = []
+        depths = []
+        for geom_id in ring_ids:
+            if int(self.model.geom_type[geom_id]) != int(mujoco.mjtGeom.mjGEOM_BOX):
+                raise ValueError("Hole ring geoms must be boxes")
+
+            center = np.asarray(self.model.geom_pos[geom_id], dtype=np.float64)
+            radial_center = center - float(np.dot(center, axis)) * axis
+            center_radius = float(np.linalg.norm(radial_center))
+            if center_radius <= 1e-12:
+                raise ValueError("Hole ring geom center cannot lie on the hole axis")
+            radial_direction = radial_center / center_radius
+
+            rotation_flat = np.empty(9, dtype=np.float64)
+            mujoco.mju_quat2Mat(rotation_flat, self.model.geom_quat[geom_id])
+            rotation = rotation_flat.reshape(3, 3)
+            half_sizes = np.asarray(self.model.geom_size[geom_id], dtype=np.float64)
+
+            half_radial_extent = float(
+                np.sum(np.abs(rotation.T @ radial_direction) * half_sizes)
+            )
+            half_depth_extent = float(
+                np.sum(np.abs(rotation.T @ axis) * half_sizes)
+            )
+            radii.append(center_radius - half_radial_extent)
+            depths.append(2.0 * half_depth_extent)
+
+        hole_radius = float(np.median(radii))
+        hole_depth = float(np.median(depths))
+        if hole_radius <= 0.0 or hole_depth <= 0.0:
+            raise ValueError(
+                f"Invalid inferred hole geometry: radius={hole_radius}, depth={hole_depth}"
+            )
+
+        return {
+            "task_geometry_length_unit": "m",
+            "task_position_frame": "world",
+            "peg_geom_name": self.peg_geom_name,
+            "peg_radius_m": float(self.model.geom_size[self.peg_geom_id, 0]),
+            "peg_length_m": float(2.0 * self.model.geom_size[self.peg_geom_id, 1]),
+            "peg_tip_site_name": self.peg_tip_site_name,
+            "hole_goal_site_name": self.hole_goal_site_name,
+            "hole_ring_geom_prefix": self.hole_ring_geom_prefix,
+            "hole_ring_segment_count": len(ring_ids),
+            "hole_ring_geom_names": ring_names,
+            "hole_axis_body": axis.tolist(),
+            "hole_radius_m": hole_radius,
+            "hole_depth_m": hole_depth,
+            "hole_radius_segment_std_m": float(np.std(radii)),
+            "hole_depth_segment_std_m": float(np.std(depths)),
+        }
 
     # ------------------------------------------------------------------
     # Public lifecycle API
@@ -252,7 +373,11 @@ class MujocoHDF5Recorder:
     #     print(f"[CompactHDF5Recorder] Started: {self.session_dir}")
     #     return self.hdf5_path
     
-    def start_episode(self, label: str = "teleop") -> Optional[Path]:
+    def start_episode(
+        self,
+        label: str = "teleop",
+        episode_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
         with self._io_lock:
             if self.active:
                 print("[CompactHDF5Recorder] Episode already active.")
@@ -266,6 +391,34 @@ class MujocoHDF5Recorder:
             self.hdf5_path = self.session_dir / "episode.hdf5"
 
             self.episode_label = safe_label
+            self.episode_context = dict(self.task_geometry_metadata)
+            self.episode_context.update(episode_metadata or {})
+
+            peg_tip_world = self._site_pos(self.peg_tip_site_id)
+            hole_goal_world = self._site_pos(self.hole_goal_site_id)
+            hole_offset = np.asarray(
+                self.episode_context.get(
+                    "hole_offset_from_nominal_xyz",
+                    self.episode_context.get(
+                        "hole_actual_offset_xyz",
+                        [0.0, 0.0, 0.0],
+                    ),
+                ),
+                dtype=np.float64,
+            )
+            if hole_offset.shape != (3,) or not np.all(np.isfinite(hole_offset)):
+                raise ValueError(f"Invalid episode hole offset: {hole_offset}")
+            self.episode_context.update(
+                {
+                    "peg_tip_site_initial_pos_world": peg_tip_world.tolist(),
+                    "hole_goal_site_initial_pos_world": hole_goal_world.tolist(),
+                    "hole_goal_site_nominal_pos_world": (
+                        hole_goal_world - hole_offset
+                    ).tolist(),
+                    "hole_actual_offset_xyz": hole_offset.tolist(),
+                    "hole_offset_from_nominal_xyz": hole_offset.tolist(),
+                }
+            )
             self.episode_start_sim_time = float(self.data.time)
             self.episode_start_wall_time = time.time()
 
@@ -754,11 +907,19 @@ class MujocoHDF5Recorder:
         g.attrs["ee_body_name"] = self.ee_body_name
         g.attrs["ft_force_sensor_name"] = self.ft_force_sensor_name
         g.attrs["ft_torque_sensor_name"] = self.ft_torque_sensor_name
+        g.attrs["peg_geom_name"] = self.peg_geom_name
         g.attrs["peg_tip_site_name"] = self.peg_tip_site_name
         g.attrs["hole_center_site_name"] = self.hole_center_site_name
+        g.attrs["hole_goal_site_name"] = self.hole_goal_site_name
         g.attrs["task_name"] = "wall_peg_in_hole"
         g.attrs["task_success"] = "unknown"
-        g.attrs["random_seed"] = -1
+        random_seed = self.episode_context.get(
+            "hole_grid_seed",
+            self.episode_context.get("hole_random_seed", -1),
+        )
+        g.attrs["random_seed"] = -1 if random_seed is None else int(random_seed)
+
+        self._write_episode_context(g)
 
         self._write_string_dataset("episode_metadata/joint_names", self.joint_names)
         self._write_string_dataset("episode_metadata/actuator_names", self.actuator_names)
@@ -843,6 +1004,7 @@ class MujocoHDF5Recorder:
 
         g.create_dataset("initial_peg_tip_pos", data=initial_peg_tip)
         g.create_dataset("initial_hole_center_pos", data=initial_hole_center)
+        g.create_dataset("initial_hole_goal_pos", data=initial_hole_center)
         g.create_dataset("initial_task_error_xyz", data=initial_err_xyz)
         g.attrs["initial_align_err_xz"] = float(np.linalg.norm([initial_err_xyz[0], initial_err_xyz[2]]))
         g.attrs["initial_insertion_err_y"] = float(initial_err_xyz[1])
@@ -881,6 +1043,7 @@ class MujocoHDF5Recorder:
 
             "final_peg_tip_pos": self._site_pos(self.peg_tip_site_id),
             "final_hole_center_pos": self._site_pos(self.hole_center_site_id),
+            "final_hole_goal_pos": self._site_pos(self.hole_goal_site_id),
         }
         for name, value in final_values.items():
             if name in g:
@@ -935,9 +1098,46 @@ class MujocoHDF5Recorder:
             "camera_names": list(self.camera_ids.keys()),
             "image_storage": "inside_hdf5_uint8_rgb",
             "schema_version": "compact_mujoco_hdf5_v1",
+            "episode_context": self._json_safe(self.episode_context),
         }
         with (self.session_dir / "metadata.json").open("w", encoding="utf-8") as f:
             json.dump(sidecar, f, indent=2, ensure_ascii=False)
+
+    def _write_episode_context(self, group: h5py.Group) -> None:
+        """Persist controller-provided task setup alongside built-in metadata."""
+        for key, value in self.episode_context.items():
+            name = str(key)
+            if not name or "/" in name:
+                raise ValueError(f"Invalid episode metadata key: {name!r}")
+
+            if isinstance(value, (str, bytes, bool, int, float, np.generic)):
+                group.attrs[name] = value
+                continue
+
+            array = np.asarray(value)
+            if array.dtype.kind in {"b", "i", "u", "f"}:
+                if name in group:
+                    del group[name]
+                group.create_dataset(name, data=array)
+            else:
+                group.attrs[name] = json.dumps(
+                    self._json_safe(value),
+                    ensure_ascii=False,
+                )
+
+    @classmethod
+    def _json_safe(cls, value):
+        if isinstance(value, dict):
+            return {str(k): cls._json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._json_safe(v) for v in value]
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, Path):
+            return str(value)
+        return value
 
     # ------------------------------------------------------------------
     # Low-level getters

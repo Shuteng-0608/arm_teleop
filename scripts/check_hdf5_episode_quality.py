@@ -429,6 +429,250 @@ def fmt(x, nd=4) -> str:
         return "nan"
 
 
+def _decode_h5_scalar(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def read_hole_grid_record(episode_path: Path) -> Optional[Dict[str, Any]]:
+    """Read the compact grid fields needed for dataset-level coverage."""
+    try:
+        with h5py.File(episode_path, "r") as h5:
+            if "episode_metadata" not in h5:
+                return None
+            group = h5["episode_metadata"]
+            mode = _decode_h5_scalar(group.attrs.get("hole_sampling_mode", ""))
+            if mode != "grid":
+                return None
+
+            def attr(name, default=None):
+                return _decode_h5_scalar(group.attrs.get(name, default))
+
+            events = []
+            if "events/names" in h5:
+                events = decode_str_array(h5["events/names"][()])
+
+            return {
+                "episode_path": str(episode_path),
+                "status": str(attr("status", h5.attrs.get("status", "unknown"))),
+                "rows": int(attr("hole_grid_rows")),
+                "cols": int(attr("hole_grid_cols")),
+                "cycle": int(attr("hole_grid_cycle")),
+                "index": int(attr("hole_grid_index")),
+                "row": int(attr("hole_grid_row")),
+                "col": int(attr("hole_grid_col")),
+                "cell_label": str(attr("hole_grid_cell_label")),
+                "sample_mode": str(attr("hole_grid_sample_mode", "unknown")),
+                "traversal_order": str(
+                    attr("hole_grid_traversal_order", "unknown")
+                ),
+                "seed": int(attr("hole_grid_seed", -1)),
+                "task_success": "task_success_site_reached" in events,
+                "joint_torque_alarm": "joint_torque_over_limit" in events,
+                "ft_wrench_alarm": "ft_wrench_over_limit" in events,
+            }
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        return {
+            "episode_path": str(episode_path),
+            "read_error": str(exc),
+        }
+
+
+def summarize_hole_grid_coverage(
+    root: Path,
+    target_per_cell: int = 10,
+) -> Dict[str, Any]:
+    """Summarize all grid-tagged episode files beneath a collection root."""
+    root = root.expanduser().resolve()
+    if root.is_file():
+        episode_paths = [root]
+    else:
+        episode_paths = sorted(root.rglob("episode.hdf5"))
+
+    records = []
+    errors = []
+    for path in episode_paths:
+        record = read_hole_grid_record(path)
+        if record is None:
+            continue
+        if "read_error" in record:
+            errors.append(record)
+        else:
+            records.append(record)
+
+    rows = max((record["rows"] for record in records), default=0)
+    cols = max((record["cols"] for record in records), default=0)
+    excluded_statuses = {
+        "manual_discard",
+        "teleop_start_failed",
+        "controller_shutdown",
+        "buffer_limit",
+    }
+    counted_records = [
+        record for record in records if record["status"] not in excluded_statuses
+    ]
+    excluded_records = [
+        record for record in records if record["status"] in excluded_statuses
+    ]
+    counts = np.zeros((rows, cols), dtype=int)
+    successes = np.zeros((rows, cols), dtype=int)
+    joint_alarms = np.zeros((rows, cols), dtype=int)
+    ft_alarms = np.zeros((rows, cols), dtype=int)
+    invalid_cells = []
+
+    for record in counted_records:
+        row = record["row"] - 1
+        col = record["col"] - 1
+        if not (0 <= row < rows and 0 <= col < cols):
+            invalid_cells.append(record)
+            continue
+        counts[row, col] += 1
+        successes[row, col] += int(record["task_success"])
+        joint_alarms[row, col] += int(record["joint_torque_alarm"])
+        ft_alarms[row, col] += int(record["ft_wrench_alarm"])
+
+    target = max(0, int(target_per_cell))
+    shortfall = np.maximum(target - counts, 0)
+
+    def ratio_matrix(numerator: np.ndarray):
+        return [
+            [
+                (float(numerator[row, col]) / int(counts[row, col]))
+                if counts[row, col] > 0
+                else None
+                for col in range(cols)
+            ]
+            for row in range(rows)
+        ]
+
+    missing = [
+        f"R{row + 1}C{col + 1}"
+        for row in range(rows)
+        for col in range(cols)
+        if counts[row, col] == 0
+    ]
+    under_target = [
+        f"R{row + 1}C{col + 1}"
+        for row in range(rows)
+        for col in range(cols)
+        if counts[row, col] < target
+    ]
+
+    cycle_cells: Dict[int, set] = {}
+    for record in counted_records:
+        cycle_cells.setdefault(record["cycle"], set()).add(
+            (record["row"], record["col"])
+        )
+    cycle_coverage = {
+        str(cycle): {
+            "unique_cells": len(cells),
+            "complete": len(cells) == rows * cols,
+            "missing_cells": [
+                f"R{row}C{col}"
+                for row in range(1, rows + 1)
+                for col in range(1, cols + 1)
+                if (row, col) not in cells
+            ],
+        }
+        for cycle, cells in sorted(cycle_cells.items())
+    }
+
+    return {
+        "root": str(root),
+        "episode_files_scanned": len(episode_paths),
+        "grid_episodes": len(records),
+        "counted_grid_episodes": len(counted_records),
+        "excluded_records": excluded_records,
+        "rows": rows,
+        "cols": cols,
+        "target_per_cell": target,
+        "counts": counts.tolist(),
+        "task_success_counts": successes.tolist(),
+        "task_success_rates": ratio_matrix(successes),
+        "joint_torque_alarm_counts": joint_alarms.tolist(),
+        "joint_torque_alarm_rates": ratio_matrix(joint_alarms),
+        "ft_wrench_alarm_counts": ft_alarms.tolist(),
+        "ft_wrench_alarm_rates": ratio_matrix(ft_alarms),
+        "shortfall": shortfall.tolist(),
+        "missing_cells": missing,
+        "under_target_cells": under_target,
+        "cycle_coverage": cycle_coverage,
+        "complete_cycles": [
+            int(cycle)
+            for cycle, coverage in cycle_coverage.items()
+            if coverage["complete"]
+        ],
+        "read_errors": errors,
+        "invalid_cells": invalid_cells,
+        "records": records,
+    }
+
+
+def format_hole_grid_coverage(report: Dict[str, Any]) -> str:
+    lines = [
+        "=" * 72,
+        "MuJoCo Hole Grid Coverage Report",
+        "=" * 72,
+        f"Root: {report['root']}",
+        (
+            f"Grid episodes counted: {report['counted_grid_episodes']} "
+            f"({report['grid_episodes']} tagged) / "
+            f"{report['episode_files_scanned']} scanned"
+        ),
+        f"Grid: {report['rows']} x {report['cols']}",
+        f"Target per cell: {report['target_per_cell']}",
+        "",
+        "Kept/present episode count by cell (R1 is high Z, C1 is low X):",
+    ]
+
+    cols = int(report["cols"])
+    if cols:
+        lines.append("        " + " ".join(f"C{col + 1:>3}" for col in range(cols)))
+        for row, values in enumerate(report["counts"]):
+            lines.append(
+                f"R{row + 1:<3} " + " ".join(f"{int(value):>4}" for value in values)
+            )
+    else:
+        lines.append("No grid-tagged episodes found.")
+
+    def append_rate_matrix(title: str, key: str) -> None:
+        if not cols:
+            return
+        lines.extend(["", title])
+        lines.append("        " + " ".join(f"C{col + 1:>5}" for col in range(cols)))
+        for row, values in enumerate(report[key]):
+            rendered = ["    -" if value is None else f"{100.0 * value:5.1f}" for value in values]
+            lines.append(f"R{row + 1:<3} " + " ".join(rendered))
+
+    append_rate_matrix("Task-success event rate by cell (%):", "task_success_rates")
+    append_rate_matrix(
+        "Joint-torque alarm episode rate by cell (%):",
+        "joint_torque_alarm_rates",
+    )
+    append_rate_matrix(
+        "FT-wrench alarm episode rate by cell (%):",
+        "ft_wrench_alarm_rates",
+    )
+
+    lines.extend(
+        [
+            "",
+            "Missing cells: " + (", ".join(report["missing_cells"]) or "none"),
+            "Under target: "
+            + (", ".join(report["under_target_cells"]) or "none"),
+            f"Read errors: {len(report['read_errors'])}",
+            f"Invalid cell metadata: {len(report['invalid_cells'])}",
+            f"Excluded failed/discarded episodes: {len(report['excluded_records'])}",
+            "Complete cycles: "
+            + (", ".join(map(str, report["complete_cycles"])) or "none"),
+        ]
+    )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------
 # Main analysis
 # ---------------------------------------------------------------------
@@ -537,6 +781,20 @@ def analyze_episode(args) -> Dict[str, Any]:
             else:
                 root_attrs[k] = str(v)
         report["root_attrs"] = root_attrs
+
+        if "episode_metadata" in h5:
+            metadata = h5["episode_metadata"]
+            hole_grid = {}
+            for key, value in metadata.attrs.items():
+                if key.startswith(("hole_", "peg_")):
+                    hole_grid[key] = _decode_h5_scalar(value)
+            for key, value in metadata.items():
+                if key.startswith(("hole_", "peg_")) and isinstance(
+                    value,
+                    h5py.Dataset,
+                ):
+                    hole_grid[key] = np.asarray(value[()]).tolist()
+            report["hole_grid"] = hole_grid
 
         # -------------------------------------------------------------
         # Timing
@@ -955,6 +1213,27 @@ def format_report(report: Dict[str, Any]) -> str:
     lines.append(f"Forcerange: {report['forcerange']}")
     lines.append("")
 
+    if report.get("hole_grid"):
+        grid = report["hole_grid"]
+        lines.append("=== Task geometry and hole grid assignment ===")
+        lines.append(
+            f"cell={grid.get('hole_grid_cell_label')}, "
+            f"cycle={grid.get('hole_grid_cycle')}, "
+            f"index={grid.get('hole_grid_index')}, "
+            f"offset={grid.get('hole_actual_offset_xyz')}"
+        )
+        lines.append(
+            f"peg: radius={grid.get('peg_radius_m')}m, "
+            f"length={grid.get('peg_length_m')}m, "
+            f"initial_tip={grid.get('peg_tip_site_initial_pos_world')}"
+        )
+        lines.append(
+            f"hole: radius={grid.get('hole_radius_m')}m, "
+            f"depth={grid.get('hole_depth_m')}m, "
+            f"goal={grid.get('hole_goal_site_initial_pos_world')}"
+        )
+        lines.append("")
+
     lines.append("=== Issues ===")
     if not report["issues"]:
         lines.append("PASS: no issue detected.")
@@ -1258,8 +1537,20 @@ def save_plots(report: Dict[str, Any], out_dir: Path, episode_path: Path):
 def build_parser():
     p = argparse.ArgumentParser()
 
-    p.add_argument("episode", type=str, help="Path to episode.hdf5 or episode directory.")
+    p.add_argument(
+        "episode",
+        type=str,
+        nargs="?",
+        help="Path to episode.hdf5 or episode directory.",
+    )
     p.add_argument("--out", type=str, default=None)
+    p.add_argument(
+        "--coverage-root",
+        type=str,
+        default=None,
+        help="Scan a dataset directory and report 5x5 hole-grid coverage.",
+    )
+    p.add_argument("--grid-target-per-cell", type=int, default=10)
 
     p.add_argument(
         "--forcerange",
@@ -1329,6 +1620,41 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    if args.coverage_root:
+        root = Path(args.coverage_root)
+        report = summarize_hole_grid_coverage(
+            root,
+            target_per_cell=args.grid_target_per_cell,
+        )
+        resolved_root = root.expanduser().resolve()
+        default_out = (
+            resolved_root.parent / "grid_coverage"
+            if resolved_root.is_file()
+            else resolved_root / "grid_coverage"
+        )
+        out_dir = (
+            Path(args.out).expanduser().resolve()
+            if args.out
+            else default_out
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        json_path = out_dir / "hole_grid_coverage.json"
+        txt_path = out_dir / "hole_grid_coverage.txt"
+        json_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        txt = format_hole_grid_coverage(report)
+        txt_path.write_text(txt, encoding="utf-8")
+        print(txt)
+        print("Saved:")
+        print(" ", txt_path)
+        print(" ", json_path)
+        return
+
+    if not args.episode:
+        raise SystemExit("episode is required unless --coverage-root is provided")
+
     report = analyze_episode(args)
 
     txt_path = Path(report["out_dir"]) / "quality_forcerange_report.txt"

@@ -34,6 +34,7 @@ import shutil
 
 from utils.mujoco_data_recorder import MujocoDataRecorder
 from vptele.utils.mujoco_hdf5_recorder import MujocoHDF5Recorder
+from vptele.utils.hole_grid_scheduler import HoleGridScheduler
 from vptele.utils.force_feedback_overlay import (
     ForceFeedbackConfig,
     ForceFeedbackSmoother,
@@ -363,6 +364,8 @@ class RobotControllerMuJoCoPegTool:
 
         self.hdf5_recorder = None
 
+        self.hdf5_auto_start = bool(self.config.get("hdf5_auto_start", False))
+
         if bool(self.config.get("record_hdf5", False)):
             self.hdf5_recorder = MujocoHDF5Recorder(
                 model=self.model,
@@ -418,15 +421,33 @@ class RobotControllerMuJoCoPegTool:
                 ft_gravity_sensor_sign=float(
                     self.config.get("hdf5_ft_gravity_sensor_sign", -1.0)
                 ),
+                peg_geom_name=self.config.get(
+                    "hdf5_peg_geom_name",
+                    "cylindrical_peg",
+                ),
+                peg_tip_site_name=self.config.get(
+                    "hdf5_peg_tip_site_name",
+                    "peg_tip_site",
+                ),
+                hole_center_site_name=self.config.get(
+                    "hdf5_hole_center_site_name",
+                    self.config.get("task_success_hole_site_name", "hole_goal_site"),
+                ),
+                hole_goal_site_name=self.config.get(
+                    "hdf5_hole_goal_site_name",
+                    self.config.get("task_success_hole_site_name", "hole_goal_site"),
+                ),
+                hole_ring_geom_prefix=self.config.get(
+                    "hdf5_hole_ring_geom_prefix",
+                    "wall_hole_ring_",
+                ),
+                hole_axis_body=self.config.get(
+                    "hdf5_hole_axis_body",
+                    [0.0, -1.0, 0.0],
+                ),
             )
 
-            if bool(self.config.get("hdf5_auto_start", False)):
-                self.hdf5_recorder.start_episode(
-                    label=self.config.get("hdf5_episode_label", "teleop")
-                )
 
-
-        
 
         # ############################################################# #
         # ---------------- ROS Data Recording Service ----------------- #
@@ -441,19 +462,6 @@ class RobotControllerMuJoCoPegTool:
             "recording_service_name",
             "/mujoco_hdf5_recording/set_recording"
         )
-
-        if self.enable_recording_service and self.hdf5_recorder is not None:
-            self.recording_service = rospy.Service(
-                self.recording_service_name,
-                SetRecording,
-                self._handle_recording_service,
-            )
-
-            print(f"[Recording Service] Ready: {self.recording_service_name}")
-
-
-
-
 
         # ############################################################ #
         # ---------------- Target smoothing / safety ----------------- #
@@ -733,65 +741,94 @@ class RobotControllerMuJoCoPegTool:
 
 
         # ######################################################### #
-        # -------------------- Hole randomization ----------------- #
+        # ---------------- Hole position sampling ---------------- #
         # ######################################################### #
 
-        self.enable_hole_randomization = bool(
-            self.config.get("enable_hole_randomization", True)
+        legacy_randomization_enabled = bool(
+            self.config.get("enable_hole_randomization", False)
         )
-
-        self.randomize_hole_on_record_start = bool(
-            self.config.get("randomize_hole_on_record_start", True)
+        default_sampling_mode = (
+            "uniform_random" if legacy_randomization_enabled else "fixed"
         )
+        self.hole_sampling_mode = str(
+            self.config.get("hole_sampling_mode", default_sampling_mode)
+        ).strip().lower()
+        if self.hole_sampling_mode not in {"grid", "uniform_random", "fixed"}:
+            raise ValueError(
+                "hole_sampling_mode must be grid, uniform_random, or fixed; "
+                f"got {self.hole_sampling_mode!r}"
+            )
 
-        self.hole_random_body_name = self.config.get(
-            "hole_random_body_name",
-            "wall_task",
+        self.hole_body_name = self.config.get(
+            "hole_body_name",
+            self.config.get("hole_random_body_name", "wall_task"),
         )
-
-        self.hole_random_body_id = mujoco.mj_name2id(
+        self.hole_body_id = mujoco.mj_name2id(
             self.model,
             mujoco.mjtObj.mjOBJ_BODY,
-            self.hole_random_body_name,
+            self.hole_body_name,
         )
-
-        if self.enable_hole_randomization and self.hole_random_body_id == -1:
-            print(
-                f"[Hole Randomization] Cannot find body: "
-                f"{self.hole_random_body_name}. Disable randomization."
+        if self.hole_sampling_mode != "fixed" and self.hole_body_id == -1:
+            raise ValueError(
+                f"Hole sampling body not found in MuJoCo model: {self.hole_body_name}"
             )
-            self.enable_hole_randomization = False
 
-        if self.hole_random_body_id != -1:
+        if self.hole_body_id != -1:
             self.hole_nominal_body_pos = self.model.body_pos[
-                self.hole_random_body_id
+                self.hole_body_id
             ].copy()
         else:
             self.hole_nominal_body_pos = np.zeros(3, dtype=float)
 
+        self.hole_grid_advance_policy = str(
+            self.config.get("hole_grid_advance_policy", "on_keep")
+        ).strip().lower()
+        if self.hole_grid_advance_policy not in {"on_keep", "on_attempt"}:
+            raise ValueError(
+                "hole_grid_advance_policy must be on_keep or on_attempt; "
+                f"got {self.hole_grid_advance_policy!r}"
+            )
+
+        self.hole_grid_scheduler = None
+        if self.hole_sampling_mode == "grid":
+            self.hole_grid_scheduler = HoleGridScheduler(
+                rows=int(self.config.get("hole_grid_rows", 5)),
+                cols=int(self.config.get("hole_grid_cols", 5)),
+                x_range=self.config.get("hole_grid_x_range", [-0.06, 0.06]),
+                y_offset=float(self.config.get("hole_grid_y_offset", 0.0)),
+                z_range=self.config.get("hole_grid_z_range", [-0.06, 0.06]),
+                sample_mode=self.config.get("hole_grid_sample_mode", "center"),
+                traversal_order=self.config.get(
+                    "hole_grid_traversal_order",
+                    "shuffled",
+                ),
+                seed=self.config.get("hole_grid_seed", 42),
+                start_cycle=int(self.config.get("hole_grid_start_cycle", 0)),
+                start_index=int(self.config.get("hole_grid_start_index", 0)),
+            )
+
         self.hole_random_x_range = self.config.get(
-            "hole_random_x_range",
-            [-0.01, 0.01],
+            "hole_random_x_range", [-0.01, 0.01]
         )
         self.hole_random_y_range = self.config.get(
-            "hole_random_y_range",
-            [0.0, 0.0],
+            "hole_random_y_range", [0.0, 0.0]
         )
         self.hole_random_z_range = self.config.get(
-            "hole_random_z_range",
-            [-0.01, 0.01],
+            "hole_random_z_range", [-0.01, 0.01]
         )
-
         self.hole_random_seed = self.config.get("hole_random_seed", None)
         self.hole_rng = np.random.default_rng(self.hole_random_seed)
 
-        self.last_hole_randomization = {
+        self.current_hole_sample = {
             "enabled": False,
-            "body_name": self.hole_random_body_name,
+            "sampling_mode": self.hole_sampling_mode,
+            "body_name": self.hole_body_name,
             "nominal_body_pos": self.hole_nominal_body_pos.tolist(),
             "offset_xyz": [0.0, 0.0, 0.0],
             "body_pos": self.hole_nominal_body_pos.tolist(),
         }
+        # Kept as a compatibility alias for downstream/debug code.
+        self.last_hole_randomization = dict(self.current_hole_sample)
 
 
 
@@ -853,6 +890,25 @@ class RobotControllerMuJoCoPegTool:
         self._hard_set_qpos(self.command_joints)
         self._apply_actuator_targets(self.command_joints)
         mujoco.mj_forward(self.model, self.data)
+
+        # Prepare the first task position before the first episode starts.
+        self.prepare_hole_for_episode()
+
+        if self.hdf5_auto_start and self.hdf5_recorder is not None:
+            self.hdf5_recorder.start_episode(
+                label=self.config.get("hdf5_episode_label", "teleop"),
+                episode_metadata=self.current_hole_sample,
+            )
+
+        # Expose the recording service only after the controller, lock, arm pose,
+        # and first hole assignment are fully initialized.
+        if self.enable_recording_service and self.hdf5_recorder is not None:
+            self.recording_service = rospy.Service(
+                self.recording_service_name,
+                SetRecording,
+                self._handle_recording_service,
+            )
+            print(f"[Recording Service] Ready: {self.recording_service_name}")
 
         print("MuJoCo peg-tool 仿真器初始化完成")
         print(f"控制模式: {self.control_mode}")
@@ -1021,9 +1077,7 @@ class RobotControllerMuJoCoPegTool:
                 with self.lock:
                     self._reset_task_success_state_locked()
 
-                # 3. 每条 episode 开始前随机孔洞位置
-                # if getattr(self, "randomize_hole_on_record_start", True):
-                #     self.randomize_hole_position()
+                # 3. 当前孔位已在系统启动或上一条 episode 审核后准备好。
 
                 # 4. 重新标定当前 Vision Pro 手部参考
                 ok = self._call_teleop_trigger_service(
@@ -1039,7 +1093,10 @@ class RobotControllerMuJoCoPegTool:
                     )
 
                 # 5. 开始 HDF5 记录
-                hdf5_path = self.hdf5_recorder.start_episode(label=label)
+                hdf5_path = self.hdf5_recorder.start_episode(
+                    label=label,
+                    episode_metadata=self.current_hole_sample,
+                )
 
                 # 6. 开启 controller 命令入口
                 self.accept_teleop_commands = True
@@ -1083,12 +1140,14 @@ class RobotControllerMuJoCoPegTool:
                     if req.keep:
                         # HDF5 已经 inactive，reset 不会污染数据。
                         self._reset_after_episode_stop()
+                        next_hole = self.finalize_hole_after_episode(keep=True)
 
                         return SetRecordingResponse(
                             success=True,
                             active=False,
                             message=(
-                                "Auto-completed episode kept after manual review."
+                                "Auto-completed episode kept after manual review. "
+                                f"Next hole: {next_hole.get('hole_grid_cell_label', 'n/a')}."
                             ),
                             episode_path=episode_path,
                         )
@@ -1097,6 +1156,7 @@ class RobotControllerMuJoCoPegTool:
                     try:
                         # 先 reset，让机械臂立刻回初始位姿。
                         self._reset_after_episode_stop()
+                        retry_hole = self.finalize_hole_after_episode(keep=False)
 
                         # 再删除 episode 文件夹，避免删除大文件导致 reset 延迟。
                         if episode_dir:
@@ -1106,7 +1166,8 @@ class RobotControllerMuJoCoPegTool:
                             success=True,
                             active=False,
                             message=(
-                                "Auto-completed episode discarded after manual review."
+                                "Auto-completed episode discarded after manual review. "
+                                f"Retry hole: {retry_hole.get('hole_grid_cell_label', 'n/a')}."
                             ),
                             episode_path=episode_path,
                         )
@@ -1227,8 +1288,7 @@ class RobotControllerMuJoCoPegTool:
                 #     self.reset_arm_to_initial_pose()
                 self._reset_after_episode_stop()
 
-                if getattr(self, "randomize_hole_on_record_start", True):
-                    self.randomize_hole_position()
+                next_hole = self.finalize_hole_after_episode(keep=bool(req.keep))
 
                 # 5. 不保留则删除 episode 文件夹
                 if not req.keep:
@@ -1243,7 +1303,8 @@ class RobotControllerMuJoCoPegTool:
                             active=False,
                             message=(
                                 "Stopped recording, stopped teleoperation, reset arm, "
-                                "and discarded this episode."
+                                "and discarded this episode. "
+                                f"Retry hole: {next_hole.get('hole_grid_cell_label', 'n/a')}."
                                 + quality_alarm_msg
                             ),
                             episode_path=episode_path,
@@ -1265,7 +1326,8 @@ class RobotControllerMuJoCoPegTool:
                     active=False,
                     message=(
                         "Stopped recording, stopped teleoperation, reset arm, "
-                        "and kept this episode."
+                        "and kept this episode. "
+                        f"Next hole: {next_hole.get('hole_grid_cell_label', 'n/a')}."
                         + quality_alarm_msg
                     ),
                     episode_path=episode_path,
@@ -2794,66 +2856,91 @@ class RobotControllerMuJoCoPegTool:
         scene.ngeom += 1
     
 
-    def randomize_hole_position(self):
-        """
-        Randomize the wall_task body position once before starting a new episode.
+    def _apply_hole_position(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply one prepared task offset and expose it as episode metadata."""
+        offset = np.asarray(sample["hole_actual_offset_xyz"], dtype=float)
+        if offset.shape != (3,) or not np.all(np.isfinite(offset)):
+            raise ValueError(f"Invalid hole offset: {offset}")
 
-        For current pangu_all_right.xml:
-            body name = wall_task
-            nominal pos = [-0.25, -0.5, 1.0]
+        body_pos = self.hole_nominal_body_pos + offset
+        if self.hole_body_id != -1:
+            with self.lock:
+                self.model.body_pos[self.hole_body_id] = body_pos
+                mujoco.mj_forward(self.model, self.data)
 
-        Recommended:
-            randomize x and z only;
-            keep y fixed because y is insertion-depth direction.
-        """
-        if not self.enable_hole_randomization:
-            return self.last_hole_randomization
-
-        if self.hole_random_body_id == -1:
-            return self.last_hole_randomization
-
-        dx = float(
-            self.hole_rng.uniform(
-                float(self.hole_random_x_range[0]),
-                float(self.hole_random_x_range[1]),
-            )
+        context = dict(sample)
+        context.update(
+            {
+                "enabled": self.hole_sampling_mode != "fixed",
+                "hole_body_name": self.hole_body_name,
+                "hole_nominal_body_pos": self.hole_nominal_body_pos.tolist(),
+                "hole_actual_body_pos": body_pos.tolist(),
+                "hole_offset_from_nominal_xyz": offset.tolist(),
+            }
         )
-        dy = float(
-            self.hole_rng.uniform(
-                float(self.hole_random_y_range[0]),
-                float(self.hole_random_y_range[1]),
-            )
-        )
-        dz = float(
-            self.hole_rng.uniform(
-                float(self.hole_random_z_range[0]),
-                float(self.hole_random_z_range[1]),
-            )
-        )
+        self.current_hole_sample = context
+        self.last_hole_randomization = dict(context)
 
-        offset = np.array([dx, dy, dz], dtype=float)
-        new_pos = self.hole_nominal_body_pos + offset
-
-        with self.lock:
-            self.model.body_pos[self.hole_random_body_id] = new_pos
-            mujoco.mj_forward(self.model, self.data)
-
-        self.last_hole_randomization = {
-            "enabled": True,
-            "body_name": self.hole_random_body_name,
-            "nominal_body_pos": self.hole_nominal_body_pos.tolist(),
-            "offset_xyz": offset.tolist(),
-            "body_pos": new_pos.tolist(),
-        }
-
+        cell = context.get("hole_grid_cell_label", "n/a")
+        cycle = context.get("hole_grid_cycle", "n/a")
+        index = context.get("hole_grid_index", "n/a")
         print(
-            "[Hole Randomization] "
-            f"body={self.hole_random_body_name}, "
-            f"offset={offset.tolist()}, "
-            f"new_pos={new_pos.tolist()}"
+            "[HolePosition] "
+            f"mode={self.hole_sampling_mode}, cycle={cycle}, "
+            f"index={index}, cell={cell}, offset={offset.tolist()}, "
+            f"body_pos={body_pos.tolist()}"
         )
+        return dict(context)
 
-        return self.last_hole_randomization
+    def prepare_hole_for_episode(self) -> Dict[str, Any]:
+        """Prepare the current grid cell (or a compatibility sampling mode)."""
+        if self.hole_sampling_mode == "grid":
+            if self.hole_grid_scheduler is None:
+                raise RuntimeError("Grid sampling enabled without a scheduler")
+            sample = self.hole_grid_scheduler.current()
+        elif self.hole_sampling_mode == "uniform_random":
+            offset = [
+                float(self.hole_rng.uniform(*self.hole_random_x_range)),
+                float(self.hole_rng.uniform(*self.hole_random_y_range)),
+                float(self.hole_rng.uniform(*self.hole_random_z_range)),
+            ]
+            sample = {
+                "hole_sampling_mode": "uniform_random",
+                "hole_random_seed": (
+                    -1 if self.hole_random_seed is None else int(self.hole_random_seed)
+                ),
+                "hole_actual_offset_xyz": offset,
+            }
+        else:
+            sample = {
+                "hole_sampling_mode": "fixed",
+                "hole_actual_offset_xyz": [0.0, 0.0, 0.0],
+            }
+
+        return self._apply_hole_position(sample)
+
+    def finalize_hole_after_episode(self, keep: bool) -> Dict[str, Any]:
+        """Advance only when policy permits, then prepare the next episode."""
+        should_advance = bool(keep) or self.hole_grid_advance_policy == "on_attempt"
+
+        if self.hole_sampling_mode == "grid":
+            self.hole_grid_scheduler.complete_episode(
+                keep=bool(keep),
+                advance_policy=self.hole_grid_advance_policy,
+            )
+            return self.prepare_hole_for_episode()
+
+        if self.hole_sampling_mode == "uniform_random" and should_advance:
+            return self.prepare_hole_for_episode()
+
+        # A discarded grid/uniform episode intentionally retries the same pose.
+        return self._apply_hole_position(self.current_hole_sample)
+
+    def randomize_hole_position(self):
+        """Compatibility wrapper for legacy callers."""
+        if self.hole_sampling_mode == "grid" and self.hole_grid_scheduler is not None:
+            self.hole_grid_scheduler.advance()
+        return self.prepare_hole_for_episode()
 
 
     def draw_insertion_guides(self, viewer):

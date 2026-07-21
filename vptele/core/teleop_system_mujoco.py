@@ -527,16 +527,68 @@ class TeleopSystemMujoco:
             "hdf5_auto_start": self.config.get("hdf5_auto_start", False),
             "hdf5_episode_label": self.config.get("hdf5_episode_label", "teleop"),
             "hdf5_max_buffer_rows": self.config.get("hdf5_max_buffer_rows", 500000),
+            "hdf5_hole_center_site_name": self.config.get(
+                "hdf5_hole_center_site_name",
+                self.config.get("task_success_hole_site_name", "hole_goal_site"),
+            ),
+            "hdf5_peg_geom_name": self.config.get(
+                "hdf5_peg_geom_name", "cylindrical_peg"
+            ),
+            "hdf5_peg_tip_site_name": self.config.get(
+                "hdf5_peg_tip_site_name", "peg_tip_site"
+            ),
+            "hdf5_hole_goal_site_name": self.config.get(
+                "hdf5_hole_goal_site_name",
+                self.config.get("task_success_hole_site_name", "hole_goal_site"),
+            ),
+            "hdf5_hole_ring_geom_prefix": self.config.get(
+                "hdf5_hole_ring_geom_prefix", "wall_hole_ring_"
+            ),
+            "hdf5_hole_axis_body": self.config.get(
+                "hdf5_hole_axis_body", [0.0, -1.0, 0.0]
+            ),
 
             # ROS recording service
             "enable_recording_service": self.config.get("enable_recording_service", True),
             "recording_service_name": self.config.get("recording_service_name", "/mujoco_hdf5_recording/set_recording"),
 
-            # Hole randomization
-            "enable_hole_randomization": self.config.get("enable_hole_randomization", False),
-            "randomize_hole_on_record_start": self.config.get(
-                "randomize_hole_on_record_start", True
+            # Hole position sampling
+            "hole_sampling_mode": self.config.get(
+                "hole_sampling_mode",
+                (
+                    "uniform_random"
+                    if self.config.get("enable_hole_randomization", False)
+                    else "fixed"
+                ),
             ),
+            "hole_body_name": self.config.get(
+                "hole_body_name",
+                self.config.get("hole_random_body_name", "wall_task"),
+            ),
+            "hole_grid_rows": self.config.get("hole_grid_rows", 5),
+            "hole_grid_cols": self.config.get("hole_grid_cols", 5),
+            "hole_grid_x_range": self.config.get(
+                "hole_grid_x_range", [-0.06, 0.06]
+            ),
+            "hole_grid_y_offset": self.config.get("hole_grid_y_offset", 0.0),
+            "hole_grid_z_range": self.config.get(
+                "hole_grid_z_range", [-0.06, 0.06]
+            ),
+            "hole_grid_sample_mode": self.config.get(
+                "hole_grid_sample_mode", "center"
+            ),
+            "hole_grid_traversal_order": self.config.get(
+                "hole_grid_traversal_order", "shuffled"
+            ),
+            "hole_grid_seed": self.config.get("hole_grid_seed", 42),
+            "hole_grid_advance_policy": self.config.get(
+                "hole_grid_advance_policy", "on_keep"
+            ),
+            "hole_grid_start_cycle": self.config.get("hole_grid_start_cycle", 0),
+            "hole_grid_start_index": self.config.get("hole_grid_start_index", 0),
+
+            # Legacy uniform-random compatibility
+            "enable_hole_randomization": self.config.get("enable_hole_randomization", False),
             "hole_random_body_name": self.config.get("hole_random_body_name", "wall_task"),
             "hole_random_x_range": self.config.get("hole_random_x_range", [-0.01, 0.01]),
             "hole_random_y_range": self.config.get("hole_random_y_range", [0.0, 0.0]),
