@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 import rospy
-import argparse
-import yaml
 import os
-import sys
 from utils.logger import get_logger, setup_logger
-from arm_teleop.srv import StartDualTeleOP, StartDualTeleOPRequest
-import time
+from utils.mujoco_config import (
+    MujocoConfigError,
+    apply_runtime_overrides,
+    load_mujoco_config,
+    validate_mujoco_config,
+)
 
 def run_teleop_system(config_path, vp_ip=None, end_effector=None, 
                       log_level=None, process_name=None, mode="full"):
@@ -29,12 +30,18 @@ def run_teleop_system(config_path, vp_ip=None, end_effector=None,
     if not os.path.isabs(config_path):
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config_path)
     
-    # 加载配置文件
+    # 加载、覆盖并校验配置文件。严格加载器会拒绝重复 YAML 键。
     try:
-        with open(config_path, 'r', encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-    except Exception as e:
-        error_msg = f"无法加载配置文件 {config_path}: {e}"
+        config = load_mujoco_config(config_path)
+        config = apply_runtime_overrides(
+            config,
+            vp_ip=vp_ip,
+            end_effector=end_effector,
+            process_name=process_name,
+        )
+        validate_mujoco_config(config)
+    except MujocoConfigError as e:
+        error_msg = f"配置文件加载或校验失败 {config_path}: {e}"
         rospy.logerr(error_msg)
         raise RuntimeError(error_msg)
     
@@ -89,7 +96,7 @@ class TeleopROSNode:
                 end_effector=self.end_effector,
                 log_level=self.log_level,
                 process_name=self.process_name,
-                mode="full"
+                mode=self.mode
             )
             
             self.logger = get_logger()

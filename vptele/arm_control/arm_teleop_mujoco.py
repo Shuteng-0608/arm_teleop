@@ -30,16 +30,38 @@ class ArmTeleopMujoco:
             rospy.init_node('arm_teleop', anonymous=True)
 
         # ================== [RIGHT ARM INIT] ==================
+        self.right_ik_service_name = self.config.get(
+            "ik_service_name", "/arm_teleop/right_arm_ik_srv"
+        )
         rospy.loginfo("Connecting to ik service......")
-        rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
-        self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
-        self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
+        rospy.wait_for_service(self.right_ik_service_name)
+        self.right_ik_service = rospy.ServiceProxy(
+            self.right_ik_service_name, ArmIK
+        )
+        self.initial_right_robot_pose = list(
+            self.config.get(
+                "initial_robot_pose",
+                [
+                    0.3011,
+                    -0.3580,
+                    0.2282,
+                    3.1923149,
+                    -0.036102,
+                    -0.0007987,
+                ],
+            )
+        )  # XYZ + 欧拉角 (弧度)
         self.init_right_rotation = R.from_euler("XYZ", 
                                         [self.initial_right_robot_pose[3], 
                                          self.initial_right_robot_pose[4], 
                                          self.initial_right_robot_pose[5]], 
                                         degrees=False)
-        self.last_right_joint_angles = [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005]        
+        self.last_right_joint_angles = list(
+            self.config.get(
+                "initial_arm_joints",
+                [-0.046, -0.2, 0.0, 1.6, -1.32, 0.005, 0.005],
+            )
+        )
         self.last_right_joint_angles = [round(angle, 4) for angle in self.last_right_joint_angles]
         self.initial_right_robot_pose_in_quat = self.euler_to_quaternion(self.initial_right_robot_pose)
         self.initial_right_robot_pose_in_quat = [round(angle, 4) for angle in self.initial_right_robot_pose_in_quat]
@@ -58,9 +80,27 @@ class ArmTeleopMujoco:
 
 
         # ============ OneEuroFilter ============
-        self.pose_filter_right = PoseFilter7D(min_cutoff=0.1, beta=0.1)
+        self.pose_filter_min_cutoff = float(
+            self.config.get("pose_filter_min_cutoff", 0.1)
+        )
+        self.pose_filter_beta = float(self.config.get("pose_filter_beta", 0.1))
+        self.joints_filter_min_cutoff = float(
+            self.config.get("joints_filter_min_cutoff", 0.1)
+        )
+        self.joints_filter_beta = float(
+            self.config.get("joints_filter_beta", 0.1)
+        )
+        self.pose_filter_right = PoseFilter7D(
+            min_cutoff=self.pose_filter_min_cutoff,
+            beta=self.pose_filter_beta,
+        )
         t_now = time.time()
-        self.joints_filter_right = OneEuroFilter(t_now, np.array(self.last_right_joint_angles), min_cutoff=0.1, beta=0.1)
+        self.joints_filter_right = OneEuroFilter(
+            t_now,
+            np.array(self.last_right_joint_angles),
+            min_cutoff=self.joints_filter_min_cutoff,
+            beta=self.joints_filter_beta,
+        )
         self.last_smooth_joints_right = self.last_right_joint_angles
 
         # 添加关节平滑相关参数
@@ -149,15 +189,15 @@ class ArmTeleopMujoco:
         t_now = time.time()
 
         self.pose_filter_right = PoseFilter7D(
-            min_cutoff=0.1,
-            beta=0.1,
+            min_cutoff=self.pose_filter_min_cutoff,
+            beta=self.pose_filter_beta,
         )
 
         self.joints_filter_right = OneEuroFilter(
             t_now,
             np.array(self.last_right_joint_angles),
-            min_cutoff=0.1,
-            beta=0.1,
+            min_cutoff=self.joints_filter_min_cutoff,
+            beta=self.joints_filter_beta,
         )
 
         # 重新允许遥操作逻辑，但此时线程是否运行由 start() 控制

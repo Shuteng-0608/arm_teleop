@@ -1,14 +1,12 @@
-# Data Recording
-record_data: false
-record_dir: "/home/stw/pangu/src/arm_teleop/data/peg_in_hole"
-record_force_hz: 500.0
-record_state_hz: 30.0
-record_all_500hz: true
+# Configuration schema version
+config_version: 1
 
+# Legacy non-HDF5 recorder (disabled for this collection profile)
+record_data: false
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "/home/stw/pangu/src/arm_teleop/data/hole_random_60mm_hmj"
+hdf5_record_dir: "../../data/hole_random_60mm_hmj"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -25,8 +23,6 @@ hdf5_camera_names:
 
 hdf5_image_width: 640
 hdf5_image_height: 480
-hdf5_image_format: "hdf5_rgb"
-hdf5_jpg_quality: 90
 
 hdf5_auto_start: false
 hdf5_episode_label: "teleop"
@@ -42,7 +38,6 @@ hdf5_hole_axis_body: [0.0, -1.0, 0.0]
 
 # Force/torque sensor recording
 hdf5_enable_ft_tare: false
-# hdf5_record_ft_wrench_raw: true
 # Force/torque gravity compensation
 hdf5_ft_compensation_mode: "gravity"
 
@@ -65,12 +60,30 @@ hdf5_ft_gravity_sensor_sign: -1.0
 enable_recording_service: true
 recording_service_name: "/mujoco_hdf5_recording/set_recording"
 
-# Mujoco配置
-# mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool.xml"
-# mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/right_arm_peg_tool_wall.xml"
-mujoco_model_path: "/home/stw/pangu/src/arm_teleop/model/pangu_all_right.xml"
-enable_hand: false
+# MuJoCo simulation
+mujoco_model_path: "../../model/pangu_all_right.xml"
+control_mode: "actuator"
+launch_viewer: true
+auto_start: true
+viewer_rate: 60.0
+realtime: true
+viewer_start_wait: 1.0
+
+arm_joints:
+  - "joint_1"
+  - "joint_2"
+  - "joint_3"
+  - "joint_4"
+  - "joint_5"
+  - "joint_6"
+  - "joint_7"
+arm_sign: [-1, 1, 1, -1, 1, 1, 1]
+
 enable_visual_guides: false
+show_camera_streams: true
+camera_stream_width: 640
+camera_stream_height: 480
+camera_stream_fps: 15.0
 cctv_camera: "cctv_cam"
 monitor_camera_names:
   - "cctv_cam"
@@ -129,8 +142,6 @@ force_guidance_overlay_cameras:
 show_translation_ring: true
 show_torque_ring: true
 show_axial_core: true
-show_contact_state: true
-show_trend: true
 
 force_guidance_plane_right_world: [1.0, 0.0, 0.0]
 force_guidance_plane_up_world: [0.0, 0.0, 1.0]
@@ -142,7 +153,6 @@ force_guidance_max_torque_nm: 2.0
 torque_guidance_mode: "off"   # vector | tilt_axes | off
 torque_guidance_min_force_n: 5.0
 torque_guidance_min_torque_nm: 0.05
-torque_guidance_max_torque_nm: 2.0
 torque_guidance_label_as_posture: true
 torque_guidance_show_numeric_values: true
 force_guidance_draw_numeric_values: true
@@ -158,79 +168,28 @@ force_guidance_screen_up_sign: 1.0
 force_guidance_vector_semantics: "contact"   # contact | correction
 force_guidance_correction_sign: -1.0
 
-force_feedback_ft_compensation_mode: "gravity"
-force_feedback_gravity_tool_body_names:
-  - "peg_tool"
-force_feedback_gravity_world: [0.0, 0.0, -9.81]
-force_feedback_gravity_sensor_sign: -1.0
-
 # VisionPro配置
 vp_ip: "192.168.1.144" # DaiLab-Normal
 vp_record: false  # 是否记录VisionPro数据流
-# vuer: true
-vuer: false
+vp_ready_timeout: 2.0
 
-
-# 末端执行器选择: none, hand, gripper, peg
+# 末端执行器选择: none | hand | peg
 end_effector: "peg"
 
 # 机械臂遥控参数
 arm_config:
-  leftright: "right" # 指定使用人的哪只手的位姿来操控
-  # move: false
-
   enable_episode_services: true
   teleop_service_ns: "/arm_teleop_mujoco"
-
-  
+  ik_service_name: "/arm_teleop/right_arm_ik_srv"
+  initial_robot_pose: [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]
+  move: true
   scaling_factor: 0.8
   smoothing_factor: 0.99
   update_frequency: 0.01 # 根据日志，每秒能发送80个控制指令，也就是每一次操控，除开sleep了0.01秒，计算开销时间应该是 1/80 - 0.01 = 0.0025s
-  position_logging_interval: 0.1  # 位置日志记录间隔(秒)
-
-  # 启用自适应控制
-  use_adaptive_control: false
-  
-  # 自适应控制参数
-  adaptive_config:
-    leftright: "right"
-    window_size: 10  # 运动历史窗口大小
-    velocity_threshold: 0.15  # 快速移动阈值 (m/s)
-    precision_threshold: 0.005  # 精细操作阈值 (m)
-    smoothing_range: [0.5, 0.5]  # 平滑系数范围
-    scaling_range: [1.0, 1.0]  # 缩放系数范围
-
-  # 位置范围限制
-  x_range: [-0.5, 0.3]
-  y_range: [0.25, 1.4]
-  z_range: [-0.5, 0.5]
-  # 旋转范围限制 (弧度制)
-  limit_rotation: true  # 启用旋转限制
-  rx_range: [2, 3.14]  # rx旋转范围
-  ry_range: [0, 1.5]  # ry旋转范围
-  rz_range: [-2.7, 0]  # rz旋转范围
-
-# VisionPro手部控制配置
-hand_control:
-  use_right_hand: true  # 使用右手控制
-
-# 灵巧手参数
-hand_config:
-  smoothing_factor: 0.6
-  update_frequency: 0.01
-  max_hand_range: 65535
-  hand_speed: 1000  # 灵巧手最大速度 (1-1000)
-
-# 夹爪参数
-gripper_config:
-  leftright: "right"
-  max_width: 1000
-  update_frequency: 0.001
-  grip_sensitivity: 0.7
-  default_speed: 100  # 夹爪默认速度 (1-100)
-  # 手势检测参数
-  grip_activation_threshold: 0.3  # 激活抓取的阈值
-  grip_release_threshold: 0.6  # 释放抓取的阈值
+  pose_filter_min_cutoff: 0.1
+  pose_filter_beta: 0.1
+  joints_filter_min_cutoff: 0.1
+  joints_filter_beta: 0.1
 
 # 日志配置
 logging:
@@ -244,13 +203,10 @@ logging:
 teleop_controlled_by_recording: true
 accept_teleop_when_not_recording: false
 
-teleop_stop_service_name: "/arm_teleop_mujoco/stop"
-teleop_recalibrate_service_name: "/arm_teleop_mujoco/recalibrate"
-teleop_start_service_name: "/arm_teleop_mujoco/start"
-
 # Arm reset
 reset_arm_on_record_start: true
 reset_arm_on_record_stop: true
+reset_ignore_teleop_duration: 0.5
 
 initial_arm_joints:
   - -0.046
@@ -298,11 +254,6 @@ hole_grid_advance_policy: "on_keep"    # on_keep | on_attempt
 # Zero-based resume cursor. Change these only when resuming an interrupted run.
 hole_grid_start_cycle: 0
 hole_grid_start_index: 0
-
-# HDF5
-hdf5_auto_start: false
-enable_recording_service: true
-recording_service_name: "/mujoco_hdf5_recording/set_recording"
 
 
 # Joint torque quality alarm

@@ -843,6 +843,7 @@ class RobotControllerMuJoCoPegTool:
 
         self.running = False
         self.viewer_running = False
+        self.runtime_activated = False
         self.lock = threading.RLock()
         self.vis_thread: Optional[threading.Thread] = None
 
@@ -891,7 +892,25 @@ class RobotControllerMuJoCoPegTool:
         self._apply_actuator_targets(self.command_joints)
         mujoco.mj_forward(self.model, self.data)
 
-        # Prepare the first task position before the first episode starts.
+        print("MuJoCo peg-tool 仿真器初始化完成")
+        print(f"控制模式: {self.control_mode}")
+        print(f"MuJoCo timestep: {self.sim_timestep:.6f} s")
+        print(f"max_joint_velocity: {self.max_joint_velocity:.3f} rad/s")
+
+        if not self.config.get("defer_runtime_activation", False):
+            self.activate_runtime()
+
+    def activate_runtime(self) -> None:
+        """Prepare the task and expose runtime services exactly once.
+
+        TeleopSystemMujoco defers this call until ArmTeleop has registered its
+        stop/recalibrate/start services. Standalone controller users retain the
+        old constructor behavior unless they explicitly request deferral.
+        """
+        if self.runtime_activated:
+            return
+
+        # Prepare the first task position before an episode or service request.
         self.prepare_hole_for_episode()
 
         if self.hdf5_auto_start and self.hdf5_recorder is not None:
@@ -900,8 +919,12 @@ class RobotControllerMuJoCoPegTool:
                 episode_metadata=self.current_hole_sample,
             )
 
-        # Expose the recording service only after the controller, lock, arm pose,
-        # and first hole assignment are fully initialized.
+        if self.config.get("auto_start", True):
+            print("启动 MuJoCo 仿真线程...")
+            self.start_simulation()
+
+        # Publish the recording service last, when the task, teleoperation
+        # services, and simulation are ready to accept an episode request.
         if self.enable_recording_service and self.hdf5_recorder is not None:
             self.recording_service = rospy.Service(
                 self.recording_service_name,
@@ -910,14 +933,7 @@ class RobotControllerMuJoCoPegTool:
             )
             print(f"[Recording Service] Ready: {self.recording_service_name}")
 
-        print("MuJoCo peg-tool 仿真器初始化完成")
-        print(f"控制模式: {self.control_mode}")
-        print(f"MuJoCo timestep: {self.sim_timestep:.6f} s")
-        print(f"max_joint_velocity: {self.max_joint_velocity:.3f} rad/s")
-
-        if self.config.get("auto_start", True):
-            print("启动 MuJoCo 仿真线程...")
-            self.start_simulation()
+        self.runtime_activated = True
     
 
     def _call_teleop_trigger_service(self, service_name: str, description: str) -> bool:

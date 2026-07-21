@@ -2,6 +2,7 @@ import time
 import numpy as np
 import rospy
 from utils.logger import get_logger
+from utils.mujoco_config import build_arm_teleop_config, build_controller_config
 logger = get_logger()
 
 class TeleopSystemMujoco:
@@ -26,6 +27,10 @@ class TeleopSystemMujoco:
         """
         初始化系统各组件
         """
+        if mode != "full":
+            raise ValueError(
+                f"TeleopSystemMujoco only supports mode='full', got {mode!r}"
+            )
         self._initialize_full_mode()
     
 
@@ -47,7 +52,9 @@ class TeleopSystemMujoco:
         self.vp_streamer = VPStreamer(ip=vp_ip, record=vp_record)
         # 等待一段时间确保数据流稳定
         logger.info("正在等待VisionPro数据流稳定...")
-        self._wait_for_vp_ready(timeout=2.0)
+        self._wait_for_vp_ready(
+            timeout=float(self.config.get("vp_ready_timeout", 2.0))
+        )
         logger.info("VisionPro数据流初始化完成")
 
         # 初始化机械臂控制器和其他组件
@@ -57,22 +64,35 @@ class TeleopSystemMujoco:
         logger.info("正在初始化机械臂遥控模块...")
 
         from arm_control.arm_teleop_mujoco import ArmTeleopMujoco
+        arm_config = build_arm_teleop_config(self.config)
         self.arm_teleop = ArmTeleopMujoco(
             self.vp_streamer,
             self.robot_controller,
-            self.config.get('arm_config', {})
+            arm_config,
         )
 
         # 初始化末端执行器
         # peg-tool 模型默认不启用灵巧手末端执行器
-        enable_hand = self.config.get("enable_hand", False)
+        default_end_effector = (
+            "hand" if self.config.get("enable_hand", False) else "peg"
+        )
+        end_effector = str(
+            self.config.get("end_effector", default_end_effector)
+        ).lower()
 
-        if enable_hand:
+        if end_effector == "hand":
             self._initialize_end_effector()
         else:
             self.end_effector = None
-            logger.info("已禁用手部遥操作模块，当前使用 peg-tool 模型。")
-                
+            logger.info(
+                "未启用手部遥操作模块，当前末端执行器: %s",
+                end_effector,
+            )
+
+        # ArmTeleop services must exist before the recording service is
+        # exposed and before an auto-start episode can begin.
+        self.robot_controller.activate_runtime()
+
         logger.info("系统完整初始化完成")
     
     def _wait_for_vp_ready(self, timeout=10.0):
@@ -100,23 +120,26 @@ class TeleopSystemMujoco:
         logger.info("正在初始化 MuJoCo 机械臂控制器...")
 
         # contact 版本：使用 actuator position control，而不是 qpos 直接写入
-        sim_config = {
+        # Start with the complete root config so a newly-added controller
+        # setting cannot be silently dropped by this adapter layer.
+        sim_config = build_controller_config(self.config)
+        sim_config.update({
             "cctv_camera": self.config.get("cctv_camera", "cctv_cam"),
             # 关键：真实接触仿真必须用 actuator，而不是 qpos
-            "control_mode": "actuator",
+            "control_mode": self.config.get("control_mode", "actuator"),
 
             # 是否打开 MuJoCo viewer
-            "launch_viewer": True,
+            "launch_viewer": self.config.get("launch_viewer", True),
 
             # 构造 controller 后自动启动仿真线程
-            "auto_start": True,
+            "auto_start": self.config.get("auto_start", True),
 
             # viewer 刷新频率，不等于物理仿真频率
             # 物理仿真频率由 XML 里的 timestep 决定
-            "viewer_rate": 60,
+            "viewer_rate": self.config.get("viewer_rate", 60.0),
 
             # 尽量按真实时间运行仿真
-            "realtime": True,
+            "realtime": self.config.get("realtime", True),
 
             # 关节目标速度限制，单位 rad/s
             # 遥操作阶段建议先保守一点，避免接触时一帧顶太猛
@@ -169,38 +192,45 @@ class TeleopSystemMujoco:
 
             # 机械臂关节名称
             # 注意：我的 contact controller 里读取的是 arm_joints，不是 arm_joint_names
-            "arm_joints": [
-                "joint_1",
-                "joint_2",
-                "joint_3",
-                "joint_4",
-                "joint_5",
-                "joint_6",
-                "joint_7",
-            ],
+            "arm_joints": self.config.get(
+                "arm_joints",
+                [f"joint_{index}" for index in range(1, 8)],
+            ),
 
             # 保持你原来 controller 的符号修正逻辑
-            "arm_sign": [-1, 1, 1, -1, 1, 1, 1],
+            "arm_sign": self.config.get(
+                "arm_sign", [-1, 1, 1, -1, 1, 1, 1]
+            ),
 
             # 等 viewer 启动的时间
-            "viewer_start_wait": 1.0,
+            "viewer_start_wait": self.config.get("viewer_start_wait", 1.0),
 
             "enable_visual_guides": self.config.get("enable_visual_guides", False),
             # 当前 wall-parallel 版本默认插入方向沿 y 轴。
-            "hole_axis_world": [0.0, 1.0, 0.0],
+            "hole_axis_world": self.config.get(
+                "hole_axis_world", [0.0, 1.0, 0.0]
+            ),
 
             # 洞口可视入口点相对 hole_center 的偏移
-            "hole_entrance_offset": 0.026,
+            "hole_entrance_offset": self.config.get(
+                "hole_entrance_offset", 0.026
+            ),
 
             # 黄色插入方向箭头长度
-            "hole_axis_arrow_length": 0.20,
+            "hole_axis_arrow_length": self.config.get(
+                "hole_axis_arrow_length", 0.20
+            ),
 
             # peg->hole 引导箭头粗细
-            "guide_arrow_width": 0.002,
+            "guide_arrow_width": self.config.get("guide_arrow_width", 0.002),
 
             # 对准误差颜色阈值，单位 m
-            "guide_green_threshold": 0.010,
-            "guide_yellow_threshold": 0.020,
+            "guide_green_threshold": self.config.get(
+                "guide_green_threshold", 0.010
+            ),
+            "guide_yellow_threshold": self.config.get(
+                "guide_yellow_threshold", 0.020
+            ),
 
             # data recording
             "record_data": self.config.get("record_data", True),
@@ -213,10 +243,10 @@ class TeleopSystemMujoco:
             "record_all_500hz": self.config.get("record_all_500hz", True),
 
             # video stream config
-            "show_camera_streams": True,
-            "camera_stream_width": 640,
-            "camera_stream_height": 480,
-            "camera_stream_fps": 15.0,
+            "show_camera_streams": self.config.get("show_camera_streams", True),
+            "camera_stream_width": self.config.get("camera_stream_width", 640),
+            "camera_stream_height": self.config.get("camera_stream_height", 480),
+            "camera_stream_fps": self.config.get("camera_stream_fps", 15.0),
 
             "monitor_camera_names": self.config.get(
                 "monitor_camera_names",
@@ -679,7 +709,7 @@ class TeleopSystemMujoco:
             "ft_wrench_alarm_freeze_on_trigger": self.config.get("ft_wrench_alarm_freeze_on_trigger", False),       
 
 
-        }
+        })
 
         model_path = self.config.get(
             "mujoco_model_path",
