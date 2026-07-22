@@ -32,10 +32,78 @@ class VPStreamer:
         """
         try:
             self.streamer = AVPStreamer(ip, record=record)
+            self._video_stream_started = False
+            self._closed = False
             logger.info(f"成功连接到VisionPro: {ip}")
         except Exception as e:
             logger.exception(f"连接VisionPro失败: {e}")
             raise
+
+    def start_video_stream(self, width, height, fps, port=9999):
+        """Start the optional mono WebRTC stream used for the operator CCTV."""
+        if self._video_stream_started:
+            return True
+
+        width = int(width)
+        height = int(height)
+        fps = int(round(float(fps)))
+        port = int(port)
+        if width <= 0 or height <= 0 or fps <= 0:
+            raise ValueError("VisionPro视频尺寸和帧率必须为正数")
+        if not 1 <= port <= 65535:
+            raise ValueError("VisionPro视频端口必须在1到65535之间")
+
+        try:
+            self.streamer.configure_video(
+                device=None,
+                format=None,
+                size=f"{width}x{height}",
+                fps=fps,
+                stereo=False,
+            )
+            started = bool(
+                self.streamer.start_webrtc(port=port, blocking=False)
+            )
+        except Exception as exc:
+            logger.exception(f"VisionPro CCTV WebRTC启动失败: {exc}")
+            return False
+
+        self._video_stream_started = started
+        if started:
+            logger.info(
+                f"VisionPro CCTV WebRTC已启动: {width}x{height} "
+                f"@ {fps} FPS, port={port}"
+            )
+        else:
+            logger.error("VisionPro CCTV WebRTC启动失败，原遥操作功能继续运行")
+        return started
+
+    def update_video_frame(self, frame_bgr):
+        """Publish one BGR frame without queueing it in the control process."""
+        if not self._video_stream_started or self._closed:
+            return False
+        self.streamer.update_frame(frame_bgr)
+        return True
+
+    def is_video_connected(self):
+        """Return whether a WebRTC video client is currently connected."""
+        if not self._video_stream_started or self._closed:
+            return False
+        try:
+            return bool(self.streamer.is_connected())
+        except Exception:
+            return False
+
+    def close(self):
+        """Release tracking and optional WebRTC resources exactly once."""
+        if self._closed:
+            return
+        self._closed = True
+        self._video_stream_started = False
+        try:
+            self.streamer.cleanup()
+        except Exception as exc:
+            logger.exception(f"关闭VisionPro数据流失败: {exc}")
     
     @property
     def latest(self):

@@ -24,6 +24,14 @@ hdf5_camera_names:
 hdf5_image_width: 640
 hdf5_image_height: 480
 
+# Asynchronous recorder/render pipeline. Numeric samples and rendered frames
+# are queued so HDF5 compression and disk I/O never block the 1 kHz physics loop.
+hdf5_async_queue_size: 1024
+hdf5_async_stop_timeout: 10.0
+hdf5_append_block_image: 16
+render_queue_size: 4
+render_start_timeout: 10.0
+
 hdf5_auto_start: false
 hdf5_episode_label: "teleop"
 hdf5_max_buffer_rows: 500000
@@ -63,11 +71,13 @@ recording_service_name: "/mujoco_hdf5_recording/set_recording"
 # MuJoCo simulation
 mujoco_model_path: "../../model/pangu_all_right.xml"
 control_mode: "actuator"
-launch_viewer: true
+# The passive MuJoCo viewer duplicates the operator CCTV view and adds a
+# 60 Hz synchronization path. Keep it off during dataset collection.
+launch_viewer: false
 auto_start: true
 viewer_rate: 60.0
 realtime: true
-viewer_start_wait: 1.0
+viewer_start_wait: 0.0
 
 arm_joints:
   - "joint_1"
@@ -87,8 +97,8 @@ camera_stream_fps: 15.0
 cctv_camera: "cctv_cam"
 monitor_camera_names:
   - "cctv_cam"
-  - "ee_cam"
-  - "base_top_cam"
+# ee_cam and base_top_cam are dataset-only cameras configured above under
+# hdf5_camera_names; they are intentionally not shown to the operator.
 separate_cctv_window: true
 cctv_window_name: "CCTV Camera"
 cctv_window_width: 1280
@@ -98,6 +108,11 @@ cctv_window_preserve_aspect_ratio: true
 cctv_window_fullscreen: false
 cctv_window_fit_mode: "contain"   # contain only for now
 cctv_window_padding_color: [0, 0, 0]
+
+# Optional mono WebRTC return of the final CCTV+HUD BGR frame to Vision Pro.
+# This is independent of the raw ee_cam/base_top_cam HDF5 recording path.
+visionpro_video_enabled: true
+visionpro_video_port: 9999
 
 # Operator-only live force feedback HUD.
 # This overlay is drawn only on OpenCV display frames, never on HDF5 images.

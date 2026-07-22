@@ -59,6 +59,7 @@ class TeleopSystemMujoco:
 
         # 初始化机械臂控制器和其他组件
         self._initialize_robot_controller()
+        self._initialize_visionpro_video()
         
         # 初始化机械臂遥控
         logger.info("正在初始化机械臂遥控模块...")
@@ -94,6 +95,36 @@ class TeleopSystemMujoco:
         self.robot_controller.activate_runtime()
 
         logger.info("系统完整初始化完成")
+
+    def _initialize_visionpro_video(self):
+        """Optionally route the final CCTV+HUD frame back to Vision Pro."""
+        if not bool(self.config.get("visionpro_video_enabled", False)):
+            return
+
+        if not self.robot_controller.set_cctv_frame_sink(
+            self.vp_streamer.update_video_frame
+        ):
+            logger.error(
+                "VisionPro视频回传未启动：MuJoCo中未找到配置的CCTV相机；"
+                "原有遥操作和数据记录继续运行"
+            )
+            return
+
+        try:
+            started = self.vp_streamer.start_video_stream(
+                width=self.config.get("cctv_window_width", 1280),
+                height=self.config.get("cctv_window_height", 720),
+                fps=self.config.get("camera_stream_fps", 15.0),
+                port=self.config.get("visionpro_video_port", 9999),
+            )
+        except Exception as exc:
+            logger.exception(f"VisionPro视频回传初始化失败: {exc}")
+            started = False
+
+        if not started:
+            # Restore the original rendering path when WebRTC cannot start.
+            self.robot_controller.set_cctv_frame_sink(None)
+            logger.error("VisionPro视频回传不可用，原有遥操作和数据记录继续运行")
     
     def _wait_for_vp_ready(self, timeout=10.0):
         start = time.time()
@@ -790,16 +821,19 @@ class TeleopSystemMujoco:
     def stop(self):
         """停止遥操控系统"""
         logger.info("正在关闭遥操控系统...")
-        
-        # 先停止末端执行器
-        if self.end_effector:
-            self.end_effector.stop()
-        
-        # 再停止机械臂遥控
-        if self.arm_teleop:
-            self.arm_teleop.stop()
-        
-        # 最后断开机械臂连接
-        if self.robot_controller:
-            self.robot_controller.disconnect()
+        try:
+            # 先停止末端执行器
+            if self.end_effector:
+                self.end_effector.stop()
+
+            # 再停止机械臂遥控
+            if self.arm_teleop:
+                self.arm_teleop.stop()
+
+            # 先停止渲染线程，再释放其使用的视频发送端。
+            if self.robot_controller:
+                self.robot_controller.disconnect()
+        finally:
+            if self.vp_streamer:
+                self.vp_streamer.close()
     

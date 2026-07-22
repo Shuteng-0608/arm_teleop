@@ -34,6 +34,20 @@ class MujocoConfigTest(unittest.TestCase):
             REPO_ROOT / "data" / "hole_random_60mm_hmj",
         )
 
+    def test_operator_and_dataset_camera_roles_are_separated(self):
+        self.assertFalse(self.config["launch_viewer"])
+        self.assertFalse(self.config["visionpro_video_enabled"])
+        self.assertEqual(self.config["visionpro_video_port"], 9999)
+        self.assertEqual(self.config["monitor_camera_names"], ["cctv_cam"])
+        self.assertEqual(
+            self.config["hdf5_camera_names"],
+            ["ee_cam", "base_top_cam"],
+        )
+        self.assertNotIn(
+            "cctv_cam",
+            self.config["hdf5_camera_names"],
+        )
+
     def test_duplicate_yaml_keys_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "duplicate.yaml"
@@ -68,6 +82,11 @@ class MujocoConfigTest(unittest.TestCase):
                 "hdf5_record_ft_wrench_gravity": False,
                 "hdf5_ft_compensation_mode": "raw",
                 "hdf5_ft_gravity_sensor_sign": 1.0,
+                "hdf5_async_queue_size": 2048,
+                "hdf5_async_stop_timeout": 5.0,
+                "hdf5_append_block_image": 8,
+                "render_queue_size": 3,
+                "render_start_timeout": 5.0,
             }
         )
         config["arm_config"]["teleop_service_ns"] = "/custom_teleop"
@@ -85,6 +104,11 @@ class MujocoConfigTest(unittest.TestCase):
             "hdf5_record_ft_wrench_gravity",
             "hdf5_ft_compensation_mode",
             "hdf5_ft_gravity_sensor_sign",
+            "hdf5_async_queue_size",
+            "hdf5_async_stop_timeout",
+            "hdf5_append_block_image",
+            "render_queue_size",
+            "render_start_timeout",
         ):
             self.assertEqual(controller[key], config[key])
 
@@ -111,6 +135,23 @@ class MujocoConfigTest(unittest.TestCase):
         config["record_hdf5"] = False
         config["enable_recording_service"] = True
         with self.assertRaisesRegex(MujocoConfigError, "requires record_hdf5"):
+            validate_mujoco_config(config)
+
+    def test_invalid_async_pipeline_capacity_is_rejected(self):
+        config = deepcopy(self.config)
+        config["render_queue_size"] = 0
+        with self.assertRaisesRegex(
+            MujocoConfigError, "render_queue_size must be positive"
+        ):
+            validate_mujoco_config(config)
+
+    def test_invalid_visionpro_video_port_is_rejected_when_enabled(self):
+        config = deepcopy(self.config)
+        config["visionpro_video_enabled"] = True
+        config["visionpro_video_port"] = 70000
+        with self.assertRaisesRegex(
+            MujocoConfigError, "visionpro_video_port must be between"
+        ):
             validate_mujoco_config(config)
 
 

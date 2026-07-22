@@ -230,6 +230,41 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
     ):
         _require_positive(config.get(key), key)
 
+    _require_positive(
+        config.get("hdf5_async_stop_timeout", 10.0),
+        "hdf5_async_stop_timeout",
+    )
+    _require_positive(
+        config.get("render_start_timeout", 10.0),
+        "render_start_timeout",
+    )
+    for key, default in (
+        ("hdf5_async_queue_size", 1024),
+        ("hdf5_append_block_image", 16),
+        ("render_queue_size", 4),
+    ):
+        value = _require_integer(config.get(key, default), key)
+        if value <= 0:
+            raise MujocoConfigError(f"{key} must be positive")
+
+    if config.get("visionpro_video_enabled", False):
+        for key in ("cctv_window_width", "cctv_window_height"):
+            value = _require_integer(config.get(key), key)
+            if value <= 0:
+                raise MujocoConfigError(f"{key} must be positive")
+        _require_positive(
+            config.get("camera_stream_fps", 15.0),
+            "camera_stream_fps",
+        )
+        video_port = _require_integer(
+            config.get("visionpro_video_port", 9999),
+            "visionpro_video_port",
+        )
+        if not 1 <= video_port <= 65535:
+            raise MujocoConfigError(
+                "visionpro_video_port must be between 1 and 65535"
+            )
+
     torque_limits = config.get("joint_torque_limits")
     if isinstance(torque_limits, (list, tuple)):
         _require_vector(torque_limits, "joint_torque_limits", 7)
