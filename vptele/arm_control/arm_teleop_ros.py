@@ -889,16 +889,16 @@ class ArmTeleopROS:
                         # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
                         # 【修改】加锁读取臂角
                         with self.data_lock:
-                            ik_request.current_arm_angle = self.current_arm_angle_right
-                        # ik_request.current_arm_angle = -1 + 0.5
+                            # ik_request.current_arm_angle = self.current_arm_angle_right
+                            ik_request.current_arm_angle = -1 + 0.5
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_right}")
                     elif arm_side == 'left':
                         ik_request.method = 'feasible_ref'  # 使用组合方法
                         # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
                         # 【修改】加锁读取臂角
                         with self.data_lock:
-                            ik_request.current_arm_angle = self.current_arm_angle_left
-                        # ik_request.current_arm_angle = -1 + 0.5
+                            # ik_request.current_arm_angle = self.current_arm_angle_left
+                            ik_request.current_arm_angle = -1 + 0.5
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_left}")
                     
                     
