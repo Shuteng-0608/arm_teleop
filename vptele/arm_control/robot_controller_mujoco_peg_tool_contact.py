@@ -35,12 +35,12 @@ import mujoco.viewer
 import shutil
 
 from utils.mujoco_data_recorder import MujocoDataRecorder
-from vptele.utils.mujoco_hdf5_recorder import (
+from utils.mujoco_hdf5_recorder import (
     ImageCaptureRequest,
     MujocoHDF5Recorder,
 )
-from vptele.utils.hole_grid_scheduler import HoleGridScheduler
-from vptele.utils.force_feedback_overlay import (
+from utils.hole_grid_scheduler import HoleGridScheduler
+from utils.force_feedback_overlay import (
     ForceFeedbackConfig,
     ForceFeedbackSmoother,
     compute_force_feedback,
@@ -49,7 +49,7 @@ from vptele.utils.force_feedback_overlay import (
     resize_with_aspect_padding,
     trend_label,
 )
-from vptele.utils.ft_wrench_utils import (
+from utils.ft_wrench_utils import (
     body_ids as ft_body_ids,
     compensated_ft_wrench,
     ft_sensor_pose_world,

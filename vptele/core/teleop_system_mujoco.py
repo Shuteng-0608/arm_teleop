@@ -36,65 +36,94 @@ class TeleopSystemMujoco:
 
     def _initialize_full_mode(self):
         """完整初始化所有组件（用于遥操控）"""
-        # 初始化VisionPro数据流
-        logger.info("正在初始化VisionPro数据流...")
-       
-        from core.vp_streamer_avp import VPStreamer
-        vp_ip = self.config.get("vp_ip")
-        vp_record = self.config.get("vp_record", False)
-
-        if not vp_ip:
-            raise ValueError("配置中缺少 vp_ip")
+        # 初始化VisionPro数据流（脚本模式可跳过）
+        vp_enabled = bool(self.config.get("vp_enabled", True))
+        if vp_enabled:
+            self.vp_streamer = self._init_visionpro()
         else:
-            logger.info(f"使用的 VisionPro IP 地址: {vp_ip}")
-            rospy.loginfo(f"使用的 VisionPro IP 地址: {vp_ip}")
-
-        self.vp_streamer = VPStreamer(ip=vp_ip, record=vp_record)
-        # 等待一段时间确保数据流稳定
-        logger.info("正在等待VisionPro数据流稳定...")
-        self._wait_for_vp_ready(
-            timeout=float(self.config.get("vp_ready_timeout", 2.0))
-        )
-        logger.info("VisionPro数据流初始化完成")
+            logger.info("vp_enabled=false，跳过 VisionPro 初始化")
+            self.vp_streamer = None
 
         # 初始化机械臂控制器和其他组件
         self._initialize_robot_controller()
-        self._initialize_visionpro_video()
-        
-        # 初始化机械臂遥控
-        logger.info("正在初始化机械臂遥控模块...")
 
-        from arm_control.arm_teleop_mujoco import ArmTeleopMujoco
-        arm_config = build_arm_teleop_config(self.config)
-        self.arm_teleop = ArmTeleopMujoco(
-            self.vp_streamer,
-            self.robot_controller,
-            arm_config,
-        )
+        if self.vp_streamer is not None:
+            self._initialize_visionpro_video()
 
-        # 初始化末端执行器
-        # peg-tool 模型默认不启用灵巧手末端执行器
-        default_end_effector = (
-            "hand" if self.config.get("enable_hand", False) else "peg"
-        )
-        end_effector = str(
-            self.config.get("end_effector", default_end_effector)
-        ).lower()
-
-        if end_effector == "hand":
-            self._initialize_end_effector()
-        else:
-            self.end_effector = None
-            logger.info(
-                "未启用手部遥操作模块，当前末端执行器: %s",
-                end_effector,
+            # 初始化机械臂遥控
+            logger.info("正在初始化机械臂遥控模块...")
+            from arm_control.arm_teleop_mujoco import ArmTeleopMujoco
+            arm_config = build_arm_teleop_config(self.config)
+            self.arm_teleop = ArmTeleopMujoco(
+                self.vp_streamer,
+                self.robot_controller,
+                arm_config,
             )
+
+            # 初始化末端执行器
+            default_end_effector = (
+                "hand" if self.config.get("enable_hand", False) else "peg"
+            )
+            end_effector = str(
+                self.config.get("end_effector", default_end_effector)
+            ).lower()
+
+            if end_effector == "hand":
+                self._initialize_end_effector()
+            else:
+                self.end_effector = None
+                logger.info(
+                    "未启用手部遥操作模块，当前末端执行器: %s",
+                    end_effector,
+                )
+        else:
+            self.arm_teleop = None
+            self.end_effector = None
+            logger.info("跳过 ArmTeleop 初始化（无 VisionPro）")
 
         # ArmTeleop services must exist before the recording service is
         # exposed and before an auto-start episode can begin.
         self.robot_controller.activate_runtime()
 
+        # Optionally initialise the scripted peg-in-hole controller.
+        self._initialize_scripted_controller()
+
         logger.info("系统完整初始化完成")
+
+    def _init_visionpro(self):
+        """Initialise VisionPro streamer. Returns None on failure."""
+        from core.vp_streamer_avp import VPStreamer
+        vp_ip = self.config.get("vp_ip")
+
+        if not vp_ip:
+            logger.warning("配置中缺少 vp_ip，跳过 VisionPro")
+            return None
+
+        logger.info(f"使用的 VisionPro IP 地址: {vp_ip}")
+        rospy.loginfo(f"使用的 VisionPro IP 地址: {vp_ip}")
+
+        try:
+            streamer = VPStreamer(ip=vp_ip, record=self.config.get("vp_record", False))
+        except Exception as exc:
+            logger.warning(f"VisionPro 连接失败: {exc}，继续无 VisionPro 模式")
+            return None
+
+        # 等待一段时间确保数据流稳定
+        logger.info("正在等待VisionPro数据流稳定...")
+        try:
+            self._wait_for_vp_ready(
+                timeout=float(self.config.get("vp_ready_timeout", 2.0))
+            )
+        except TimeoutError as exc:
+            logger.warning(f"VisionPro 数据等待超时: {exc}，继续无 VisionPro 模式")
+            try:
+                streamer.close()
+            except Exception:
+                pass
+            return None
+
+        logger.info("VisionPro数据流初始化完成")
+        return streamer
 
     def _initialize_visionpro_video(self):
         """Optionally route the final CCTV+HUD frame back to Vision Pro."""
@@ -771,7 +800,7 @@ class TeleopSystemMujoco:
     
     def _initialize_end_effector(self):
         """初始化末端执行器"""
-        
+
         logger.info("正在初始化灵巧手末端执行器...")
         from end_effectors.hand.hand_teleop_mujoco import HandTeleopMujoco
         self.end_effector = HandTeleopMujoco(
@@ -779,6 +808,29 @@ class TeleopSystemMujoco:
             self.robot_controller,
             self.config.get('hand_config', {})
         )
+
+    def _initialize_scripted_controller(self):
+        """Optionally initialise the scripted peg-in-hole controller."""
+        sc_cfg = self.config.get("scripted_controller", {})
+        if not bool(sc_cfg.get("enabled", False)):
+            return
+
+        logger.info("正在初始化脚本插入控制器...")
+
+        ik_service_name = self.config.get("arm_config", {}).get(
+            "ik_service_name", "/arm_teleop/right_arm_ik_srv"
+        )
+        rospy.wait_for_service(ik_service_name)
+        from arm_teleop.srv import ArmIK
+        ik_proxy = rospy.ServiceProxy(ik_service_name, ArmIK)
+
+        from arm_control.scripted_insertion_ros import ScriptedInsertionROSNode
+        self.scripted_insertion_node = ScriptedInsertionROSNode(
+            robot_controller=self.robot_controller,
+            ik_service_proxy=ik_proxy,
+            config=sc_cfg,
+        )
+        logger.info("脚本插入控制器初始化完成")
         
 
     

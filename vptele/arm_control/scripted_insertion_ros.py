@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""
+ROS 节点：对外暴露 /scripted_insertion/run 服务 (std_srvs/Trigger)。
+
+每次调用启动一条完整的脚本化 peg-in-hole 插入 episode。
+本节点负责 episode 生命周期管理，实际的插入逻辑在
+ScriptedPegInsertionController 中。
+
+本节点流程：
+  1. 复位机械臂到初始关节角
+  2. 固定孔位到中心位置
+  3. 启用遥操作指令接收
+  4. 等待复位过渡期
+  5. 标定 IK ↔ World 坐标系（若未缓存则运行，此阶段不录 HDF5）
+  6. 随机采样初始 XY 误差
+  7. 启动 HDF5 记录
+  8. 调用 controller.run_episode() 执行插入
+  9. 停止 HDF5 记录
+  10. 返回成功/失败及 episode 路径
+"""
+
+from __future__ import annotations
+
+import time
+import threading
+from typing import Any, Dict, Optional
+
+import rospy
+from std_srvs.srv import Trigger, TriggerResponse
+
+from utils.logger import get_logger
+
+logger = get_logger()
+
+
+class ScriptedInsertionROSNode:
+    """ROS 外挂节点：包装 ScriptedPegInsertionController，提供 Trigger 服务。
+
+    设计目的：
+      - 脚本控制器本身不依赖 ROS（可脱离 ROS 测试）
+      - 本节点负责 ROS 服务注册、HDF5 记录、机械臂复位等 ROS 相关操作
+      - 通过 threading.Lock 保证同一时间只运行一条 episode
+    """
+
+    def __init__(
+        self,
+        robot_controller,       # MuJoCo 机械臂控制器实例 (共享仿真对象)
+        ik_service_proxy,       # ROS IK 服务代理 (调用 /arm_teleop/right_arm_ik_srv)
+        config: Dict[str, Any], # 完整配置文件 (config_arm_right_peg.yaml)
+    ):
+        # 保存外部依赖
+        self.rc = robot_controller
+        self.cfg = config
+
+        # ------------------------------------------------------------------
+        # 延迟导入：避免在模块加载时触发 ROS 初始化
+        # ------------------------------------------------------------------
+        from arm_control.scripted_insertion import (
+            ScriptedPegInsertionController,
+        )
+
+        # 创建插入控制器实例
+        # 传入 robot_controller 共享 MuJoCo 仿真对象
+        # 传入 ik_service_proxy 复用 ROS IK 服务连接
+        self.controller = ScriptedPegInsertionController(
+            robot_controller=self.rc,
+            ik_service_proxy=ik_service_proxy,
+            config=self.cfg,
+        )
+
+        # ------------------------------------------------------------------
+        # 互斥锁：防止同时触发多条 episode
+        # ------------------------------------------------------------------
+        self._episode_lock = threading.Lock()
+        self._running = False   # 标记当前是否有 episode 正在执行
+
+        # ------------------------------------------------------------------
+        # 注册 ROS Trigger 服务
+        # 外部调用: rosservice call /scripted_insertion/run "{}"
+        # ------------------------------------------------------------------
+        service_name = self.cfg.get(
+            "service_name", "/scripted_insertion/run"
+        )
+        self._service = rospy.Service(
+            service_name, Trigger, self._handle_run
+        )
+        logger.info(
+            f"ScriptedInsertion service ready at {service_name}"
+        )
+
+    # ======================================================================
+    # ROS 服务回调
+    # ======================================================================
+
+    def _handle_run(self, _req) -> TriggerResponse:
+        """ROS 服务回调：处理 /scripted_insertion/run 请求。
+
+        _req: 空请求体 (Trigger 不需要参数)
+
+        返回:
+          TriggerResponse.success = True/False
+          TriggerResponse.message = 结果描述（含 episode 路径）
+        """
+        # ---- 检查是否已有 episode 在运行 ----
+        with self._episode_lock:
+            if self._running:
+                return TriggerResponse(
+                    success=False,
+                    message="A scripted episode is already running.",
+                )
+            self._running = True   # 加锁标记运行中
+
+        try:
+            # ---- 执行单条 episode ----
+            return self._run_one_episode()
+        except Exception as exc:
+            # 未预料的异常：记录完整调用栈
+            logger.exception(f"Scripted episode failed: {exc}")
+            return TriggerResponse(
+                success=False,
+                message=f"Scripted episode error: {exc}",
+            )
+        finally:
+            # 无论成功/失败/异常，都要解除运行标志
+            with self._episode_lock:
+                self._running = False
+
+    # ======================================================================
+    # episode 主流程
+    # ======================================================================
+
+    def _run_one_episode(self) -> TriggerResponse:
+        """执行一条完整的脚本化插入 episode。
+
+        返回 TriggerResponse，内容包含：
+          - success: 插入是否成功
+          - message: 结果描述（成功时含 episode 路径）
+        """
+        # ==================================================================
+        # 1. 复位机械臂到初始关节角
+        #    reset_arm_to_initial_pose() 使用 hard_set_qpos 直接写关节位置
+        #    (跳过执行器速度限制，快速复位)
+        # ==================================================================
+        logger.info("Resetting arm to initial pose...")
+        self.rc.reset_arm_to_initial_pose()
+
+        # ==================================================================
+        # 2. 固定孔位到中心
+        #    将 wall_task body 移到 [-0.250, -0.500, 1.000]
+        #    不使用 hole_grid_scheduler 的随机孔位
+        # ==================================================================
+        self._set_fixed_hole_center()
+
+        # ==================================================================
+        # 3. 启用遥操作指令接收
+        #    set_arm_positions() 内部检查此标志，为 True 才接受指令
+        #    (非录制状态下此标志通常为 False，需要显式启用)
+        # ==================================================================
+        self.rc.accept_teleop_commands = True
+
+        # ==================================================================
+        # 4. 等待复位过渡期
+        #    reset_arm_to_initial_pose() 设置了一个 ignore_teleop 时间窗口
+        #    (默认 0.5s)，在此期间 set_arm_positions 会被忽略。
+        #    等待这段时间过去 + 额外 0.1s 缓冲，确保后续指令生效。
+        # ==================================================================
+        reset_duration = float(
+            self.cfg.get("reset_ignore_teleop_duration", 0.5)
+        )
+        time.sleep(reset_duration + 0.1)
+
+        # ==================================================================
+        # 5. 标定 IK ↔ World 坐标系
+        #
+        #    为什么在 HDF5 启动之前做？
+        #      标定需要移动机械臂到 7 个探测位置（中心 + ±X ±Y ±Z），
+        #      这些移动不是插入任务的一部分，不能混入训练数据。
+        #
+        #    _load_calib() 先从磁盘缓存的 calib_ik_to_world.npz 尝试加载
+        #    如果加载失败（首次运行或文件丢失），运行 _calibrate()
+        #    _calibrate 完成后会自动保存到磁盘供后续使用
+        # ==================================================================
+        self.controller._init_dofs()  # 缓存 site ID 和 DOF 地址
+        if not self.controller._load_calib():
+            if not self.controller._calibrate():
+                return TriggerResponse(
+                    success=False, message="Calibration failed.")
+
+        # ==================================================================
+        # 6. 随机采样初始 XY 误差
+        #
+        #    误差参数会在 episode_metadata 中记录，用于后续数据分析
+        #    区分不同误差量级对插入成功率/力反馈的影响。
+        #
+        #    采样后立即获取 error_info，然后传给 run_episode，
+        #    保证实际使用的误差和元数据中记录的一致。
+        # ==================================================================
+        self.controller._sample_error()
+        error_info = self.controller.get_last_error_info()
+
+        # ==================================================================
+        # 7. 启动 HDF5 记录
+        #
+        #    episode_metadata 包含：
+        #      - collection_method: "scripted_closed_loop"
+        #        (区分人遥操作 "teleop" 和脚本 "scripted_closed_loop")
+        #      - scripted_error_xy_mm: 本次 XY 偏移量 (mm)
+        #      - scripted_error_angle_deg: 本次偏移方向 (°)
+        #
+        #    记录内容（由 MujocoHDF5Recorder 自动采集）：
+        #      - observations/ee_pose      30Hz  末端位姿
+        #      - observations/joint_pos    30Hz  关节角
+        #      - observations/joint_vel    30Hz  关节速度
+        #      - observations/joint_torque 30Hz  关节力矩
+        #      - observations/ft_wrench    500Hz 力传感器 (重力补偿后)
+        #      - observations/ft_wrench_raw 500Hz 力传感器 (原始)
+        #      - observations/images/ee_cam 30Hz 末端摄像头 640×480
+        #      - observations/images/base_top_cam 30Hz 顶部摄像头 640×480
+        #      - action                    30Hz 目标关节角指令
+        # ==================================================================
+        label = self.cfg.get("episode_label", "scripted")
+        episode_metadata = {
+            "collection_method": "scripted_closed_loop",
+            **error_info,
+        }
+
+        recorder = self.rc.hdf5_recorder
+        if recorder is None:
+            return TriggerResponse(
+                success=False,
+                message="HDF5 recorder is not available.",
+            )
+
+        episode_path = recorder.start_episode(
+            label=label,
+            episode_metadata=episode_metadata,
+        )
+        if episode_path is None:
+            return TriggerResponse(
+                success=False,
+                message="Failed to start HDF5 episode.",
+            )
+        logger.info(f"HDF5 episode started: {episode_path}")
+
+        # ==================================================================
+        # 8. 执行脚本化插入控制器
+        #
+        #    controller.run_episode() 内部三个阶段：
+        #      APPROACH → ALIGN → INSERT
+        #
+        #    传入预采样的误差参数，确保误差在采样和实际使用之间一致。
+        #
+        #    异常处理：
+        #      控制器内部异常 → stop_episode("scripted_error") → 返回失败
+        # ==================================================================
+        try:
+            result = self.controller.run_episode(
+                error_xy_mm=error_info["scripted_error_xy_mm"],
+                error_angle_deg=error_info["scripted_error_angle_deg"],
+            )
+        except Exception as exc:
+            logger.exception(f"Controller failed: {exc}")
+            recorder.stop_episode(status="scripted_error")
+            self.rc.accept_teleop_commands = False
+            return TriggerResponse(
+                success=False,
+                message=f"Controller error: {exc}",
+            )
+
+        # ==================================================================
+        # 9. 停止 HDF5 记录
+        #
+        #    写入 scripted_outcome 事件：
+        #      - outcome: "success" / "overload" / "stuck" / "ik" 等
+        #      - success: True/False
+        #      - retry_count: 重试次数
+        #      - duration_s: episode 持续时长
+        #
+        #    stop_episode 状态：
+        #      - "scripted_success" (插入成功)
+        #      - "scripted_failure" (插入失败)
+        # ==================================================================
+        status = "scripted_success" if result.success else "scripted_failure"
+        recorder.add_event(
+            "scripted_outcome",
+            {
+                "outcome": result.outcome,
+                "success": result.success,
+                "retry_count": result.retry_count,
+                "duration_s": result.duration_s,
+            },
+        )
+        final_path = recorder.stop_episode(status=status)
+
+        # ==================================================================
+        # 10. 清理：禁用遥操作、复位机械臂
+        #
+        #    reset_arm_on_stop 配置为 false：
+        #      控制器内部已有 _retract_clear() 将 peg 退离墙面，
+        #      不再需要额外的 hard_reset 跳变。
+        #      下一 episode 开始时 _run_one_episode 开头会执行复位。
+        # ==================================================================
+        self.rc.accept_teleop_commands = False
+        if self.cfg.get("reset_arm_on_stop", True):
+            self.rc.reset_arm_to_initial_pose()
+
+        # ==================================================================
+        # 11. 构建返回消息
+        # ==================================================================
+        outcome_str = (
+            f"success (retries={result.retry_count}, "
+            f"dur={result.duration_s:.1f}s)"
+            if result.success
+            else f"failed: {result.outcome}"
+        )
+        return TriggerResponse(
+            success=result.success,
+            message=(
+                f"Scripted episode {outcome_str}. "
+                f"Path: {final_path}"
+            ),
+        )
+
+    # ======================================================================
+    # 孔位设定
+    # ======================================================================
+
+    def _set_fixed_hole_center(self) -> None:
+        """将 wall_task body 固定到中心位置。
+
+        脚本化插入使用固定孔位（不使用 hole_grid_scheduler 的随机网格）。
+        孔位由配置文件中的 fixed_hole_world_pos 指定，
+        默认为 XML 中的 wall_task 默认位置: [-0.250, -0.500, 1.000]。
+
+        技术细节：
+          - body_pos 是 MuJoCo model 中的 body 初始位置
+          - 修改后需要 mj_forward() 刷新所有派生量（site 位置、传感器等）
+          - 操作在 self.rc.lock 保护下进行（仿真线程也持此锁）
+        """
+        import mujoco
+
+        hole_body_name = self.cfg.get("hole_body_name", "wall_task")
+        body_id = mujoco.mj_name2id(
+            self.rc.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            hole_body_name,
+        )
+        if body_id == -1:
+            logger.warning(
+                f"Hole body '{hole_body_name}' not found; "
+                f"hole position unchanged."
+            )
+            return
+
+        # 从配置读取目标位置（默认与 XML 一致）
+        default_pos = self.cfg.get(
+            "fixed_hole_world_pos",
+            [-0.250, -0.500, 1.000],
+        )
+        # 持锁写入并刷新 forward kinematics
+        with self.rc.lock:
+            self.rc.model.body_pos[body_id] = default_pos
+            import mujoco as mj
+            mj.mj_forward(self.rc.model, self.rc.data)
+        logger.info(f"Hole set to fixed center: {default_pos}")

@@ -73,7 +73,7 @@ mujoco_model_path: "../../model/pangu_all_right.xml"
 control_mode: "actuator"
 # The passive MuJoCo viewer duplicates the operator CCTV view and adds a
 # 60 Hz synchronization path. Keep it off during dataset collection.
-launch_viewer: false
+launch_viewer: true
 auto_start: true
 viewer_rate: 60.0
 realtime: true
@@ -184,7 +184,11 @@ force_guidance_vector_semantics: "contact"   # contact | correction
 force_guidance_correction_sign: -1.0
 
 # VisionPro配置
-vp_ip: "192.168.1.144" # DaiLab-Normal
+# vp_enabled: true  = 连接 VisionPro 进行人遥操作（默认）
+# vp_enabled: false = 跳过 VisionPro，仅脚本控制器可用
+vp_enabled: false
+# vp_ip: "192.168.8.145" # DaiLab-Normal
+vp_ip: "172.20.10.2"
 vp_record: false  # 是否记录VisionPro数据流
 vp_ready_timeout: 2.0
 
@@ -335,7 +339,7 @@ task_success_dwell_time: 0.10
 task_success_stop_accepting_teleop: true
 
 # 成功后继续记录 terminal hold
-task_success_terminal_hold_time: 1.0
+task_success_terminal_hold_time: 5.0
 
 # 触发成功后，用 0.2 秒从当前 command 平滑切到当前 qpos
 task_success_blend_to_qpos_time: 0.2
@@ -345,3 +349,67 @@ task_success_only_when_recording: true
 
 # 自动 stop 后先暂存，等待 keyboard client 人工 keep/discard
 task_success_pending_manual_review: true
+
+# ------------------------------------------------------------------
+# Scripted peg-in-hole insertion controller
+# ------------------------------------------------------------------
+scripted_controller:
+  # Set to true to enable the scripted insertion ROS service.
+  enabled: true
+
+  # ROS service name for triggering one episode.
+  service_name: "/scripted_insertion/run"
+
+  # HDF5 episode label.
+  episode_label: "scripted"
+
+  # Admittance control gains during the ALIGN phase.
+  # K_lateral:    lateral (X,Z) correction per Newton of measured force [m/N]
+  # K_axial:      axial (Y) correction per Newton above F_target       [m/N]
+  # F_target:     desired axial contact force during alignment          [N]
+  K_lateral: 0.0003
+  K_axial: 0.0002
+  F_target: 2.0
+
+  # ALIGN phase: XY distance from hole centre that counts as aligned [m]
+  align_tolerance_xy: 0.001
+
+  # APPROACH phase: distance from hole entrance to start alignment [m]
+  approach_distance: 0.03
+
+  # INSERT phase: how far the peg tip must travel along the insertion
+  # axis past the wall entrance to reach the hole goal [m].
+  # The hole_goal_site is 0.021 m inside; this value should match.
+  insert_depth: 0.045
+
+  # INSERT phase: lateral force threshold that triggers a retraction [N].
+  # Exceeding this means the peg is hitting the hole wall sideways.
+  insertion_lateral_limit: 8.0
+
+  # Maximum retraction distance on lateral failure [m].
+  max_retract: 0.005
+
+  # Maximum number of INSERT→ALIGN retries before giving up.
+  max_retries: 3
+
+  # IK solver method: "optimal_ref", "feasible_ref", "optimal_std", "feasible_std"
+  ik_method: "optimal_ref"
+
+  # Control step rate [Hz].
+  control_rate_hz: 100
+
+  # Initial XY error injection magnitudes to sample from [mm].
+  # One value is picked uniformly per episode; direction is 0-360 deg uniform.
+  error_magnitudes_mm: [0.5, 1.5, 3.0, 5.0, 7.0]
+
+  # MuJoCo body that carries the hole geometry.
+  hole_body_name: "wall_task"
+
+  # Fixed world position for the hole body (XML default).
+  fixed_hole_world_pos: [-0.250, -0.500, 1.000]
+
+  # Whether to reset arm to initial pose after each episode.
+  reset_arm_on_stop: false
+
+  # Grace period after arm reset before sending commands [s].
+  reset_ignore_teleop_duration: 0.5
