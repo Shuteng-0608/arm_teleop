@@ -1,0 +1,11 @@
+string method          # 逆解方法选项："std", "ofst", "comb"
+float64[7] init_joints # 初始关节角度
+geometry_msgs/Pose target_pose # 目标位姿
+float64 current_arm_angle # 手臂角度
+float64[] offset_list   # 可选的偏移列表
+float64 offset_refer  # 偏移参考值
+---
+float64[7] solution    # 求解结果关节角度
+float64 new_arm_angle # 新的手臂角度
+bool success           # 是否求解成功
+string message         # 详细结果信息

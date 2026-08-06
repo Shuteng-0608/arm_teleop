@@ -1,0 +1,7 @@
+int32 arm_id
+float64[7] target_joints
+float64 vel # 0.1
+float64 acc # 1.0
+float64 jerk # 10.0
+---
+string response

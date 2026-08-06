@@ -1,0 +1,8 @@
+bool record
+bool keep
+string label
+---
+bool success
+bool active
+string message
+string episode_path

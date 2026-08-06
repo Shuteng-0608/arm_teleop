@@ -1,0 +1,347 @@
+# Configuration schema version
+config_version: 1
+
+# Legacy non-HDF5 recorder (disabled for this collection profile)
+record_data: false
+
+# HDF5 recording
+record_hdf5: true
+hdf5_record_dir: "../../data/hole_random_60mm_hmj"
+
+hdf5_force_hz: 500.0
+hdf5_state_hz: 30.0
+hdf5_image_hz: 30.0
+
+# ACT-style action recording
+hdf5_record_actions: true
+hdf5_record_action_alias: true
+
+hdf5_record_images: true
+hdf5_camera_names:
+  - "ee_cam"
+  - "base_top_cam"
+
+hdf5_image_width: 640
+hdf5_image_height: 480
+
+# Asynchronous recorder/render pipeline. Numeric samples and rendered frames
+# are queued so HDF5 compression and disk I/O never block the 1 kHz physics loop.
+hdf5_async_queue_size: 1024
+hdf5_async_stop_timeout: 10.0
+hdf5_append_block_image: 16
+render_queue_size: 4
+render_start_timeout: 10.0
+
+hdf5_auto_start: false
+hdf5_episode_label: "teleop"
+hdf5_max_buffer_rows: 500000
+hdf5_hole_center_site_name: "hole_goal_site"
+
+# Task geometry metadata is read from these compiled MuJoCo objects.
+hdf5_peg_geom_name: "cylindrical_peg"
+hdf5_peg_tip_site_name: "peg_tip_site"
+hdf5_hole_goal_site_name: "hole_goal_site"
+hdf5_hole_ring_geom_prefix: "wall_hole_ring_"
+hdf5_hole_axis_body: [0.0, -1.0, 0.0]
+
+# Force/torque sensor recording
+hdf5_enable_ft_tare: false
+# Force/torque gravity compensation
+hdf5_ft_compensation_mode: "gravity"
+
+# Keep diagnostic streams
+hdf5_record_ft_wrench_raw: true
+hdf5_record_ft_wrench_gravity: true
+
+# Tool body downstream of the FT sensor
+hdf5_ft_gravity_tool_body_names:
+  - "peg_tool"
+
+# World gravity
+hdf5_ft_gravity_world: [0.0, 0.0, -9.81]
+
+# MuJoCo FT sensor sign convention.
+# If static compensation becomes worse, change this to 1.0.
+hdf5_ft_gravity_sensor_sign: -1.0
+
+# ROS service for data recording
+enable_recording_service: true
+recording_service_name: "/mujoco_hdf5_recording/set_recording"
+
+# MuJoCo simulation
+mujoco_model_path: "../../model/pangu_all_right.xml"
+control_mode: "actuator"
+# The passive MuJoCo viewer duplicates the operator CCTV view and adds a
+# 60 Hz synchronization path. Keep it off during dataset collection.
+launch_viewer: false
+auto_start: true
+viewer_rate: 60.0
+realtime: true
+viewer_start_wait: 0.0
+
+arm_joints:
+  - "joint_1"
+  - "joint_2"
+  - "joint_3"
+  - "joint_4"
+  - "joint_5"
+  - "joint_6"
+  - "joint_7"
+arm_sign: [-1, 1, 1, -1, 1, 1, 1]
+
+enable_visual_guides: false
+show_camera_streams: true
+camera_stream_width: 640
+camera_stream_height: 480
+camera_stream_fps: 15.0
+cctv_camera: "cctv_cam"
+monitor_camera_names:
+  - "cctv_cam"
+# ee_cam and base_top_cam are dataset-only cameras configured above under
+# hdf5_camera_names; they are intentionally not shown to the operator.
+separate_cctv_window: true
+cctv_window_name: "CCTV Camera"
+cctv_window_width: 1280
+cctv_window_height: 720
+show_cctv_in_combined_panel: false
+cctv_window_preserve_aspect_ratio: true
+cctv_window_fullscreen: false
+cctv_window_fit_mode: "contain"   # contain only for now
+cctv_window_padding_color: [0, 0, 0]
+
+# Optional mono WebRTC return of the final CCTV+HUD BGR frame to Vision Pro.
+# This is independent of the raw ee_cam/base_top_cam HDF5 recording path.
+visionpro_video_enabled: true
+visionpro_video_port: 9999
+
+# Operator-only live force feedback HUD.
+# This overlay is drawn only on OpenCV display frames, never on HDF5 images.
+enable_force_visual_feedback: true
+force_feedback_display_mode: "overlay"   # overlay | window | off
+force_feedback_overlay_cameras:
+  - "cctv_cam"
+
+force_feedback_low_threshold: 10.0
+force_feedback_medium_threshold: 40.0
+force_feedback_high_threshold: 80.0
+force_feedback_excessive_threshold: 100.0
+
+force_feedback_show_numbers: true
+force_feedback_show_axial_lateral: true
+force_feedback_show_trend: true
+force_feedback_show_contact_state: true
+force_feedback_show_arrow: false
+force_feedback_smoothing_alpha: 0.25
+force_feedback_window_name: "Force Feedback HUD"
+
+force_feedback_insertion_axis_world: [0.0, -1.0, 0.0]
+force_feedback_use_compensated_wrench: true
+force_feedback_wrench_label: "comp"   # comp | raw
+
+force_feedback_trend_window_sec: 0.8
+force_feedback_trend_rising_threshold: 5.0
+force_feedback_trend_falling_threshold: -5.0
+
+force_feedback_contact_free_threshold: 5.0
+force_feedback_contact_light_threshold: 15.0
+force_feedback_axial_high_threshold: 20.0
+force_feedback_lateral_high_threshold: 10.0
+force_feedback_jam_force_threshold: 25.0
+force_feedback_jam_lateral_threshold: 12.0
+
+enable_task_force_guidance_hud: true
+task_force_guidance_mode: "ring"   # ring | bars
+force_guidance_overlay_cameras:
+  - "cctv_cam"
+
+show_translation_ring: true
+show_torque_ring: true
+show_axial_core: true
+
+force_guidance_plane_right_world: [1.0, 0.0, 0.0]
+force_guidance_plane_up_world: [0.0, 0.0, 1.0]
+
+force_guidance_ring_radius_px: 70
+force_guidance_max_vector_px: 55
+force_guidance_max_force_n: 40.0
+force_guidance_max_torque_nm: 2.0
+torque_guidance_mode: "off"   # vector | tilt_axes | off
+torque_guidance_min_force_n: 5.0
+torque_guidance_min_torque_nm: 0.05
+torque_guidance_label_as_posture: true
+torque_guidance_show_numeric_values: true
+force_guidance_draw_numeric_values: true
+force_guidance_show_caveat_label: true
+force_guidance_hud_anchor: "custom"   # top_left | top_right | bottom_left | bottom_right | center | custom
+force_guidance_hud_margin_px: [40, 40]
+force_guidance_hud_offset_px: [0, 0]
+force_guidance_hud_center_norm: [0.50, 0.18]
+force_guidance_basis_mode: "camera_screen"   # camera_screen | task_world | manual_world | sensor_debug
+force_guidance_basis_camera: "cctv_cam"
+force_guidance_screen_right_sign: 1.0
+force_guidance_screen_up_sign: 1.0
+force_guidance_vector_semantics: "contact"   # contact | correction
+force_guidance_correction_sign: -1.0
+
+# VisionPro配置
+vp_ip: "192.168.1.144" # DaiLab-Normal
+vp_record: false  # 是否记录VisionPro数据流
+vp_ready_timeout: 2.0
+
+# 末端执行器选择: none | hand | peg
+end_effector: "peg"
+
+# 机械臂遥控参数
+arm_config:
+  enable_episode_services: true
+  teleop_service_ns: "/arm_teleop_mujoco"
+  ik_service_name: "/arm_teleop/right_arm_ik_srv"
+  initial_robot_pose: [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]
+  move: true
+  scaling_factor: 0.8
+  smoothing_factor: 0.99
+  update_frequency: 0.01 # 根据日志，每秒能发送80个控制指令，也就是每一次操控，除开sleep了0.01秒，计算开销时间应该是 1/80 - 0.01 = 0.0025s
+  pose_filter_min_cutoff: 0.1
+  pose_filter_beta: 0.1
+  joints_filter_min_cutoff: 0.1
+  joints_filter_beta: 0.1
+
+# 日志配置
+logging:
+  console_level: "info"
+  file_level: "info"
+  max_file_size: 104857600  # 最大日志文件大小 (100MB)
+  backup_count: 5  # 备份日志文件数量
+  log_prefix: "mujoco" # pangu or mujoco
+
+# Episode-level teleoperation lifecycle
+teleop_controlled_by_recording: true
+accept_teleop_when_not_recording: false
+
+# Arm reset
+reset_arm_on_record_start: true
+reset_arm_on_record_stop: true
+reset_ignore_teleop_duration: 0.5
+
+initial_arm_joints:
+  - -0.046
+  - -0.2
+  - 0.0
+  - 1.6
+  - -1.32
+  - 0.005
+  - 0.005
+
+# Force-aware actuator command velocity scaling
+max_joint_velocity: 0.2
+enable_force_velocity_scaling: true
+force_velocity_medium_threshold: 40.0
+force_velocity_high_threshold: 80.0
+force_velocity_medium_scale: 0.4
+force_velocity_high_scale: 0.15
+
+# High-force command hold
+enable_high_force_hold: true
+high_force_hold_threshold: 100.0
+high_force_hold_dwell_time: 0.15
+high_force_hold_release_ratio: 0.8
+
+# Hole position sampling: cover all 25 X-Z cells once per cycle.
+hole_sampling_mode: "grid"             # grid | uniform_random | fixed
+hole_body_name: "wall_task"
+
+hole_grid_rows: 5
+hole_grid_cols: 5
+hole_grid_x_range: [-0.060, 0.060]
+hole_grid_y_offset: 0.000
+hole_grid_z_range: [-0.060, 0.060]
+
+# center: fixed cell center; uniform_in_cell: deterministic point inside each cell
+hole_grid_sample_mode: "center"
+
+# shuffled: visit every cell once in a seeded random order; row_major: R1C1 -> R5C5
+hole_grid_traversal_order: "shuffled"
+hole_grid_seed: 42
+
+# Kept episodes advance; discarded episodes retry the same cell.
+hole_grid_advance_policy: "on_keep"    # on_keep | on_attempt
+
+# Zero-based resume cursor. Change these only when resuming an interrupted run.
+hole_grid_start_cycle: 0
+hole_grid_start_index: 0
+
+
+# Joint torque quality alarm
+enable_joint_torque_alarm: true
+
+# 只在 HDF5 recording active 时检查，避免非采集状态误报警
+joint_torque_alarm_only_when_recording: true
+
+# 一旦超限，本条 episode 内 peg 一直保持绿色
+joint_torque_alarm_latched: true
+
+# 每条新 episode 开始前清除报警
+reset_joint_torque_alarm_on_record_start: true
+
+# 超限后 peg 变绿色
+joint_torque_alarm_peg_rgba: [0.0, 1.0, 0.0, 1.0]
+
+# 7 个关节力矩限制，单位 Nm
+# 这里先用占位值，后续根据你实际采集数据统计调整
+joint_torque_limits:
+  - 30.0
+  - 30.0
+  - 20.0
+  - 20.0
+  - 10.0
+  - 10.0
+  - 10.0
+
+# End-effector FT wrench quality alarm
+enable_ft_wrench_alarm: true
+ft_wrench_alarm_only_when_recording: true
+ft_wrench_alarm_latched: true
+reset_ft_wrench_alarm_on_record_start: true
+
+# Separate force and torque because units are different.
+ft_force_norm_limit: 100.0          # N
+ft_torque_norm_limit: 3.0          # Nm
+ft_wrench_alarm_dwell_time: 0.25   # seconds
+
+# Blue: FT alarm
+# Green: joint torque alarm
+# Purple: both alarms
+ft_wrench_alarm_peg_rgba: [0.0, 0.2, 1.0, 1.0]
+both_alarm_peg_rgba: [0.8, 0.0, 1.0, 1.0]
+
+# 第一阶段建议 false，只报警、变色、写 event，不自动冻结
+ft_wrench_alarm_freeze_on_trigger: false
+
+
+# Task success auto-stop by task sites
+enable_task_success_auto_stop: true
+
+task_success_peg_site_name: "peg_tip_site"
+task_success_hole_site_name: "hole_goal_site"
+
+# 两个 site 的距离小于该阈值，认为到达成功区域
+# 初期建议稍微宽松，确认稳定后再收紧到 0.005
+task_success_distance: 0.003
+
+# 连续满足距离阈值多久才算成功，避免单帧误触发
+task_success_dwell_time: 0.10
+
+# 成功后停止接收新的遥操作命令
+task_success_stop_accepting_teleop: true
+
+# 成功后继续记录 terminal hold
+task_success_terminal_hold_time: 1.0
+
+# 触发成功后，用 0.2 秒从当前 command 平滑切到当前 qpos
+task_success_blend_to_qpos_time: 0.2
+
+# 只在 HDF5 recording active 时检查成功条件
+task_success_only_when_recording: true
+
+# 自动 stop 后先暂存，等待 keyboard client 人工 keep/discard
+task_success_pending_manual_review: true

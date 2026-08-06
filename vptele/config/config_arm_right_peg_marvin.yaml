@@ -1,0 +1,56 @@
+# Marvin M6 override profile. Values not listed here are inherited from the
+# established peg-collection profile in the same directory.
+extends: "config_arm_right_peg.yaml"
+
+mujoco_model_path: "../../model/pangu_all_right_marvin_m6.xml"
+hdf5_record_dir: "../../data/hole_random_60mm_hmj_marvin"
+
+# These are the command-space joints and sign conversion used by
+# scripts/view_mujoco_model_marvin.py. The resulting MuJoCo qpos is:
+# [-1.57, -1.57, 1.57, -1.6, -1.57, 0.0, 0.0].
+initial_arm_joints: [-1.57, 1.57, 1.57, 1.6, -1.57, 0.0, 0.0]
+arm_sign: [1, -1, 1, -1, 1, 1, 1]
+
+# Python-only runtime: no roscore, generated ROS srv modules, or IK service.
+# Teleoperation starts immediately after initialization. Use the standalone
+# entry's --record option when one continuous HDF5 episode is desired.
+teleop_controlled_by_recording: false
+accept_teleop_when_not_recording: true
+enable_recording_service: false
+hdf5_auto_start: false
+
+logging:
+  log_prefix: "mujoco_marvin"
+
+arm_config:
+  ik_backend: "marvin_local"
+  enable_episode_services: false
+
+  # fx_kine.py is the Python ABI wrapper. It requires the separate vendor
+  # kinematics library exporting FX_Robot_Kine_IK; libMarvinSDK is not that
+  # library. The Python-only entry selects the DLL on Windows and SO on Linux.
+  marvin_ik_module_path: "../../ik_lib/fx_kine.py"
+  marvin_ik_library_path_windows: "../../ik_lib/libKine.dll"
+  marvin_ik_library_path_linux: "../../ik_lib/libKine.so"
+  # Backward-compatible default for older callers that do not select by OS.
+  marvin_ik_library_path: "../../ik_lib/libKine.so"
+  marvin_ik_config_path: "../../ik_lib/ccs_m6_31.MvKDCfg"
+
+  # fx_kine convention: 0=left, 1=right. Type 0 chooses the selected IK
+  # solution closest to the reference joints and is the safest continuity
+  # default for teleoperation.
+  marvin_arm_type: 1
+  marvin_zsp_type: 0
+  marvin_zsp_para: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  marvin_zsp_angle_deg: 0.0
+  marvin_reject_singular: true
+  marvin_reject_joint_limit: true
+
+  # The vendor config uses millimetres while AVP/MuJoCo use metres.
+  marvin_translation_units_per_meter: 1000.0
+  marvin_mujoco_flange_body_name: "link_7"
+  marvin_max_ik_joint_jump_rad: 0.75
+
+  # Preserve the established hand-to-world mapping gains. The runtime derives
+  # world-to-SDK-base rotation from SDK FK and the MuJoCo flange pose.
+  marvin_hand_axis_scale: [1.0, 0.8, 0.8]
