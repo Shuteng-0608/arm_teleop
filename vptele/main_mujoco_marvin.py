@@ -119,6 +119,22 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help="Seconds to wait for a valid right-wrist transform.",
     )
+    parser.add_argument(
+        "--record-host",
+        default="127.0.0.1",
+        help="Host for the pure-Python recording control server.",
+    )
+    parser.add_argument(
+        "--record-port",
+        type=int,
+        default=8765,
+        help="Port for the pure-Python recording control server.",
+    )
+    parser.add_argument(
+        "--no-record-server",
+        action="store_true",
+        help="Disable the pure-Python recording control server.",
+    )
     return parser.parse_args(argv)
 
 
@@ -244,6 +260,7 @@ def run_python_only(args: argparse.Namespace) -> None:
     streamer = None
     controller = None
     teleop = None
+    recording_server = None
     try:
         logger.info("连接 Vision Pro: %s", config["vp_ip"])
         streamer = VPStreamer(
@@ -270,7 +287,29 @@ def run_python_only(args: argparse.Namespace) -> None:
         )
         _start_video_return(config, streamer, controller, logger)
 
+        # Prepare the first hole and start physics/rendering before exposing
+        # episode controls, so every accepted start request has valid context.
         controller.activate_runtime()
+
+        if not args.no_record_server:
+            from utils.mujoco_hdf5_recorder_python import (
+                PurePythonEpisodeManager,
+                PurePythonRecordingServer,
+            )
+
+            episode_manager = PurePythonEpisodeManager(controller, teleop)
+            recording_server = PurePythonRecordingServer(
+                episode_manager,
+                host=args.record_host,
+                port=args.record_port,
+            )
+            recording_server.start()
+            logger.info(
+                "Pure-Python recording server ready at %s:%s",
+                args.record_host,
+                args.record_port,
+            )
+
         teleop.start()
         logger.info(
             "Python-only Marvin 遥操已启动；无需 roscore/IK service，按 Ctrl+C 退出"
@@ -280,6 +319,8 @@ def run_python_only(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，正在关闭 Python-only Marvin 仿真")
     finally:
+        if recording_server is not None:
+            recording_server.close()
         if teleop is not None:
             teleop.stop()
         if controller is not None:
