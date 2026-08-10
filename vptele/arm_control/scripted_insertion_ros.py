@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import time
 import threading
+import shutil
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import rospy
@@ -111,6 +113,9 @@ class ScriptedInsertionROSNode:
             self._running = True   # 加锁标记运行中
 
         try:
+            if bool(self.cfg.get("manual_review_enter_next_episode", True)):
+                return self._run_episode_review_loop()
+
             # ---- 执行单条 episode ----
             return self._run_one_episode()
         except Exception as exc:
@@ -124,6 +129,39 @@ class ScriptedInsertionROSNode:
             # 无论成功/失败/异常，都要解除运行标志
             with self._episode_lock:
                 self._running = False
+
+    def _run_episode_review_loop(self) -> TriggerResponse:
+        """Run scripted episodes until the operator quits the review loop."""
+        messages = []
+        kept_success = True
+
+        while not rospy.is_shutdown():
+            response = self._run_one_episode()
+            messages.append(response.message)
+            kept_success = kept_success and bool(response.success)
+
+            try:
+                answer = input(
+                    "\n"
+                    "[Scripted Review] Press Enter to collect the next episode, "
+                    "or type q then Enter to stop: "
+                ).strip().lower()
+            except EOFError:
+                logger.warning(
+                    "Review-loop stdin unavailable; stopping after one episode."
+                )
+                break
+
+            if answer in {"q", "quit", "exit", "n", "no"}:
+                break
+
+        return TriggerResponse(
+            success=kept_success,
+            message=(
+                f"Scripted review loop stopped after {len(messages)} episode(s). "
+                + " | ".join(messages[-3:])
+            ),
+        )
 
     # ======================================================================
     # episode 主流程
@@ -170,24 +208,7 @@ class ScriptedInsertionROSNode:
         time.sleep(reset_duration + 0.1)
 
         # ==================================================================
-        # 5. 标定 IK ↔ World 坐标系
-        #
-        #    为什么在 HDF5 启动之前做？
-        #      标定需要移动机械臂到 7 个探测位置（中心 + ±X ±Y ±Z），
-        #      这些移动不是插入任务的一部分，不能混入训练数据。
-        #
-        #    _load_calib() 先从磁盘缓存的 calib_ik_to_world.npz 尝试加载
-        #    如果加载失败（首次运行或文件丢失），运行 _calibrate()
-        #    _calibrate 完成后会自动保存到磁盘供后续使用
-        # ==================================================================
-        self.controller._init_dofs()  # 缓存 site ID 和 DOF 地址
-        if not self.controller._load_calib():
-            if not self.controller._calibrate():
-                return TriggerResponse(
-                    success=False, message="Calibration failed.")
-
-        # ==================================================================
-        # 6. 随机采样初始 XY 误差
+        # 5. 随机采样初始 XY 误差
         #
         #    误差参数会在 episode_metadata 中记录，用于后续数据分析
         #    区分不同误差量级对插入成功率/力反馈的影响。
@@ -195,6 +216,7 @@ class ScriptedInsertionROSNode:
         #    采样后立即获取 error_info，然后传给 run_episode，
         #    保证实际使用的误差和元数据中记录的一致。
         # ==================================================================
+        self.controller._init_dofs()  # 缓存 site ID 和 DOF 地址
         self.controller._sample_error()
         error_info = self.controller.get_last_error_info()
 
@@ -220,7 +242,7 @@ class ScriptedInsertionROSNode:
         # ==================================================================
         label = self.cfg.get("episode_label", "scripted")
         episode_metadata = {
-            "collection_method": "scripted_closed_loop",
+            "collection_method": "scripted_waypoint",
             **error_info,
         }
 
@@ -291,6 +313,8 @@ class ScriptedInsertionROSNode:
             },
         )
         final_path = recorder.stop_episode(status=status)
+        self._prepare_manual_review()
+        keep_episode = self._review_episode(final_path, result)
 
         # ==================================================================
         # 10. 清理：禁用遥操作、复位机械臂
@@ -313,13 +337,67 @@ class ScriptedInsertionROSNode:
             if result.success
             else f"failed: {result.outcome}"
         )
+        review_str = "kept" if keep_episode else "discarded"
         return TriggerResponse(
             success=result.success,
             message=(
-                f"Scripted episode {outcome_str}. "
+                f"Scripted episode {outcome_str}; {review_str} after review. "
                 f"Path: {final_path}"
             ),
         )
+
+    def _review_episode(self, episode_path, result) -> bool:
+        """Ask the operator whether to keep the completed scripted episode."""
+        if not bool(self.cfg.get("manual_review_after_episode", True)):
+            return True
+
+        if episode_path is None:
+            logger.warning("Manual review skipped: no episode path returned.")
+            return True
+
+        hdf5_path = Path(episode_path)
+        episode_dir = hdf5_path.parent
+        outcome = "success" if result.success else f"failed:{result.outcome}"
+
+        while True:
+            try:
+                answer = input(
+                    "\n"
+                    f"[Scripted Review] Episode finished ({outcome}).\n"
+                    f"  path: {hdf5_path}\n"
+                    "  Keep this episode? [y/n]: "
+                ).strip().lower()
+            except EOFError:
+                logger.warning("Manual review stdin unavailable; keeping episode.")
+                return True
+
+            if answer in {"y", "yes"}:
+                logger.info(f"Scripted episode kept: {hdf5_path}")
+                return True
+
+            if answer in {"n", "no"}:
+                try:
+                    if episode_dir.exists():
+                        shutil.rmtree(episode_dir, ignore_errors=True)
+                    logger.info(f"Scripted episode discarded: {episode_dir}")
+                    return False
+                except Exception as exc:
+                    logger.exception(f"Failed to discard scripted episode: {exc}")
+                    return True
+
+            print("Please type 'y' to keep or 'n' to discard, then press Enter.")
+
+    def _prepare_manual_review(self) -> None:
+        """Stop auto-stop bookkeeping before prompting, without moving the arm."""
+        reset_fn = getattr(self.rc, "_reset_task_success_state_locked", None)
+        if reset_fn is None:
+            return
+
+        try:
+            with self.rc.lock:
+                reset_fn()
+        except Exception as exc:
+            logger.warning(f"Could not reset task-success state before review: {exc}")
 
     # ======================================================================
     # 孔位设定

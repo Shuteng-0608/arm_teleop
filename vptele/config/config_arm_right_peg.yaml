@@ -97,8 +97,8 @@ camera_stream_fps: 15.0
 cctv_camera: "cctv_cam"
 monitor_camera_names:
   - "cctv_cam"
-# ee_cam and base_top_cam are dataset-only cameras configured above under
-# hdf5_camera_names; they are intentionally not shown to the operator.
+  - "ee_cam"
+  - "base_top_cam"
 separate_cctv_window: true
 cctv_window_name: "CCTV Camera"
 cctv_window_width: 1280
@@ -362,6 +362,29 @@ scripted_controller:
 
   # HDF5 episode label.
   episode_label: "scripted"
+
+  # After each scripted episode stops recording, ask y/n in the console.
+  # y keeps the episode folder; n deletes that episode folder.
+  manual_review_after_episode: true
+
+  # Keep the scripted service active after review.
+  # Press Enter to collect the next episode, or q + Enter to stop the loop.
+  manual_review_enter_next_episode: true
+
+  # Smooth transition after wall contact.
+  # Freeze current joints briefly, retract with small Cartesian IK steps,
+  # then wait for contact force to release before aligning to the hole.
+  post_contact_settle_s: 0.15
+  smooth_retract_steps: 18
+  smooth_retract_step_wait_s: 0.04
+  post_retract_force_release_n: 6.0
+  post_retract_force_release_timeout_s: 1.0
+
+  # Dense waypoint execution for the scripted align/insert segment.
+  # Larger values are slower but reduce target jumps after contact.
+  waypoint_align_steps: 30
+  waypoint_insert_steps: 45
+  waypoint_steps_per_wp: 90
 
   # Admittance control gains during the ALIGN phase.
   # K_lateral:    lateral (X,Z) correction per Newton of measured force [m/N]

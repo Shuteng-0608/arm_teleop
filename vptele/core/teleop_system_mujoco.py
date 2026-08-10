@@ -817,12 +817,19 @@ class TeleopSystemMujoco:
 
         logger.info("正在初始化脚本插入控制器...")
 
-        ik_service_name = self.config.get("arm_config", {}).get(
-            "ik_service_name", "/arm_teleop/right_arm_ik_srv"
-        )
-        rospy.wait_for_service(ik_service_name)
-        from arm_teleop.srv import ArmIK
-        ik_proxy = rospy.ServiceProxy(ik_service_name, ArmIK)
+        # The scripted waypoint controller uses MuJoCo Jacobian IK. ROS IK is
+        # optional and only kept as a fallback for older scripted controllers.
+        ik_proxy = None
+        try:
+            ik_service_name = self.config.get("arm_config", {}).get(
+                "ik_service_name", "/arm_teleop/right_arm_ik_srv"
+            )
+            rospy.wait_for_service(ik_service_name, timeout=3.0)
+            from arm_teleop.srv import ArmIK
+            ik_proxy = rospy.ServiceProxy(ik_service_name, ArmIK)
+            logger.info("ROS IK 服务可用（备用）")
+        except (rospy.ROSException, rospy.ServiceException):
+            logger.info("ROS IK 服务不可用，使用 MuJoCo Jacobian IK")
 
         from arm_control.scripted_insertion_ros import ScriptedInsertionROSNode
         self.scripted_insertion_node = ScriptedInsertionROSNode(

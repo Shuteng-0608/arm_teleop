@@ -79,9 +79,6 @@ class ScriptedPegInsertionController:
         self.ik = ik_service_proxy           # ROS IK 服务代理
         self.cfg = config                    # 配置字典 (config_arm_right_peg.yaml)
         self.rng = np.random.default_rng()
-        # 初始 XY 误差量级候选 (mm)，从配置读取
-        self.error_magnitudes_mm = list(
-            self.cfg.get("error_magnitudes_mm", [0.5, 1.5, 3.0, 5.0, 7.0]))
         self.ik_method = str(self.cfg.get("ik_method", "optimal_ref"))
 
         # ==================================================================
@@ -116,8 +113,8 @@ class ScriptedPegInsertionController:
         # 人遥操作时每次接触墙面的力度不同，引入此随机化使数据集多样化
         # 范围: [3N, 15N]，由配置 wall_contact_force_min/max 控制
         # ==================================================================
-        f_min = float(self.cfg.get("wall_contact_force_min", 10.0))
-        f_max = float(self.cfg.get("wall_contact_force_max", 25.0))
+        f_min = float(self.cfg.get("wall_contact_force_min", 15.0))
+        f_max = float(self.cfg.get("wall_contact_force_max", 28.0))
         self._wall_threshold = float(self.rng.uniform(f_min, f_max))
 
         # ==================================================================
@@ -146,6 +143,9 @@ class ScriptedPegInsertionController:
         """
         执行一条完整的 peg-in-hole 插入 episode。
 
+        APPROACH(瞄偏撞墙, 力反馈) → 回撤 → waypoint 对准 → waypoint 插入。
+        全程使用 MuJoCo Jacobian IK，不依赖 ROS IK 和标定。
+
         参数:
           error_xy_mm:      XY 偏移量 (mm)，None 则随机采样
           error_angle_deg:  XY 偏移方向 (°)，None 则随机采样
@@ -169,28 +169,54 @@ class ScriptedPegInsertionController:
         # ---- 惰性初始化 MuJoCo ID 缓存 ----
         self._init_dofs()
 
-        # ---- 检查标定是否已完成 (由 ROS 节点在 HDF5 开始前完成) ----
-        if ScriptedPegInsertionController._R_w_ik is None:
-            return EpisodeResult(False, "no_calib", Phase.APPROACH, 0, 0.0)
-
         # ---- 记录当前 peg 世界位置 (参考原点) ----
         self._ref_w = self._peg_w()
 
-        # ---- 阶段 1: APPROACH — 接近墙面 ----
+        # ---- 阶段 1: APPROACH — 瞄偏接近墙面，撞墙即停 ----
         r = self._approach()
         if r: return r
 
-        # ---- 阶段 2: ALIGN — 对齐孔中心 ----
-        r = self._align()
-        if r: return r
+        # ---- APPROACH 结束后，先冻结接触状态，再沿世界 +Y 平滑回撤 ----
+        retract_mm = float(self.rng.uniform(3.0, 8.0))
+        p = self._peg_w()
+        rt = p.copy()
+        rt[1] += retract_mm / 1000.0
 
-        # ---- 阶段 3: INSERT — 插入 ----
-        r = self._insert()
-        if r is None:
-            # ---- 成功：退 peg 后再返回 (避免复位时撞墙) ----
-            self._retract_clear()
-            return EpisodeResult(True, "success", Phase.SUCCESS, 0, time.time() - t0)
-        return r
+        self._freeze_current_arm("wall contact")
+        time.sleep(float(self.cfg.get("post_contact_settle_s", 0.15)))
+
+        if not self._smooth_move_ee(
+            target_w=rt,
+            total_steps=int(self.cfg.get("smooth_retract_steps", 18)),
+            step_wait_s=float(self.cfg.get("smooth_retract_step_wait_s", 0.04)),
+            constrain_ori=True,
+            phase=Phase.ALIGN,
+            log_prefix="SMOOTH_RETRACT",
+        ):
+            return EpisodeResult(False, "ik", Phase.ALIGN, 0, 0.0)
+
+        self._wait_force_release(
+            threshold_n=float(self.cfg.get("post_retract_force_release_n", 6.0)),
+            timeout_s=float(self.cfg.get("post_retract_force_release_timeout_s", 1.0)),
+        )
+        logger.info(f"APPROACH smoothly retracted {retract_mm:.1f}mm")
+
+        # ---- 阶段 2: waypoint 对准 + 插入（已知孔位置，直进直出） ----
+        start_w = self._peg_w().copy()
+        hole_g = self._hole_goal().copy()
+        logger.info(f"WAYPOINT: from {[round(v,4) for v in start_w]} → hole {[round(v,4) for v in hole_g]}")
+
+        waypoints_w = self._build_waypoints(start_w, hole_g)
+        if not waypoints_w:
+            return EpisodeResult(False, "waypoint", Phase.INSERT, 0, 0.0)
+
+        r = self._execute_waypoints(waypoints_w)
+        if r is not None:
+            return r
+
+        # ---- 成功：退 peg 后再返回 (避免复位时撞墙) ----
+        self._retract_clear()
+        return EpisodeResult(True, "success", Phase.SUCCESS, 0, time.time() - t0)
 
     def get_last_error_info(self):
         """获取最近一次采样的 XY 误差信息 (用于写入 episode_metadata)"""
@@ -207,19 +233,18 @@ class ScriptedPegInsertionController:
         最小偏移 5mm (大于孔半径 ~4mm)，确保 peg 一定撞墙而非直接滑入孔。
         范围：[-7mm, +7mm] × [-7mm, +7mm]。
         """
-        min_mm = 5.0                 # 最小偏移 > 孔半径，保证撞墙
-        max_mm = max(self.error_magnitudes_mm)  # 最大偏移 (配置: 7mm)
-        while True:
-            x_mm = float(self.rng.uniform(-max_mm, max_mm))
-            z_mm = float(self.rng.uniform(-max_mm, max_mm))
-            m = math.sqrt(x_mm**2 + z_mm**2)
-            if m >= min_mm:  # 拒绝太小偏移
-                break
+        m = 8.0
+        deg = float(self.rng.uniform(0, 360))
+        x_mm = m * math.cos(math.radians(deg))
+        z_mm = m * math.sin(math.radians(deg))
         self._err_xy = m
         self._err_deg = math.degrees(math.atan2(z_mm, x_mm))
         self._err_w = np.array([x_mm / 1000.0, 0, z_mm / 1000.0])
+        q = "Q1右上" if (x_mm >= 0 and z_mm >= 0) else \
+            "Q2左上" if (x_mm <  0 and z_mm >= 0) else \
+            "Q3左下" if (x_mm <  0 and z_mm <  0) else "Q4右下"
         logger.info(f"ERROR: dx={x_mm:+.1f}mm  dz={z_mm:+.1f}mm  "
-                    f"mag={m:.1f}mm  angle={self._err_deg:.0f}°")
+                    f"mag={m:.1f}mm  angle={self._err_deg:.0f}°  {q}")
 
     def _init_dofs(self):
         """惰性缓存 peg_tip_site ID 和 7 个关节的 DOF 地址 (模型不变，只查一次)"""
@@ -414,8 +439,6 @@ class ScriptedPegInsertionController:
         logger.info(f"APPROACH: {d*1000:.0f}mm → {[round(v,4) for v in target_w]}  "
                     f"wall_thresh={self._wall_threshold:.1f}N")
 
-        seed = ScriptedPegInsertionController._ik_ref_joints
-
         while True:
             # ---- 过载检查 ----
             if self._overload():
@@ -436,12 +459,12 @@ class ScriptedPegInsertionController:
             else:               # < 20mm
                 step_m, wait_s = 0.0001, 0.15
 
-            # ---- 计算下一步位置 → IK 坐标 → ROS IK 解算 ----
+            # ---- 计算下一步位置 → MuJoCo Jacobian IK（零偏差，不依赖 ROS） ----
             cur_w = cur_w + (target_w - cur_w) / dr * step_m
-            ik_pos = self._world_to_ik(cur_w)       # 世界 → IK 坐标
-            j = self._ik_call(ik_pos, seed_joints=None)  # 用当前关节角做种子
-            if j is None:
+            q_int = self._mujoco_ik_step(cur_w, constrain_ori=False)
+            if q_int is None:
                 return EpisodeResult(False, "ik", Phase.APPROACH, 0, 0.0)
+            j = [float(q_int[i]) * float(self._arm_sign[i]) for i in range(7)]
             self.rc.set_arm_positions(j)  # 发送关节角指令
 
             # ---- 高频力检查 (每 10ms 一次) ----
@@ -467,7 +490,93 @@ class ScriptedPegInsertionController:
                 logger.info(f"APPROACH: d={dr*1000:.0f}mm")
 
     # ==================================================================
-    # ALIGN — ROS IK 粗对齐 + MuJoCo Jacobian 精对齐
+    # Waypoint 对准 + 插入 (已知孔位置，直进直出)
+    # ==================================================================
+
+    def _build_waypoints(self, start_w: np.ndarray, hole_goal_w: np.ndarray,
+                         num_align: Optional[int] = None,
+                         num_insert: Optional[int] = None) -> list:
+        """
+        从回撤位置到孔底，生成一串世界坐标 waypoint。
+
+        Phase 1 (XY 对准): 从回撤位置水平移到孔口正上方
+        Phase 2 (Y 插入): 沿 -Y 方向插入到孔底
+
+        返回: [wp0, wp1, ...]，每个 wp 是世界坐标 3D 位置
+        """
+        if num_align is None:
+            num_align = int(self.cfg.get("waypoint_align_steps", 30))
+        if num_insert is None:
+            num_insert = int(self.cfg.get("waypoint_insert_steps", 45))
+
+        waypoints = []
+
+        # Phase 1: XY 对准（Z 也一起对齐）
+        t1 = start_w.copy()
+        t1[0] = float(hole_goal_w[0])
+        t1[2] = float(hole_goal_w[2])
+
+        for i in range(num_align):
+            alpha = (i + 1) / num_align
+            wp = start_w + alpha * (t1 - start_w)
+            waypoints.append(wp)
+
+        # Phase 2: 沿 -Y 插入到孔底
+        for i in range(num_insert):
+            alpha = (i + 1) / num_insert
+            wp = t1 + alpha * (hole_goal_w - t1)
+            waypoints.append(wp)
+
+        logger.info(f"WAYPOINT: built {len(waypoints)} waypoints "
+                    f"({num_align} align + {num_insert} insert)")
+        return waypoints
+
+    def _execute_waypoints(self, waypoints_w: list,
+                           steps_per_wp: Optional[int] = None) -> Optional[EpisodeResult]:
+        """
+        对每个 waypoint 调 MuJoCo Jacobian IK 算关节角，发给 controller 执行。
+
+        每步检查力过载和任务成功。
+
+        返回: None = 成功完成, EpisodeResult = 失败
+        """
+        if steps_per_wp is None:
+            steps_per_wp = int(self.cfg.get("waypoint_steps_per_wp", 90))
+
+        for i, wp in enumerate(waypoints_w):
+            if self._overload():
+                return EpisodeResult(False, "overload", Phase.INSERT, 0, 0.0)
+
+            # 如果 task_success 已经触发，提前结束
+            if getattr(self.rc, "task_success_triggered", False):
+                logger.info(f"WAYPOINT: task success triggered at wp {i}/{len(waypoints_w)}")
+                time.sleep(1.0)
+                return None
+
+            q_int = self._mujoco_ik_step(wp, constrain_ori=True)
+            if q_int is None:
+                logger.warning(f"WAYPOINT: IK failed at wp {i}")
+                return EpisodeResult(False, "ik", Phase.INSERT, 0, 0.0)
+
+            ext = [float(q_int[j]) * float(self._arm_sign[j]) for j in range(7)]
+            self.rc.set_arm_positions(ext)
+
+            # 等待物理步进
+            wait_s = steps_per_wp * self.rc.sim_timestep
+            time.sleep(wait_s)
+
+            # 每 10 个 waypoint 打一次日志
+            if i % 10 == 0:
+                p = self._peg_w()
+                err = float(np.linalg.norm(p - wp))
+                logger.info(f"WAYPOINT: {i}/{len(waypoints_w)} err={err*1000:.2f}mm")
+
+        # 等最终稳定，检查 task_success
+        time.sleep(0.5)
+        return None
+
+    # ==================================================================
+    # ALIGN — ROS IK 粗对齐 + MuJoCo Jacobian 精对齐（legacy，不再由主流程调用）
     # ==================================================================
 
     def _align(self) -> Optional[EpisodeResult]:
@@ -918,6 +1027,75 @@ class ScriptedPegInsertionController:
         if ft is not None and float(np.linalg.norm(ft[:3])) > self.FORCE_LIMIT:
             logger.error(f"OVERLOAD {float(np.linalg.norm(ft[:3])):.0f}N")
             return True
+        return False
+
+    def _freeze_current_arm(self, reason: str = "") -> None:
+        """Freeze command/target at current qpos to avoid pushing into contact."""
+        try:
+            with self.rc.lock:
+                q_now = np.array(
+                    [float(self.rc.data.qpos[d]) for d in self._arm_dofs],
+                    dtype=np.float64,
+                )
+                n = min(len(q_now), len(getattr(self.rc, "target_joints", [])))
+                if n > 0:
+                    self.rc.target_joints[:n] = q_now[:n].tolist()
+                n = min(len(q_now), len(getattr(self.rc, "command_joints", [])))
+                if n > 0:
+                    self.rc.command_joints[:n] = q_now[:n].tolist()
+                self.rc._apply_actuator_targets(self.rc.command_joints)
+            suffix = f" ({reason})" if reason else ""
+            logger.info(f"FREEZE current arm command{suffix}")
+        except Exception as exc:
+            logger.warning(f"FREEZE failed: {exc}")
+
+    def _smooth_move_ee(self, target_w: np.ndarray, total_steps: int,
+                        step_wait_s: float, constrain_ori: bool,
+                        phase: Phase, log_prefix: str) -> bool:
+        """Move peg tip to target_w through small Cartesian IK increments."""
+        total_steps = max(int(total_steps), 1)
+        start_w = self._peg_w().copy()
+        target_w = np.asarray(target_w, dtype=np.float64)
+
+        for i in range(total_steps):
+            if self._overload():
+                return False
+
+            alpha = float(i + 1) / float(total_steps)
+            # cosine ease-in/ease-out，避免一开始和结束时目标速度突变
+            s = 0.5 - 0.5 * math.cos(math.pi * alpha)
+            wp = start_w + s * (target_w - start_w)
+
+            q_int = self._mujoco_ik_step(wp, constrain_ori=constrain_ori)
+            if q_int is None:
+                logger.warning(f"{log_prefix}: IK failed at {i + 1}/{total_steps}")
+                return False
+
+            ext = [float(q_int[j]) * float(self._arm_sign[j]) for j in range(7)]
+            self.rc.set_arm_positions(ext)
+            time.sleep(max(float(step_wait_s), 0.0))
+
+        err = float(np.linalg.norm(self._peg_w() - target_w))
+        logger.info(f"{log_prefix}: done err={err*1000:.2f}mm")
+        return True
+
+    def _wait_force_release(self, threshold_n: float = 6.0,
+                            timeout_s: float = 1.0) -> bool:
+        """Wait briefly until contact force drops before starting alignment."""
+        t0 = time.time()
+        last_fn = 0.0
+        while time.time() - t0 < timeout_s:
+            ft = self._ft_world()
+            last_fn = float(np.linalg.norm(ft[:3])) if ft is not None else 0.0
+            if last_fn <= threshold_n:
+                logger.info(f"FORCE_RELEASE: |F|={last_fn:.1f}N")
+                return True
+            time.sleep(0.02)
+
+        logger.warning(
+            f"FORCE_RELEASE: timeout, continue with |F|={last_fn:.1f}N "
+            f"> {threshold_n:.1f}N"
+        )
         return False
 
     def _peg_w(self) -> np.ndarray:
