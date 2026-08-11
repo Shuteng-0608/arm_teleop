@@ -21,6 +21,7 @@ class TeleopSystemMujoco:
         self.arm_teleop = None
         self.end_effector = None
         self.gripper_controller = None
+        self.scripted_insertion_node = None
         
 
     def initialize(self, mode="full"):
@@ -811,9 +812,23 @@ class TeleopSystemMujoco:
 
     def _initialize_scripted_controller(self):
         """Optionally initialise the scripted peg-in-hole controller."""
-        sc_cfg = self.config.get("scripted_controller", {})
+        sc_cfg = dict(self.config.get("scripted_controller", {}) or {})
         if not bool(sc_cfg.get("enabled", False)):
             return
+
+        # Forward shared paths and reference pose explicitly. The scripted
+        # controller used to reconstruct these from a developer-specific
+        # absolute path, which made unattended collection non-portable.
+        sc_cfg.setdefault("config_path", self.config.get("config_path", ""))
+        sc_cfg.setdefault("hdf5_record_dir", self.config.get("hdf5_record_dir", ""))
+        sc_cfg.setdefault(
+            "initial_robot_pose",
+            self.config.get("arm_config", {}).get("initial_robot_pose"),
+        )
+        sc_cfg.setdefault(
+            "reset_ignore_teleop_duration",
+            self.config.get("reset_ignore_teleop_duration", 0.5),
+        )
 
         logger.info("正在初始化脚本插入控制器...")
 
@@ -875,12 +890,19 @@ class TeleopSystemMujoco:
                 self.end_effector.start()
 
         logger.info("遥控系统已启动")
+        if self.scripted_insertion_node is not None:
+            started = self.scripted_insertion_node.start_automatic_batch()
+            if started:
+                logger.info("自动批量数据采集已启动")
             
 
     def stop(self):
         """停止遥操控系统"""
         logger.info("正在关闭遥操控系统...")
         try:
+            if self.scripted_insertion_node is not None:
+                self.scripted_insertion_node.stop_automatic_batch()
+
             # 先停止末端执行器
             if self.end_effector:
                 self.end_effector.stop()

@@ -123,6 +123,10 @@ def apply_runtime_overrides(
     vp_ip: Optional[str] = None,
     end_effector: Optional[str] = None,
     process_name: Optional[str] = None,
+    review_mode: Optional[str] = None,
+    target_episodes: Optional[int] = None,
+    max_attempts: Optional[int] = None,
+    reject_action: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Apply ROS/CLI overrides without mutating the loaded YAML mapping."""
     result = deepcopy(dict(config))
@@ -134,6 +138,20 @@ def apply_runtime_overrides(
         logging_config = dict(result.get("logging") or {})
         logging_config["log_prefix"] = str(process_name)
         result["logging"] = logging_config
+    if any(
+        value is not None
+        for value in (review_mode, target_episodes, max_attempts, reject_action)
+    ):
+        scripted_config = dict(result.get("scripted_controller") or {})
+        if review_mode is not None:
+            scripted_config["review_mode"] = str(review_mode).strip().lower()
+        if target_episodes is not None:
+            scripted_config["target_episodes"] = int(target_episodes)
+        if max_attempts is not None:
+            scripted_config["max_attempts"] = int(max_attempts)
+        if reject_action is not None:
+            scripted_config["reject_action"] = str(reject_action).strip().lower()
+        result["scripted_controller"] = scripted_config
     return result
 
 
@@ -145,7 +163,7 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
         raise MujocoConfigError(
             f"Unsupported config_version: {config.get('config_version')!r}"
         )
-    if not str(config.get("vp_ip", "")).strip():
+    if config.get("vp_enabled", True) and not str(config.get("vp_ip", "")).strip():
         raise MujocoConfigError("vp_ip is required")
 
     model_path = str(config.get("mujoco_model_path", "")).strip()
@@ -169,8 +187,11 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
     ).rstrip("/")
     if not service_ns.startswith("/"):
         raise MujocoConfigError("arm_config.teleop_service_ns must be absolute")
-    if config.get("teleop_controlled_by_recording", True) and not arm_config.get(
-        "enable_episode_services", True
+    enable_ros_interfaces = bool(config.get("enable_ros_interfaces", True))
+    if (
+        enable_ros_interfaces
+        and config.get("teleop_controlled_by_recording", True)
+        and not arm_config.get("enable_episode_services", True)
     ):
         raise MujocoConfigError(
             "teleop_controlled_by_recording requires arm_config.enable_episode_services"
@@ -190,8 +211,10 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
             "start episodes through the recording service instead"
         )
 
-    if config.get("enable_recording_service", True) and not config.get(
-        "record_hdf5", True
+    if (
+        enable_ros_interfaces
+        and config.get("enable_recording_service", True)
+        and not config.get("record_hdf5", True)
     ):
         raise MujocoConfigError(
             "enable_recording_service requires record_hdf5"
@@ -310,6 +333,59 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
     if force_thresholds != sorted(force_thresholds) or len(set(force_thresholds)) != 4:
         raise MujocoConfigError(
             "force feedback thresholds must be strictly increasing"
+        )
+
+    scripted_config = _require_mapping(
+        config.get("scripted_controller", {}),
+        "scripted_controller",
+    )
+    review_mode = str(scripted_config.get("review_mode", "manual")).lower()
+    if review_mode not in {"manual", "auto"}:
+        raise MujocoConfigError(
+            "scripted_controller.review_mode must be manual or auto"
+        )
+    target_episodes = _require_integer(
+        scripted_config.get("target_episodes", 0),
+        "scripted_controller.target_episodes",
+    )
+    max_attempts = _require_integer(
+        scripted_config.get("max_attempts", 0),
+        "scripted_controller.max_attempts",
+    )
+    max_consecutive_rejections = _require_integer(
+        scripted_config.get("max_consecutive_rejections", 10),
+        "scripted_controller.max_consecutive_rejections",
+    )
+    if target_episodes < 0:
+        raise MujocoConfigError(
+            "scripted_controller.target_episodes must be non-negative"
+        )
+    if max_attempts < 0:
+        raise MujocoConfigError(
+            "scripted_controller.max_attempts must be non-negative"
+        )
+    if max_consecutive_rejections < 0:
+        raise MujocoConfigError(
+            "scripted_controller.max_consecutive_rejections must be non-negative"
+        )
+    if review_mode == "auto" and target_episodes <= 0:
+        raise MujocoConfigError(
+            "auto review mode requires scripted_controller.target_episodes > 0"
+        )
+    if review_mode == "auto" and not bool(scripted_config.get("enabled", False)):
+        raise MujocoConfigError(
+            "auto review mode requires scripted_controller.enabled=true"
+        )
+    if max_attempts and max_attempts < target_episodes:
+        raise MujocoConfigError(
+            "scripted_controller.max_attempts must be zero or at least target_episodes"
+        )
+    reject_action = str(
+        scripted_config.get("reject_action", "quarantine")
+    ).lower()
+    if reject_action not in {"quarantine", "delete"}:
+        raise MujocoConfigError(
+            "scripted_controller.reject_action must be quarantine or delete"
         )
 
 

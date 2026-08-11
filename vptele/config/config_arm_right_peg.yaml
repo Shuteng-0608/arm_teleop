@@ -6,7 +6,7 @@ record_data: false
 
 # HDF5 recording
 record_hdf5: true
-hdf5_record_dir: "../../data/hole_random_60mm_hmj"
+hdf5_record_dir: "../../data/hole_fixed_scripted"
 
 hdf5_force_hz: 500.0
 hdf5_state_hz: 30.0
@@ -354,10 +354,46 @@ task_success_pending_manual_review: true
 # Scripted peg-in-hole insertion controller
 # ------------------------------------------------------------------
 scripted_controller:
-  # Set to true to enable the scripted insertion ROS service.
+  # Set to true to enable scripted insertion collection. The standalone
+  # automatic entry does not create a ROS service.
   enabled: true
 
-  # ROS service name for triggering one episode.
+  # Startup review mode. main_mujoco.py CLI flags override these values;
+  # collect_mujoco.py always selects auto.
+  # manual: keep the existing console y/n review loop.
+  # auto: automatically run until target_episodes have passed the quality gate.
+  review_mode: "manual"              # manual | auto
+  target_episodes: 0                 # required (>0) in auto mode
+  max_attempts: 0                    # 0 => automatically use target_episodes * 5
+  max_consecutive_rejections: 10    # stop early when the system is unhealthy
+  reject_action: "quarantine"        # quarantine | delete
+  shutdown_on_batch_complete: true  # legacy ROS entry only
+
+  # Hard wall-clock guard for a single scripted controller attempt.
+  episode_timeout_s: 180.0
+
+  # Deterministic automatic retention policy. Safety events, missing success,
+  # corrupt numeric streams and recorder errors are always hard rejects.
+  auto_quality:
+    require_task_success_event: true
+    require_terminal_hold_event: true
+    reject_on_warning: false
+    min_state_samples: 10
+    min_force_samples: 50
+    min_image_samples: 3
+    max_dropped_numeric_samples: 0
+    max_dropped_image_samples: 0
+    image_std_min: 3.0
+    sampling_rate_tolerance: 0.25
+    tracking_norm_p95_warn: 0.03
+    tracking_norm_max_warn: 0.06
+    force_p95_warn: 40.0
+    force_max_warn: 60.0
+    terminal_check_seconds: 0.8
+    terminal_qvel_max_warn: 0.05
+    terminal_force_max_warn: 15.0
+
+  # Legacy ROS service name for manually triggering one episode.
   service_name: "/scripted_insertion/run"
 
   # HDF5 episode label.

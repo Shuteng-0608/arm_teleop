@@ -26,7 +26,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from utils.logger import get_logger
+try:
+    from vptele.utils.logger import get_logger
+except ModuleNotFoundError:  # Catkin's legacy package_dir exposes utils directly.
+    from utils.logger import get_logger
 
 logger = get_logger()
 
@@ -117,14 +120,23 @@ class ScriptedPegInsertionController:
         # 存储在 HDF5 数据目录下的 calib_ik_to_world.npz
         # 首次运行后缓存，后续启动直接加载，跳过 ~30s 的标定过程
         # ==================================================================
-        import os
-        config_dir = os.path.dirname(os.path.abspath(
-            "/home/hmj/pangu/src/arm_teleop/vptele/config/config_arm_right_peg.yaml"))
-        out_dir = os.path.join(config_dir,
-                               self.cfg.get("hdf5_record_dir",
-                                            "../../data/hole_random_60mm_hmj"))
-        ScriptedPegInsertionController._calib_file = os.path.join(
-            os.path.abspath(out_dir), "calib_ik_to_world.npz")
+        from pathlib import Path
+
+        config_path = Path(str(self.cfg.get("config_path", ""))).expanduser()
+        output_dir = Path(
+            str(
+                self.cfg.get(
+                    "hdf5_record_dir",
+                    "../../data/hole_random_60mm_hmj",
+                )
+            )
+        ).expanduser()
+        if not output_dir.is_absolute():
+            base_dir = config_path.parent if str(config_path) else Path.cwd()
+            output_dir = base_dir / output_dir
+        ScriptedPegInsertionController._calib_file = str(
+            output_dir.resolve() / "calib_ik_to_world.npz"
+        )
 
         # MuJoCo 对象缓存 (延迟初始化)
         self._site_id: Optional[int] = None    # peg_tip_site 的 MuJoCo ID
@@ -149,6 +161,8 @@ class ScriptedPegInsertionController:
           EpisodeResult: success=True 表示插入成功
         """
         t0 = time.time()
+        timeout_s = max(1.0, float(self.cfg.get("episode_timeout_s", 180.0)))
+        self._episode_deadline = time.monotonic() + timeout_s
         self._sample_wall_threshold()
 
         # ---- 设置初始 XY 误差 ----
@@ -210,9 +224,36 @@ class ScriptedPegInsertionController:
         if r is not None:
             return r
 
+        # Completing the waypoint list is not itself proof of insertion. In
+        # direct recording mode the debounced task-success state is preferred;
+        # stage-1 of two-stage replay has no active recorder, so it falls back
+        # to the same geometric site-distance threshold.
+        task_triggered = bool(getattr(self.rc, "task_success_triggered", False))
+        if not task_triggered and not self._task_goal_reached():
+            return EpisodeResult(
+                False,
+                "task_success_not_reached",
+                Phase.INSERT,
+                0,
+                time.time() - t0,
+            )
+
         # ---- 成功：退 peg 后再返回 (避免复位时撞墙) ----
         self._retract_clear()
         return EpisodeResult(True, "success", Phase.SUCCESS, 0, time.time() - t0)
+
+    def _episode_timed_out(self) -> bool:
+        cancel_event = getattr(self, "cancel_event", None)
+        if cancel_event is not None and cancel_event.is_set():
+            return True
+        deadline = getattr(self, "_episode_deadline", None)
+        return deadline is not None and time.monotonic() >= float(deadline)
+
+    def _task_goal_reached(self) -> bool:
+        peg = self._peg_w()
+        goal = self._hole_goal()
+        threshold = float(getattr(self.rc, "task_success_distance", 0.003))
+        return float(np.linalg.norm(peg - goal)) <= threshold
 
     def get_last_error_info(self):
         """获取最近一次采样的 XY 误差信息 (用于写入 episode_metadata)"""
@@ -463,6 +504,8 @@ class ScriptedPegInsertionController:
         def move_segment(target_w: np.ndarray, detect_wall: bool, label: str):
             nonlocal cur_w
             while True:
+                if self._episode_timed_out():
+                    return EpisodeResult(False, "timeout", Phase.APPROACH, 0, 0.0)
                 # ---- 过载检查 ----
                 if self._overload():
                     return EpisodeResult(False, "overload", Phase.APPROACH, 0, 0.0)
@@ -606,6 +649,8 @@ class ScriptedPegInsertionController:
             steps_per_wp = int(self.cfg.get("waypoint_steps_per_wp", 90))
 
         for i, wp in enumerate(waypoints_w):
+            if self._episode_timed_out():
+                return EpisodeResult(False, "timeout", Phase.INSERT, 0, 0.0)
             if self._overload():
                 return EpisodeResult(False, "overload", Phase.INSERT, 0, 0.0)
 
@@ -1124,6 +1169,8 @@ class ScriptedPegInsertionController:
         target_w = np.asarray(target_w, dtype=np.float64)
 
         for i in range(total_steps):
+            if self._episode_timed_out():
+                return False
             if self._overload():
                 return False
 

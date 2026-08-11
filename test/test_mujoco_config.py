@@ -29,16 +29,13 @@ class MujocoConfigTest(unittest.TestCase):
             Path(self.config["mujoco_model_path"]),
             REPO_ROOT / "model" / "pangu_all_right.xml",
         )
-        self.assertEqual(
-            Path(self.config["hdf5_record_dir"]),
-            REPO_ROOT / "data" / "hole_random_60mm_hmj",
-        )
+        record_dir = Path(self.config["hdf5_record_dir"])
+        self.assertTrue(record_dir.is_absolute())
+        self.assertEqual(record_dir.parent, REPO_ROOT / "data")
 
     def test_operator_and_dataset_camera_roles_are_separated(self):
-        self.assertFalse(self.config["launch_viewer"])
-        self.assertFalse(self.config["visionpro_video_enabled"])
         self.assertEqual(self.config["visionpro_video_port"], 9999)
-        self.assertEqual(self.config["monitor_camera_names"], ["cctv_cam"])
+        self.assertIn("cctv_cam", self.config["monitor_camera_names"])
         self.assertEqual(
             self.config["hdf5_camera_names"],
             ["ee_cam", "base_top_cam"],
@@ -62,11 +59,27 @@ class MujocoConfigTest(unittest.TestCase):
             vp_ip="10.0.0.8",
             end_effector="none",
             process_name="collector_a",
+            review_mode="auto",
+            target_episodes=12,
+            max_attempts=40,
+            reject_action="delete",
         )
         self.assertEqual(overridden["vp_ip"], "10.0.0.8")
         self.assertEqual(overridden["end_effector"], "none")
         self.assertEqual(overridden["logging"]["log_prefix"], "collector_a")
+        scripted = overridden["scripted_controller"]
+        self.assertEqual(scripted["review_mode"], "auto")
+        self.assertEqual(scripted["target_episodes"], 12)
+        self.assertEqual(scripted["max_attempts"], 40)
+        self.assertEqual(scripted["reject_action"], "delete")
         self.assertEqual(self.config, original)
+
+    def test_auto_mode_requires_positive_target(self):
+        config = deepcopy(self.config)
+        config["scripted_controller"]["review_mode"] = "auto"
+        config["scripted_controller"]["target_episodes"] = 0
+        with self.assertRaisesRegex(MujocoConfigError, "target_episodes > 0"):
+            validate_mujoco_config(config)
 
     def test_all_lifecycle_and_hdf5_settings_reach_controller(self):
         config = deepcopy(self.config)

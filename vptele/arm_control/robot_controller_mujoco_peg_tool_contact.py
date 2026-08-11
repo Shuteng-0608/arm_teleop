@@ -34,33 +34,49 @@ import mujoco
 import mujoco.viewer
 import shutil
 
-from utils.mujoco_data_recorder import MujocoDataRecorder
-from utils.mujoco_hdf5_recorder import (
-    ImageCaptureRequest,
-    MujocoHDF5Recorder,
-)
-from utils.hole_grid_scheduler import HoleGridScheduler
-from utils.force_feedback_overlay import (
-    ForceFeedbackConfig,
-    ForceFeedbackSmoother,
-    compute_force_feedback,
-    draw_force_feedback_overlay,
-    make_force_feedback_hud,
-    resize_with_aspect_padding,
-    trend_label,
-)
-from utils.ft_wrench_utils import (
-    body_ids as ft_body_ids,
-    compensated_ft_wrench,
-    ft_sensor_pose_world,
-    gravity_wrench_sensor_frame,
-    raw_ft_wrench,
-)
-
-import rospy
-from arm_teleop.srv import SetRecording, SetRecordingResponse
-from std_srvs.srv import Trigger, TriggerResponse
-
+try:
+    from vptele.utils.mujoco_data_recorder import MujocoDataRecorder
+    from vptele.utils.mujoco_hdf5_recorder import (
+        ImageCaptureRequest,
+        MujocoHDF5Recorder,
+    )
+    from vptele.utils.hole_grid_scheduler import HoleGridScheduler
+    from vptele.utils.force_feedback_overlay import (
+        ForceFeedbackConfig,
+        ForceFeedbackSmoother,
+        compute_force_feedback,
+        draw_force_feedback_overlay,
+        make_force_feedback_hud,
+        resize_with_aspect_padding,
+        trend_label,
+    )
+    from vptele.utils.ft_wrench_utils import (
+        body_ids as ft_body_ids,
+        compensated_ft_wrench,
+        ft_sensor_pose_world,
+        gravity_wrench_sensor_frame,
+        raw_ft_wrench,
+    )
+except ModuleNotFoundError:  # Catkin's legacy package_dir exposes utils directly.
+    from utils.mujoco_data_recorder import MujocoDataRecorder
+    from utils.mujoco_hdf5_recorder import ImageCaptureRequest, MujocoHDF5Recorder
+    from utils.hole_grid_scheduler import HoleGridScheduler
+    from utils.force_feedback_overlay import (
+        ForceFeedbackConfig,
+        ForceFeedbackSmoother,
+        compute_force_feedback,
+        draw_force_feedback_overlay,
+        make_force_feedback_hud,
+        resize_with_aspect_padding,
+        trend_label,
+    )
+    from utils.ft_wrench_utils import (
+        body_ids as ft_body_ids,
+        compensated_ft_wrench,
+        ft_sensor_pose_world,
+        gravity_wrench_sensor_frame,
+        raw_ft_wrench,
+    )
 
 @dataclass
 class _RenderSnapshot:
@@ -522,6 +538,9 @@ class RobotControllerMuJoCoPegTool:
         self.enable_recording_service = bool(
             self.config.get("enable_recording_service", True)
         )
+        self.enable_ros_interfaces = bool(
+            self.config.get("enable_ros_interfaces", True)
+        )
 
         self.recording_service_name = self.config.get(
             "recording_service_name",
@@ -715,6 +734,9 @@ class RobotControllerMuJoCoPegTool:
 
         self.task_success_pending_manual_review = bool(
             self.config.get("task_success_pending_manual_review", True)
+        )
+        self.task_success_auto_stop_recording = bool(
+            self.config.get("task_success_auto_stop_recording", True)
         )
 
         self.task_success_stop_accepting_teleop = bool(
@@ -1016,7 +1038,14 @@ class RobotControllerMuJoCoPegTool:
 
         # Publish the recording service last, when the task, teleoperation
         # services, and simulation are ready to accept an episode request.
-        if self.enable_recording_service and self.hdf5_recorder is not None:
+        if (
+            self.enable_ros_interfaces
+            and self.enable_recording_service
+            and self.hdf5_recorder is not None
+        ):
+            import rospy
+            from arm_teleop.srv import SetRecording
+
             self.recording_service = rospy.Service(
                 self.recording_service_name,
                 SetRecording,
@@ -1035,8 +1064,13 @@ class RobotControllerMuJoCoPegTool:
         """
         if not getattr(self, "teleop_controlled_by_recording", True):
             return True
+        if not self.enable_ros_interfaces:
+            return True
 
         try:
+            import rospy
+            from std_srvs.srv import Trigger
+
             rospy.wait_for_service(service_name, timeout=3.0)
             proxy = rospy.ServiceProxy(service_name, Trigger)
             resp = proxy()
@@ -1130,6 +1164,8 @@ class RobotControllerMuJoCoPegTool:
             stop current episode
             if req.keep is False, delete the generated episode folder
         """
+        from arm_teleop.srv import SetRecordingResponse
+
         if self.hdf5_recorder is None:
             return SetRecordingResponse(
                 success=False,
@@ -3149,15 +3185,21 @@ class RobotControllerMuJoCoPegTool:
             if not self.terminal_hold_stop_started:
                 self.terminal_hold_stop_started = True
 
-                print(
-                    "[TaskSuccessAutoStop] Terminal hold finished. "
-                    "Auto-stopping HDF5 recording."
-                )
+                if self.task_success_auto_stop_recording:
+                    print(
+                        "[TaskSuccessAutoStop] Terminal hold finished. "
+                        "Auto-stopping HDF5 recording."
+                    )
 
-                threading.Thread(
-                    target=self._auto_stop_recording_for_task_success,
-                    daemon=True,
-                ).start()
+                    threading.Thread(
+                        target=self._auto_stop_recording_for_task_success,
+                        daemon=True,
+                    ).start()
+                else:
+                    print(
+                        "[TaskSuccessAutoStop] Terminal hold finished. "
+                        "External scripted lifecycle will stop recording."
+                    )
 
 
     def _update_task_success_auto_stop_locked(self):

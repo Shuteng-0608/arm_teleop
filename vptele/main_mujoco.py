@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import rospy
 import os
 from utils.logger import get_logger, setup_logger
@@ -10,8 +11,18 @@ from utils.mujoco_config import (
     validate_mujoco_config,
 )
 
-def run_teleop_system(config_path, vp_ip=None, end_effector=None, 
-                      log_level=None, process_name=None, mode="full"):
+def run_teleop_system(
+    config_path,
+    vp_ip=None,
+    end_effector=None,
+    log_level=None,
+    process_name=None,
+    mode="full",
+    review_mode=None,
+    target_episodes=None,
+    max_attempts=None,
+    reject_action=None,
+):
     """
     初始化并运行机械臂遥操控系统
     
@@ -38,6 +49,10 @@ def run_teleop_system(config_path, vp_ip=None, end_effector=None,
             vp_ip=vp_ip,
             end_effector=end_effector,
             process_name=process_name,
+            review_mode=review_mode,
+            target_episodes=target_episodes,
+            max_attempts=max_attempts,
+            reject_action=reject_action,
         )
         validate_mujoco_config(config)
     except MujocoConfigError as e:
@@ -70,8 +85,9 @@ def run_teleop_system(config_path, vp_ip=None, end_effector=None,
     return system
 
 class TeleopROSNode:
-    def __init__(self):
+    def __init__(self, cli_options=None):
         rospy.init_node('teleop_system', anonymous=True)
+        cli_options = cli_options or argparse.Namespace()
         
         # 从ROS参数服务器获取参数
         self.config_path = rospy.get_param('~config_path', 'config/config_arm_right_peg.yaml')
@@ -80,6 +96,18 @@ class TeleopROSNode:
         self.log_level = rospy.get_param('~log_level', None)
         self.process_name = rospy.get_param('~process_name', None)
         self.mode = rospy.get_param('~mode', 'full')
+        self.review_mode = getattr(cli_options, "review_mode", None)
+        if self.review_mode is None:
+            self.review_mode = rospy.get_param('~review_mode', None)
+        self.target_episodes = getattr(cli_options, "target_episodes", None)
+        if self.target_episodes is None:
+            self.target_episodes = rospy.get_param('~target_episodes', None)
+        self.max_attempts = getattr(cli_options, "max_attempts", None)
+        if self.max_attempts is None:
+            self.max_attempts = rospy.get_param('~max_attempts', None)
+        self.reject_action = getattr(cli_options, "reject_action", None)
+        if self.reject_action is None:
+            self.reject_action = rospy.get_param('~reject_action', None)
 
         
         self.system = None
@@ -96,7 +124,11 @@ class TeleopROSNode:
                 end_effector=self.end_effector,
                 log_level=self.log_level,
                 process_name=self.process_name,
-                mode=self.mode
+                mode=self.mode,
+                review_mode=self.review_mode,
+                target_episodes=self.target_episodes,
+                max_attempts=self.max_attempts,
+                reject_action=self.reject_action,
             )
             
             self.logger = get_logger()
@@ -133,10 +165,46 @@ class TeleopROSNode:
 
                 self.logger.info("系统已安全关闭")
 
+def build_cli_parser():
+    """Build command-line arguments after ROS remapping arguments are removed."""
+    parser = argparse.ArgumentParser(
+        description="MuJoCo peg-in-hole teleoperation and data collection",
+    )
+    parser.add_argument(
+        "--review-mode",
+        choices=("manual", "auto"),
+        default=None,
+        help="manual keeps console review; auto collects a retained-data batch",
+    )
+    parser.add_argument(
+        "--target-episodes",
+        type=int,
+        default=None,
+        help="number of accepted episodes to retain in auto mode",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=None,
+        help="attempt safety limit; 0 uses an automatic limit",
+    )
+    parser.add_argument(
+        "--reject-action",
+        choices=("quarantine", "delete"),
+        default=None,
+        help="what to do with automatically rejected episode directories",
+    )
+    return parser
+
+
+def parse_cli_options(argv=None):
+    return build_cli_parser().parse_args(rospy.myargv(argv=argv)[1:])
+
+
 def main():
     """ROS节点主函数"""
     try:
-        node = TeleopROSNode()
+        node = TeleopROSNode(cli_options=parse_cli_options())
         node.run()
     except rospy.ROSInterruptException:
         pass
