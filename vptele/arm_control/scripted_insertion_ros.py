@@ -24,6 +24,7 @@ from __future__ import annotations
 import time
 import threading
 import shutil
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
@@ -362,8 +363,8 @@ class ScriptedInsertionROSNode:
         stores an in-memory trace of actuator commands plus diagnostic force.
         Stage 2 restores the exact initial MuJoCo state, replays the command
         trace, and lets the normal HDF5 recorder produce the training-format
-        observations/action datasets. Stage-1 force is appended under
-        /stage1_trace/* for analysis only.
+        observations/action datasets. Stage-1 diagnostics are written to a
+        separate stage1_trace.hdf5 file for analysis only.
         """
         recorder = self.rc.hdf5_recorder
         if recorder is None:
@@ -420,7 +421,7 @@ class ScriptedInsertionROSNode:
             "replay_hz": replay_hz,
             "stage1_success": int(bool(stage1_result.success)),
             "stage1_outcome": str(stage1_result.outcome),
-            "replay_action_source": "stage1_trace/action_command",
+            "replay_action_source": "stage1_trace.hdf5:/stage1_trace/action_command",
             "stage1_ft_convention": "ft_wrench=world-rotated sensor force; ft_wrench_raw=raw sensor frame",
             **error_info,
         }
@@ -459,14 +460,17 @@ class ScriptedInsertionROSNode:
         )
         final_path = recorder.stop_episode(status=status)
 
+        stage1_path = None
         if save_stage1_trace and final_path is not None:
-            self._write_stage1_trace_to_hdf5(
+            stage1_path = self._write_stage1_trace_file(
                 final_path=final_path,
                 stage1_trace=stage1_trace,
                 stage1_result=stage1_result,
                 replay_success=replay_success,
                 replay_hz=replay_hz,
             )
+            if stage1_path is not None:
+                self._annotate_stage2_with_stage1_path(final_path, stage1_path)
 
         self._prepare_manual_review()
         review_result = SimpleNamespace(
@@ -484,7 +488,8 @@ class ScriptedInsertionROSNode:
             success=replay_success,
             message=(
                 f"Two-stage replay {'success' if replay_success else 'failed'}; "
-                f"{review_str} after review. Path: {final_path}"
+                f"{review_str} after review. Stage2: {final_path}; "
+                f"Stage1: {stage1_path}"
             ),
         )
 
@@ -633,25 +638,24 @@ class ScriptedInsertionROSNode:
         time.sleep(float(self.cfg.get("replay_final_settle_s", 0.5)))
         return True
 
-    def _write_stage1_trace_to_hdf5(
+    def _write_stage1_trace_file(
         self,
         final_path,
         stage1_trace: Dict[str, np.ndarray],
         stage1_result,
         replay_success: bool,
         replay_hz: float,
-    ) -> None:
-        """Append non-training stage1 diagnostics to the replay HDF5 file."""
+    ) -> Optional[Path]:
+        """Write non-training stage1 diagnostics to a separate HDF5 file."""
         import h5py
 
-        hdf5_path = Path(final_path)
-        if not hdf5_path.exists():
-            logger.warning(f"Stage1 trace not written: {hdf5_path} does not exist")
-            return
+        stage2_path = Path(final_path)
+        if not stage2_path.exists():
+            logger.warning(f"Stage1 trace not written: {stage2_path} does not exist")
+            return None
 
-        with h5py.File(hdf5_path, "a") as f:
-            if "stage1_trace" in f:
-                del f["stage1_trace"]
+        stage1_path = stage2_path.with_name("stage1_trace.hdf5")
+        with h5py.File(stage1_path, "w") as f:
             g = f.create_group("stage1_trace")
             for key, values in stage1_trace.items():
                 g.create_dataset(key, data=np.asarray(values), compression="gzip")
@@ -664,6 +668,7 @@ class ScriptedInsertionROSNode:
             g.attrs["stage1_outcome"] = str(stage1_result.outcome)
             g.attrs["replay_success"] = int(bool(replay_success))
             g.attrs["replay_hz"] = float(replay_hz)
+            g.attrs["paired_stage2_file"] = stage2_path.name
 
             meta = f.require_group("episode_metadata")
             meta.attrs["collection_method"] = "scripted_two_stage_replay"
@@ -673,8 +678,99 @@ class ScriptedInsertionROSNode:
             meta.attrs["stage1_outcome"] = str(stage1_result.outcome)
             meta.attrs["replay_success"] = int(bool(replay_success))
             meta.attrs["replay_action_source"] = "stage1_trace/action_command"
+            meta.attrs["paired_stage2_file"] = stage2_path.name
 
-        logger.info(f"Stage1 trace written to {hdf5_path}")
+        self._write_stage1_summary_json(
+            summary_path=stage2_path.with_name("stage1_summary.json"),
+            stage1_path=stage1_path,
+            stage2_path=stage2_path,
+            stage1_trace=stage1_trace,
+            stage1_result=stage1_result,
+            replay_success=replay_success,
+            replay_hz=replay_hz,
+        )
+        logger.info(f"Stage1 trace written to {stage1_path}")
+        return stage1_path
+
+    def _write_stage1_summary_json(
+        self,
+        summary_path: Path,
+        stage1_path: Path,
+        stage2_path: Path,
+        stage1_trace: Dict[str, np.ndarray],
+        stage1_result,
+        replay_success: bool,
+        replay_hz: float,
+    ) -> None:
+        """Write a small human-previewable JSON summary for stage1 trace."""
+        def shape_of(name: str):
+            arr = np.asarray(stage1_trace.get(name, []))
+            return list(arr.shape)
+
+        ft = np.asarray(stage1_trace.get("ft_wrench", []), dtype=np.float64)
+        if ft.ndim == 2 and ft.shape[1] >= 3 and ft.shape[0] > 0:
+            force_norm = np.linalg.norm(ft[:, :3], axis=1)
+            force_stats = {
+                "max": float(np.nanmax(force_norm)),
+                "mean": float(np.nanmean(force_norm)),
+                "min": float(np.nanmin(force_norm)),
+            }
+        else:
+            force_stats = {"max": None, "mean": None, "min": None}
+
+        ts = np.asarray(stage1_trace.get("timestamps", []), dtype=np.float64)
+        if ts.ndim == 2 and ts.shape[0] > 0:
+            duration_wall_s = float(ts[-1, 0] - ts[0, 0])
+            duration_sim_s = float(ts[-1, 1] - ts[0, 1]) if ts.shape[1] > 1 else None
+        else:
+            duration_wall_s = None
+            duration_sim_s = None
+
+        summary = {
+            "stage1_file": str(stage1_path),
+            "stage2_file": str(stage2_path),
+            "stage1_success": bool(stage1_result.success),
+            "stage1_outcome": str(stage1_result.outcome),
+            "replay_success": bool(replay_success),
+            "replay_hz": float(replay_hz),
+            "num_samples": int(len(stage1_trace.get("timestamps", []))),
+            "duration_wall_s": duration_wall_s,
+            "duration_sim_s": duration_sim_s,
+            "datasets": {
+                "timestamps": shape_of("timestamps"),
+                "action_command": shape_of("action_command"),
+                "joint_pos": shape_of("joint_pos"),
+                "ee_pose": shape_of("ee_pose"),
+                "ft_wrench": shape_of("ft_wrench"),
+                "ft_wrench_raw": shape_of("ft_wrench_raw"),
+            },
+            "force_norm": force_stats,
+            "notes": {
+                "stage1_is_training_observation": False,
+                "stage2_episode_hdf5_is_training_data": True,
+                "action_command_convention": "data.ctrl[0:7] sampled during stage1",
+                "ft_wrench_convention": "world-rotated sensor wrench, not HDF5 gravity-compensated",
+            },
+        }
+
+        with summary_path.open("w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        logger.info(f"Stage1 summary written to {summary_path}")
+
+    def _annotate_stage2_with_stage1_path(self, final_path, stage1_path: Path) -> None:
+        """Record the separate stage1 file path in the stage2 training HDF5."""
+        import h5py
+
+        stage2_path = Path(final_path)
+        if not stage2_path.exists():
+            return
+
+        with h5py.File(stage2_path, "a") as f:
+            meta = f.require_group("episode_metadata")
+            meta.attrs["stage1_trace_saved"] = 1
+            meta.attrs["stage1_trace_file"] = stage1_path.name
+            meta.attrs["stage1_trace_path"] = str(stage1_path)
+            meta.attrs["replay_action_source"] = "stage1_trace.hdf5:/stage1_trace/action_command"
 
     def _review_episode(self, episode_path, result) -> bool:
         """Ask the operator whether to keep the completed scripted episode."""

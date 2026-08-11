@@ -234,7 +234,7 @@ class ScriptedPegInsertionController:
         最小偏移 5mm (大于孔半径 ~4mm)，确保 peg 一定撞墙而非直接滑入孔。
         范围：[-7mm, +7mm] × [-7mm, +7mm]。
         """
-        m = 8.0
+        m = float(self.cfg.get("scripted_error_radius_mm", 10.0))
         deg = float(self.rng.uniform(0, 360))
         x_mm = m * math.cos(math.radians(deg))
         z_mm = m * math.sin(math.radians(deg))
@@ -424,8 +424,8 @@ class ScriptedPegInsertionController:
         """
         阶段 1: 从参考位姿逐步走向孔口 + 随机偏移位置。
 
-        每步：用 ROS IK 算关节角 → set_arm_positions → 高频检查力
-        力超过 _wall_threshold (3-15N 随机) → 停止，进入 ALIGN
+        每步：用 MuJoCo Jacobian IK 算关节角 → set_arm_positions → 高频检查力
+        力超过 _wall_threshold 后停止，进入后续回撤/waypoint 阶段。
 
         自适应步长：
           距离 > 80mm:  3mm/步  (快速接近)
@@ -434,61 +434,114 @@ class ScriptedPegInsertionController:
           < 20mm:       0.1mm/步 (慢速精细)
         """
         hole_e = self._hole_entrance()  # 孔口世界位置 (墙面处)
-        target_w = hole_e + self._err_w  # 目标 = 孔口 + 随机偏移
+        contact_w = hole_e + self._err_w  # 孔口平面上的偏差接触目标
+        standoff_m = float(self.cfg.get("approach_standoff_m", 0.030))
+        pre_w = contact_w.copy()
+        pre_w[1] += standoff_m
+
         cur_w = self._ref_w.copy()       # 当前位置 = 参考位姿的世界位置
-        d = float(np.linalg.norm(target_w - cur_w))
-        logger.info(f"APPROACH: {d*1000:.0f}mm → {[round(v,4) for v in target_w]}  "
+        d_total = float(np.linalg.norm(pre_w - cur_w) + np.linalg.norm(contact_w - pre_w))
+        orig_start_w = self._ref_w.copy()
+        orig_vec = contact_w - orig_start_w
+        orig_len = float(np.linalg.norm(orig_vec))
+        orig_dir = orig_vec / max(orig_len, 1e-9)
+        target_offset_mm = float(np.linalg.norm(self._err_w[[0, 2]]) * 1000.0)
+        logger.info(f"APPROACH: two-segment {d_total*1000:.0f}mm, "
+                    f"pre={[round(float(v),4) for v in pre_w]} → "
+                    f"contact={[round(float(v),4) for v in contact_w]}  "
+                    f"offset_target={target_offset_mm:.2f}mm  "
                     f"wall_thresh={self._wall_threshold:.1f}N")
 
-        while True:
-            # ---- 过载检查 ----
-            if self._overload():
-                return EpisodeResult(False, "overload", Phase.APPROACH, 0, 0.0)
+        def move_segment(target_w: np.ndarray, detect_wall: bool, label: str):
+            nonlocal cur_w
+            while True:
+                # ---- 过载检查 ----
+                if self._overload():
+                    return EpisodeResult(False, "overload", Phase.APPROACH, 0, 0.0)
 
-            # ---- 剩余距离 ----
-            dr = float(np.linalg.norm(target_w - cur_w))
-            if dr < 0.001:
-                break  # 已到达目标 (正常不会走到这里，一般先撞墙)
+                # ---- 剩余距离 ----
+                dr = float(np.linalg.norm(target_w - cur_w))
+                if dr < 0.001:
+                    return None
 
-            # ---- 自适应步长 ----
-            if dr > 0.080:      # > 80mm
-                step_m, wait_s = 0.003, 0.04
-            elif dr > 0.040:    # 40-80mm
-                step_m, wait_s = 0.001, 0.08
-            elif dr > 0.020:    # 20-40mm
-                step_m, wait_s = 0.0003, 0.12
-            else:               # < 20mm
-                step_m, wait_s = 0.0001, 0.15
+                # ---- 原 APPROACH 等效速度调度 ----
+                # 两段式改变了当前 segment 的 target，直接用 dr 会让
+                # contact 段一开始就落入慢速档。这里用当前点在原始
+                # 单段 ref_w→contact_w 路径上的投影剩余距离来选择速度档，
+                # 让速度表现更接近未改路径之前的 approach。
+                progress = float(np.dot(cur_w - orig_start_w, orig_dir))
+                progress = max(0.0, min(progress, orig_len))
+                schedule_dr = max(orig_len - progress, 0.0)
 
-            # ---- 计算下一步位置 → MuJoCo Jacobian IK（零偏差，不依赖 ROS） ----
-            cur_w = cur_w + (target_w - cur_w) / dr * step_m
-            q_int = self._mujoco_ik_step(cur_w, constrain_ori=True)
-            if q_int is None:
-                return EpisodeResult(False, "ik", Phase.APPROACH, 0, 0.0)
-            j = [float(q_int[i]) * float(self._arm_sign[i]) for i in range(7)]
-            self.rc.set_arm_positions(j)  # 发送关节角指令
+                if schedule_dr > 0.080:      # > 80mm
+                    step_m, wait_s = 0.003, 0.04
+                elif schedule_dr > 0.040:    # 40-80mm
+                    step_m, wait_s = 0.001, 0.08
+                elif schedule_dr > 0.020:    # 20-40mm
+                    step_m, wait_s = 0.0003, 0.12
+                else:               # < 20mm
+                    step_m, wait_s = 0.0001, 0.15
 
-            # ---- 高频力检查 (每 10ms 一次) ----
-            for _ in range(max(int(wait_s / 0.01), 1)):
-                time.sleep(0.01)
-                ft = self._ft_world()  # 世界坐标系力
-                if ft is not None:
+                # ---- 沿当前 segment 方向走一步 ----
+                cur_w = cur_w + (target_w - cur_w) / dr * step_m
+                q_int = self._mujoco_ik_step(cur_w, constrain_ori=True)
+                if q_int is None:
+                    return EpisodeResult(False, "ik", Phase.APPROACH, 0, 0.0)
+                j = [float(q_int[i]) * float(self._arm_sign[i]) for i in range(7)]
+                self.rc.set_arm_positions(j)
+
+                # ---- 高频力检查 (每 10ms 一次)，沿用原节奏 ----
+                for _ in range(max(int(wait_s / 0.01), 1)):
+                    time.sleep(0.01)
+                    ft = self._ft_world()
+                    if ft is None:
+                        continue
+
                     fn = float(np.linalg.norm(ft[:3]))
                     if fn > self.FORCE_LIMIT:
                         logger.error(f"OVERLOAD {fn:.0f}N")
                         return EpisodeResult(False, "overload", Phase.APPROACH, 0, 0.0)
-                    if fn > self._wall_threshold:
-                        # 触墙 → 停止 APPROACH，进入 ALIGN
+
+                    if detect_wall and fn > self._wall_threshold:
+                        # 触墙 → 停止 APPROACH，进入后续阶段
                         pw = self._peg_w()
+                        offset_xz_mm = math.sqrt(
+                            (float(pw[0]) - float(hole_e[0])) ** 2
+                            + (float(pw[2]) - float(hole_e[2])) ** 2
+                        ) * 1000.0
+                        tol_mm = float(self.cfg.get("contact_offset_tolerance_mm", 1.0))
+                        offset_msg = (
+                            f"offset_xz={offset_xz_mm:.2f}mm "
+                            f"target={target_offset_mm:.2f}mm"
+                        )
+                        if abs(offset_xz_mm - target_offset_mm) > tol_mm:
+                            logger.warning(
+                                f"APPROACH contact offset outside tolerance: {offset_msg}, "
+                                f"tol={tol_mm:.2f}mm"
+                            )
                         logger.info(
                             f"APPROACH: wall |F|={fn:.1f}N at "
-                            f"{[round(float(v),4) for v in pw]}")
-                        return None  # None = 成功进入下一阶段
+                            f"{[round(float(v),4) for v in pw]} ({offset_msg})")
+                        return "contact"
 
-            # ---- 进度日志 ----
-            if int(dr * 100) != getattr(self, "_ld", -1):
-                self._ld = int(dr * 100)
-                logger.info(f"APPROACH: d={dr*1000:.0f}mm")
+                # ---- 进度日志 ----
+                progress_key = (label, int(dr * 100))
+                if progress_key != getattr(self, "_ld", None):
+                    self._ld = progress_key
+                    logger.info(
+                        f"APPROACH {label}: d={dr*1000:.0f}mm "
+                        f"sched={schedule_dr*1000:.0f}mm"
+                    )
+
+        r = move_segment(pre_w, detect_wall=False, label="pre")
+        if isinstance(r, EpisodeResult):
+            return r
+
+        r = move_segment(contact_w, detect_wall=True, label="contact")
+        if isinstance(r, EpisodeResult):
+            return r
+        if r == "contact":
+            return None
 
     # ==================================================================
     # Waypoint 对准 + 插入 (已知孔位置，直进直出)

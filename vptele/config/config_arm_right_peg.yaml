@@ -390,6 +390,11 @@ scripted_controller:
   post_retract_force_release_n: 6.0
   post_retract_force_release_timeout_s: 1.0
 
+  # Two-segment approach geometry. Speed/force-check timing still uses the
+  # original APPROACH adaptive step_m/wait_s logic.
+  approach_standoff_m: 0.030
+  contact_offset_tolerance_mm: 1.0
+
   # Dense waypoint execution for the scripted align/insert segment.
   # Larger values are slower but reduce target jumps after contact.
   waypoint_align_steps: 30
@@ -433,6 +438,7 @@ scripted_controller:
 
   # Initial XY error injection magnitudes to sample from [mm].
   # One value is picked uniformly per episode; direction is 0-360 deg uniform.
+  scripted_error_radius_mm: 10.0
   error_magnitudes_mm: [0.5, 1.5, 3.0, 5.0, 7.0]
 
   # MuJoCo body that carries the hole geometry.
