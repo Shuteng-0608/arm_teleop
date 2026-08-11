@@ -25,7 +25,10 @@ import time
 import threading
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
+
+import numpy as np
 
 import rospy
 from std_srvs.srv import Trigger, TriggerResponse
@@ -220,6 +223,9 @@ class ScriptedInsertionROSNode:
         self.controller._sample_error()
         error_info = self.controller.get_last_error_info()
 
+        if str(self.cfg.get("collection_mode", "direct")) == "two_stage_replay":
+            return self._run_one_episode_two_stage_replay(error_info)
+
         # ==================================================================
         # 7. 启动 HDF5 记录
         #
@@ -345,6 +351,330 @@ class ScriptedInsertionROSNode:
                 f"Path: {final_path}"
             ),
         )
+
+    def _run_one_episode_two_stage_replay(
+        self,
+        error_info: Dict[str, Any],
+    ) -> TriggerResponse:
+        """ACT-style two-stage collection.
+
+        Stage 1 runs the scripted expert without HDF5 training recording and
+        stores an in-memory trace of actuator commands plus diagnostic force.
+        Stage 2 restores the exact initial MuJoCo state, replays the command
+        trace, and lets the normal HDF5 recorder produce the training-format
+        observations/action datasets. Stage-1 force is appended under
+        /stage1_trace/* for analysis only.
+        """
+        recorder = self.rc.hdf5_recorder
+        if recorder is None:
+            return TriggerResponse(
+                success=False,
+                message="HDF5 recorder is not available.",
+            )
+
+        stage1_hz = float(self.cfg.get("stage1_trace_hz", 30.0))
+        replay_hz = float(self.cfg.get("replay_hz", stage1_hz))
+        save_stage1_trace = bool(self.cfg.get("save_stage1_trace", True))
+
+        snapshot = self._snapshot_replay_initial_state()
+
+        logger.info(
+            f"TWO_STAGE: stage1 generating expert trace at {stage1_hz:.1f}Hz"
+        )
+        stage1_result, stage1_trace = self._run_stage1_trace(
+            error_info=error_info,
+            trace_hz=stage1_hz,
+        )
+
+        if not bool(stage1_result.success):
+            self.rc.accept_teleop_commands = False
+            return TriggerResponse(
+                success=False,
+                message=(
+                    "Stage1 scripted expert failed; no replay HDF5 saved. "
+                    f"outcome={stage1_result.outcome}"
+                ),
+            )
+
+        commands = np.asarray(stage1_trace.get("action_command", []), dtype=np.float64)
+        if commands.ndim != 2 or commands.shape[0] == 0 or commands.shape[1] < 7:
+            self.rc.accept_teleop_commands = False
+            return TriggerResponse(
+                success=False,
+                message="Stage1 produced an empty/invalid command trace.",
+            )
+
+        logger.info(
+            f"TWO_STAGE: restoring initial state and replaying {commands.shape[0]} "
+            f"commands at {replay_hz:.1f}Hz"
+        )
+        self._restore_replay_initial_state(snapshot)
+        time.sleep(0.05)
+        self.rc.accept_teleop_commands = True
+
+        label = self.cfg.get("episode_label", "scripted")
+        episode_metadata = {
+            "collection_method": "scripted_two_stage_replay",
+            "stage1_trace_saved": int(save_stage1_trace),
+            "stage1_trace_hz": stage1_hz,
+            "replay_hz": replay_hz,
+            "stage1_success": int(bool(stage1_result.success)),
+            "stage1_outcome": str(stage1_result.outcome),
+            "replay_action_source": "stage1_trace/action_command",
+            "stage1_ft_convention": "ft_wrench=world-rotated sensor force; ft_wrench_raw=raw sensor frame",
+            **error_info,
+        }
+
+        episode_path = recorder.start_episode(
+            label=label,
+            episode_metadata=episode_metadata,
+        )
+        if episode_path is None:
+            self.rc.accept_teleop_commands = False
+            return TriggerResponse(
+                success=False,
+                message="Failed to start HDF5 replay episode.",
+            )
+
+        replay_ok = False
+        replay_error = ""
+        try:
+            replay_ok = self._replay_command_trace(commands, replay_hz)
+        except Exception as exc:
+            replay_error = str(exc)
+            logger.exception(f"TWO_STAGE replay failed: {exc}")
+
+        replay_success = bool(getattr(self.rc, "task_success_triggered", False))
+        status = "scripted_replay_success" if replay_success else "scripted_replay_failure"
+        recorder.add_event(
+            "scripted_two_stage_outcome",
+            {
+                "stage1_success": bool(stage1_result.success),
+                "stage1_outcome": str(stage1_result.outcome),
+                "replay_success": replay_success,
+                "replay_completed": bool(replay_ok),
+                "replay_error": replay_error,
+                "stage1_num_steps": int(commands.shape[0]),
+            },
+        )
+        final_path = recorder.stop_episode(status=status)
+
+        if save_stage1_trace and final_path is not None:
+            self._write_stage1_trace_to_hdf5(
+                final_path=final_path,
+                stage1_trace=stage1_trace,
+                stage1_result=stage1_result,
+                replay_success=replay_success,
+                replay_hz=replay_hz,
+            )
+
+        self._prepare_manual_review()
+        review_result = SimpleNamespace(
+            success=replay_success,
+            outcome="success" if replay_success else "replay_no_success_trigger",
+        )
+        keep_episode = self._review_episode(final_path, review_result)
+
+        self.rc.accept_teleop_commands = False
+        if self.cfg.get("reset_arm_on_stop", True):
+            self.rc.reset_arm_to_initial_pose()
+
+        review_str = "kept" if keep_episode else "discarded"
+        return TriggerResponse(
+            success=replay_success,
+            message=(
+                f"Two-stage replay {'success' if replay_success else 'failed'}; "
+                f"{review_str} after review. Path: {final_path}"
+            ),
+        )
+
+    def _run_stage1_trace(self, error_info: Dict[str, Any], trace_hz: float):
+        """Run scripted expert while sampling a non-training stage1 trace."""
+        stop_event = threading.Event()
+        trace = {
+            "timestamps": [],
+            "action_command": [],
+            "joint_pos": [],
+            "ee_pose": [],
+            "ft_wrench": [],
+            "ft_wrench_raw": [],
+        }
+
+        def sampler():
+            period = 1.0 / max(float(trace_hz), 1e-6)
+            t0 = time.time()
+            next_t = t0
+            while not stop_event.is_set() and not rospy.is_shutdown():
+                sample = self._capture_stage1_sample(t0)
+                for key, value in sample.items():
+                    trace[key].append(value)
+                next_t += period
+                time.sleep(max(0.0, next_t - time.time()))
+
+        thread = threading.Thread(target=sampler, daemon=True)
+        thread.start()
+        try:
+            result = self.controller.run_episode(
+                error_xy_mm=error_info["scripted_error_xy_mm"],
+                error_angle_deg=error_info["scripted_error_angle_deg"],
+            )
+        finally:
+            stop_event.set()
+            thread.join(timeout=1.0)
+
+        trace_np = {
+            key: np.asarray(values, dtype=np.float64)
+            for key, values in trace.items()
+        }
+        logger.info(
+            f"TWO_STAGE: stage1 result={result.outcome}, "
+            f"success={result.success}, samples={len(trace_np['timestamps'])}"
+        )
+        return result, trace_np
+
+    def _capture_stage1_sample(self, wall_t0: float) -> Dict[str, np.ndarray]:
+        """Capture one stage1 trace sample without touching the HDF5 recorder."""
+        with self.rc.lock:
+            action_command = np.asarray(self.rc.data.ctrl[:7], dtype=np.float64).copy()
+            joint_pos = np.asarray(self.rc.data.qpos[:7], dtype=np.float64).copy()
+            t_sim = float(self.rc.data.time)
+
+        ee_pos = self.rc.get_site_position("peg_tip_site")
+        ee_pose = np.full(7, np.nan, dtype=np.float64)
+        if ee_pos is not None:
+            ee_pose[:3] = np.asarray(ee_pos, dtype=np.float64)
+            ee_pose[3] = 1.0
+
+        ft_raw = self.rc.get_peg_ft_sensor()
+        if ft_raw is None:
+            ft_raw_arr = np.full(6, np.nan, dtype=np.float64)
+        else:
+            ft_raw_arr = np.asarray(ft_raw, dtype=np.float64)
+
+        ft_world = self.controller._ft_world()
+        if ft_world is None:
+            ft_world_arr = np.full(6, np.nan, dtype=np.float64)
+        else:
+            ft_world_arr = np.asarray(ft_world, dtype=np.float64)
+
+        return {
+            "timestamps": np.asarray([time.time() - wall_t0, t_sim], dtype=np.float64),
+            "action_command": action_command,
+            "joint_pos": joint_pos,
+            "ee_pose": ee_pose,
+            "ft_wrench": ft_world_arr,
+            "ft_wrench_raw": ft_raw_arr,
+        }
+
+    def _snapshot_replay_initial_state(self) -> Dict[str, Any]:
+        """Snapshot MuJoCo and controller state before stage1."""
+        import mujoco
+
+        hole_body_name = self.cfg.get("hole_body_name", "wall_task")
+        body_id = mujoco.mj_name2id(
+            self.rc.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            hole_body_name,
+        )
+        with self.rc.lock:
+            return {
+                "qpos": self.rc.data.qpos.copy(),
+                "qvel": self.rc.data.qvel.copy(),
+                "ctrl": self.rc.data.ctrl.copy(),
+                "target_joints": list(self.rc.target_joints),
+                "command_joints": list(self.rc.command_joints),
+                "body_id": int(body_id),
+                "body_pos": self.rc.model.body_pos[body_id].copy() if body_id >= 0 else None,
+            }
+
+    def _restore_replay_initial_state(self, snapshot: Dict[str, Any]) -> None:
+        """Restore the exact state used at the beginning of stage1."""
+        import mujoco
+
+        with self.rc.lock:
+            body_id = int(snapshot.get("body_id", -1))
+            body_pos = snapshot.get("body_pos")
+            if body_id >= 0 and body_pos is not None:
+                self.rc.model.body_pos[body_id] = np.asarray(body_pos, dtype=np.float64)
+
+            self.rc.data.qpos[:] = snapshot["qpos"]
+            self.rc.data.qvel[:] = snapshot["qvel"]
+            self.rc.data.ctrl[:] = snapshot["ctrl"]
+            self.rc.target_joints[:] = list(snapshot["target_joints"])
+            self.rc.command_joints[:] = list(snapshot["command_joints"])
+
+            if hasattr(self.rc.data, "qacc"):
+                self.rc.data.qacc[:] = 0.0
+            if hasattr(self.rc.data, "qacc_warmstart"):
+                self.rc.data.qacc_warmstart[:] = 0.0
+            mujoco.mj_forward(self.rc.model, self.rc.data)
+
+            reset_fn = getattr(self.rc, "_reset_task_success_state_locked", None)
+            if reset_fn is not None:
+                reset_fn()
+
+    def _replay_command_trace(self, commands: np.ndarray, replay_hz: float) -> bool:
+        """Replay internal actuator position commands from stage1."""
+        period = 1.0 / max(float(replay_hz), 1e-6)
+        t_next = time.time()
+        n = min(commands.shape[1], 7)
+        for i, command in enumerate(commands):
+            if rospy.is_shutdown():
+                return False
+            with self.rc.lock:
+                cmd = [float(v) for v in command[:n]]
+                self.rc.target_joints[:n] = cmd
+                self.rc.command_joints[:n] = cmd
+                self.rc._apply_actuator_targets(self.rc.command_joints)
+            if i % 30 == 0:
+                logger.info(f"TWO_STAGE replay: {i}/{len(commands)}")
+            t_next += period
+            time.sleep(max(0.0, t_next - time.time()))
+        time.sleep(float(self.cfg.get("replay_final_settle_s", 0.5)))
+        return True
+
+    def _write_stage1_trace_to_hdf5(
+        self,
+        final_path,
+        stage1_trace: Dict[str, np.ndarray],
+        stage1_result,
+        replay_success: bool,
+        replay_hz: float,
+    ) -> None:
+        """Append non-training stage1 diagnostics to the replay HDF5 file."""
+        import h5py
+
+        hdf5_path = Path(final_path)
+        if not hdf5_path.exists():
+            logger.warning(f"Stage1 trace not written: {hdf5_path} does not exist")
+            return
+
+        with h5py.File(hdf5_path, "a") as f:
+            if "stage1_trace" in f:
+                del f["stage1_trace"]
+            g = f.create_group("stage1_trace")
+            for key, values in stage1_trace.items():
+                g.create_dataset(key, data=np.asarray(values), compression="gzip")
+
+            g.attrs["is_training_observation"] = 0
+            g.attrs["action_command_convention"] = "data.ctrl[0:7] sampled during stage1"
+            g.attrs["ft_wrench_convention"] = "world-rotated sensor wrench, not HDF5 gravity-compensated"
+            g.attrs["ft_wrench_raw_convention"] = "raw peg FT sensor frame"
+            g.attrs["stage1_success"] = int(bool(stage1_result.success))
+            g.attrs["stage1_outcome"] = str(stage1_result.outcome)
+            g.attrs["replay_success"] = int(bool(replay_success))
+            g.attrs["replay_hz"] = float(replay_hz)
+
+            meta = f.require_group("episode_metadata")
+            meta.attrs["collection_method"] = "scripted_two_stage_replay"
+            meta.attrs["stage1_trace_saved"] = 1
+            meta.attrs["stage1_num_steps"] = int(len(stage1_trace.get("timestamps", [])))
+            meta.attrs["stage1_success"] = int(bool(stage1_result.success))
+            meta.attrs["stage1_outcome"] = str(stage1_result.outcome)
+            meta.attrs["replay_success"] = int(bool(replay_success))
+            meta.attrs["replay_action_source"] = "stage1_trace/action_command"
+
+        logger.info(f"Stage1 trace written to {hdf5_path}")
 
     def _review_episode(self, episode_path, result) -> bool:
         """Ask the operator whether to keep the completed scripted episode."""

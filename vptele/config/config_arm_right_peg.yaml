@@ -363,6 +363,16 @@ scripted_controller:
   # HDF5 episode label.
   episode_label: "scripted"
 
+  # Data collection mode:
+  #   direct           = run scripted controller while recording HDF5
+  #   two_stage_replay = stage1 generate expert command trace without HDF5,
+  #                      stage2 replay that trace and record training HDF5
+  collection_mode: "two_stage_replay"
+  stage1_trace_hz: 30.0
+  replay_hz: 30.0
+  save_stage1_trace: true
+  replay_final_settle_s: 0.5
+
   # After each scripted episode stops recording, ask y/n in the console.
   # y keeps the episode folder; n deletes that episode folder.
   manual_review_after_episode: true

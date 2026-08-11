@@ -107,6 +107,7 @@ class ScriptedPegInsertionController:
 
         # 参考世界位置：标定后 peg 在 IK 参考位姿处的位置
         self._ref_w: Optional[np.ndarray] = None
+        self._ref_xmat: Optional[np.ndarray] = None
 
         # ==================================================================
         # 每 episode 随机墙接触力阈值
@@ -169,13 +170,14 @@ class ScriptedPegInsertionController:
         # ---- 惰性初始化 MuJoCo ID 缓存 ----
         self._init_dofs()
 
-        # ---- 记录当前 peg 世界位置 (参考原点) ----
+        # ---- 记录当前 peg 世界位置和完整姿态 (episode 内固定) ----
         self._ref_w = self._peg_w()
+        self._ref_xmat = self._peg_xmat()
 
         # ---- 阶段 1: APPROACH — 瞄偏接近墙面，撞墙即停 ----
         r = self._approach()
         if r: return r
-
+        # TODO
         # ---- APPROACH 结束后，先冻结接触状态，再沿世界 +Y 平滑回撤 ----
         retract_mm = float(self.rng.uniform(3.0, 8.0))
         p = self._peg_w()
@@ -200,7 +202,6 @@ class ScriptedPegInsertionController:
             timeout_s=float(self.cfg.get("post_retract_force_release_timeout_s", 1.0)),
         )
         logger.info(f"APPROACH smoothly retracted {retract_mm:.1f}mm")
-
         # ---- 阶段 2: waypoint 对准 + 插入（已知孔位置，直进直出） ----
         start_w = self._peg_w().copy()
         hole_g = self._hole_goal().copy()
@@ -461,7 +462,7 @@ class ScriptedPegInsertionController:
 
             # ---- 计算下一步位置 → MuJoCo Jacobian IK（零偏差，不依赖 ROS） ----
             cur_w = cur_w + (target_w - cur_w) / dr * step_m
-            q_int = self._mujoco_ik_step(cur_w, constrain_ori=False)
+            q_int = self._mujoco_ik_step(cur_w, constrain_ori=True)
             if q_int is None:
                 return EpisodeResult(False, "ik", Phase.APPROACH, 0, 0.0)
             j = [float(q_int[i]) * float(self._arm_sign[i]) for i in range(7)]
@@ -666,8 +667,8 @@ class ScriptedPegInsertionController:
           - 雅可比和自我一致（同一模型的正向运动学和雅可比）
           - 零坐标系偏差
 
-        constrain_ori=True 时使用 6×7 雅可比 (位置 + 方向)，
-        保持 peg 的局部 +Z 轴对齐世界 +Y (插入方向)。
+        constrain_ori=True 时使用 6×7 雅可比 (位置 + 完整姿态)，
+        保持 peg tip site 的姿态等于本 episode 开始时记录的姿态。
 
         重力补偿：
           执行器稳态:  kp*(ctrl - qpos) = tau_g  (重力矩)
@@ -680,7 +681,7 @@ class ScriptedPegInsertionController:
         """
         nv = self.rc.model.nv           # 模型总 DOF 数
         n_arm = len(self._arm_dofs)     # 臂关节数 = 7
-        target_z_w = np.array([0.0, 1.0, 0.0])  # peg +Z → 世界 +Y (插入方向)
+        target_xmat = self._ref_xmat if self._ref_xmat is not None else self._peg_xmat()
 
         # ==== 1. 复制当前仿真状态到局部 MjData ====
         with self.rc.lock:
@@ -701,11 +702,15 @@ class ScriptedPegInsertionController:
             cur = d.site_xpos[self._site_id].copy()
             err_pos = target_world - cur
 
-            # ---- 方向误差: 叉积 = 旋转轴 × sin(角度) ----
+            # ---- 完整姿态误差: 保持 episode 初始 peg 姿态 ----
             if constrain_ori:
                 xmat = d.site_xmat[self._site_id].copy().reshape(3, 3)
-                z_cur = xmat[:, 2]                     # peg 局部 +Z 在世界中的方向
-                err_ori = np.cross(z_cur, target_z_w)  # ≈ 轴×sin(角度)
+                # R_delta maps current site orientation to target orientation.
+                # as_rotvec() gives the smallest rotation in the local/current
+                # frame; multiplying by xmat expresses it in world coordinates,
+                # matching MuJoCo's rotational site Jacobian convention.
+                R_delta = xmat.T @ target_xmat
+                err_ori = xmat @ R.from_matrix(R_delta).as_rotvec()
                 err = np.concatenate([err_pos, err_ori])
             else:
                 err = err_pos
@@ -1101,6 +1106,11 @@ class ScriptedPegInsertionController:
     def _peg_w(self) -> np.ndarray:
         """读取 peg_tip_site 的世界位置 (MuJoCo mj_forward 实时计算)"""
         return np.asarray(self.rc.get_site_position("peg_tip_site"), dtype=np.float64)
+
+    def _peg_xmat(self) -> np.ndarray:
+        """读取 peg_tip_site 的完整世界姿态矩阵。"""
+        with self.rc.lock:
+            return self.rc.data.site_xmat[self._site_id].copy().reshape(3, 3)
 
     def _hole_goal(self) -> np.ndarray:
         """读取 hole_goal_site 的世界位置 (孔底/目标点)"""
