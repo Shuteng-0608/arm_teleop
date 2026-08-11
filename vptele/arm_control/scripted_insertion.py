@@ -109,14 +109,8 @@ class ScriptedPegInsertionController:
         self._ref_w: Optional[np.ndarray] = None
         self._ref_xmat: Optional[np.ndarray] = None
 
-        # ==================================================================
-        # 每 episode 随机墙接触力阈值
-        # 人遥操作时每次接触墙面的力度不同，引入此随机化使数据集多样化
-        # 范围: [3N, 15N]，由配置 wall_contact_force_min/max 控制
-        # ==================================================================
-        f_min = float(self.cfg.get("wall_contact_force_min", 15.0))
-        f_max = float(self.cfg.get("wall_contact_force_max", 28.0))
-        self._wall_threshold = float(self.rng.uniform(f_min, f_max))
+        # 每个 episode 开始时会重新采样墙接触力阈值。
+        self._wall_threshold = 0.0
 
         # ==================================================================
         # 标定缓存文件路径
@@ -155,6 +149,7 @@ class ScriptedPegInsertionController:
           EpisodeResult: success=True 表示插入成功
         """
         t0 = time.time()
+        self._sample_wall_threshold()
 
         # ---- 设置初始 XY 误差 ----
         if error_xy_mm is not None:
@@ -224,7 +219,20 @@ class ScriptedPegInsertionController:
         return {
             "scripted_error_xy_mm": self._err_xy,
             "scripted_error_angle_deg": self._err_deg,
+            "scripted_wall_threshold_n": self._wall_threshold,
         }
+
+    def _sample_wall_threshold(self):
+        """每条 episode 重新采样墙接触力阈值。"""
+        f_min = float(self.cfg.get("wall_contact_force_min", 15.0))
+        f_max = float(self.cfg.get("wall_contact_force_max", 28.0))
+        if f_max < f_min:
+            f_min, f_max = f_max, f_min
+        self._wall_threshold = float(self.rng.uniform(f_min, f_max))
+        logger.info(
+            f"WALL_THRESHOLD: sampled {self._wall_threshold:.1f}N "
+            f"from [{f_min:.1f}, {f_max:.1f}]N"
+        )
 
     def _sample_error(self):
         """
