@@ -1,0 +1,41 @@
+api_version: trajectory_csv/v1
+name: right_circle_printer_lookahead
+trajectory:
+  sample_rate_hz: 100
+  coordinate_frame: robot_base_delta
+  interpolation:
+    type: printer_lookahead
+    target_linear_speed_m_s: 0.04
+    max_linear_accel_m_s2: 0.10
+    square_corner_speed_m_s: 0.02
+    max_angular_speed_deg_s: 30.0
+    max_angular_accel_deg_s2: 90.0
+left_hand:
+  mode: hold_initial
+right_hand:
+  mode: waypoints
+  orientation:
+    mode: fixed_initial
+  waypoints:
+    - name: home
+      position_delta_m: [0.00, 0.00, 0.00]
+      stop: true
+      hold_s: 1.0
+    - name: raised
+      position_delta_m: [0.00, 0.00, 0.08]
+      stop: true
+      hold_s: 0.5
+    - name: circle_start
+      position_delta_m: [0.00, -0.03, 0.11]
+    - name: circle_complete
+      circle:
+        center_delta_m: [0.00, 0.00, 0.11]
+        normal: [1.00, 0.00, 0.00]
+        turns: 1.0
+        direction: counterclockwise
+      stop: true
+      hold_s: 0.5
+    - name: return_home
+      position_delta_m: [0.00, 0.00, 0.00]
+      stop: true
+      hold_s: 1.0

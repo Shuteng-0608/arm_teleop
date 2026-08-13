@@ -32,21 +32,13 @@ class TeleopSystemROS:
         # 初始化VisionPro数据流
         logger.info("正在初始化VisionPro数据流...")
         vp_record = self.config.get('vp_record', False)
-        video_enabled = self.config.get('video_enabled', True)
         use_vuer = self.config.get('vuer', True)
         if use_vuer:
             from core.vp_streamer_vuer import VPStreamer
         else:
             from core.vp_streamer_avp import VPStreamer
             
-        if use_vuer:
-            self.vp_streamer = VPStreamer(self.config['vp_ip'], record=vp_record)
-        else:
-            self.vp_streamer = VPStreamer(
-                self.config['vp_ip'],
-                record=vp_record,
-                video_enabled=video_enabled,
-            )
+        self.vp_streamer = VPStreamer(self.config['vp_ip'], record=vp_record)
         # 等待一段时间确保数据流稳定
         time.sleep(1)
         
