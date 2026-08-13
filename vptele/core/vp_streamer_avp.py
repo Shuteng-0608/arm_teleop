@@ -19,19 +19,21 @@ except ImportError:
 class VPStreamer:
     """VisionPro数据流处理类，扩展原始的VisionProStreamer"""
     
-    def __init__(self, ip, record=False):
+    def __init__(self, ip, record=False, video_enabled=True):
         """
         初始化VisionPro数据流
         
         参数:
             ip (str): VisionPro的IP地址
             record (bool): 是否录制数据
+            video_enabled (bool): 是否将本地相机视频通过WebRTC发送到VisionPro
         """
         try:
             self.streamer = AVPStreamer(ip, record=record)
-            # self.streamer.configure_video(device="/dev/video6", format="v4l2", size="640x400", fps=30) # head color camera
-            self.streamer.configure_video(device="/dev/video14", format="v4l2", size="640x400", fps=30) # breast color camera
-            self.streamer.start_webrtc()
+            if video_enabled:
+                # self.streamer.configure_video(device="/dev/video6", format="v4l2", size="640x400", fps=30) # head color camera
+                self.streamer.configure_video(device="/dev/video14", format="v4l2", size="640x400", fps=30) # breast color camera
+                self.streamer.start_webrtc()
             logger.info(f"成功连接到VisionPro: {ip}")
         except Exception as e:
             logger.error(f"连接VisionPro失败: {e}")

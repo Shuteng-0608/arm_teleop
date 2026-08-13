@@ -13,7 +13,8 @@ import tty
 import select
 
 def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None, 
-                      log_level=None, process_name=None, mode="full"):
+                      log_level=None, process_name=None, mode="full",
+                      video_enabled=None):
     """
     初始化并运行机械臂遥操控系统
     
@@ -25,6 +26,7 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
         log_level (str, optional): 日志级别
         process_name (str, optional): 进程名称，用于多进程环境中区分日志
         mode (str, optional): 初始化模式，"full"或"playback"
+        video_enabled (bool, optional): 覆盖是否启用VisionPro视频回传
         
     Returns:
         TeleopSystem: 遥操控系统实例
@@ -57,10 +59,11 @@ def run_teleop_system(config_path, vp_ip=None, robot_ip=None, end_effector=None,
     
     logger.info(f"正在启动VisionPro机械臂遥操控系统... 配置文件: {config_path}")
     
-    # 命令行参数覆盖配置文件
-    vp_ip = "192.168.8.145"
+    # ROS 参数覆盖配置文件；未提供时保留 YAML 中的地址。
     if vp_ip:
         config['vp_ip'] = vp_ip
+    if video_enabled is not None:
+        config['video_enabled'] = video_enabled
     # if robot_ip:
     #     config['robot_ip'] = robot_ip
     if end_effector:
@@ -95,6 +98,7 @@ class TeleopROSNode:
         # 从ROS参数服务器获取参数
         self.config_path = rospy.get_param('~config_path', 'config/config_arm_right.yaml')
         self.vp_ip = rospy.get_param('~vp_ip', None)
+        self.video_enabled = rospy.get_param('~video_enabled', None)
         self.robot_ip = rospy.get_param('~robot_ip', None)
         self.end_effector = rospy.get_param('~end_effector', None)
         self.log_level = rospy.get_param('~log_level', None)
@@ -124,7 +128,8 @@ class TeleopROSNode:
                 end_effector=self.end_effector,
                 log_level=self.log_level,
                 process_name=self.process_name,
-                mode="full"
+                mode="full",
+                video_enabled=self.video_enabled,
             )
             
             self.logger = get_logger()
