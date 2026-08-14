@@ -377,6 +377,10 @@ class ScriptedInsertionRunner:
         # ==================================================================
         self.controller._init_dofs()  # 缓存 site ID 和 DOF 地址
         self.controller._sample_error()
+        # The threshold must be sampled before metadata is captured. Pass the
+        # same value into run_episode() so the controller does not resample it
+        # after the HDF5 episode context has already been assembled.
+        self.controller._sample_wall_threshold()
         error_info = self.controller.get_last_error_info()
 
         if str(self.cfg.get("collection_mode", "direct")) == "two_stage_replay":
@@ -443,6 +447,7 @@ class ScriptedInsertionRunner:
             result = self.controller.run_episode(
                 error_xy_mm=error_info["scripted_error_xy_mm"],
                 error_angle_deg=error_info["scripted_error_angle_deg"],
+                wall_threshold_n=error_info["scripted_wall_threshold_n"],
             )
         except Exception as exc:
             logger.exception(f"Controller failed: {exc}")
@@ -720,6 +725,7 @@ class ScriptedInsertionRunner:
             result = self.controller.run_episode(
                 error_xy_mm=error_info["scripted_error_xy_mm"],
                 error_angle_deg=error_info["scripted_error_angle_deg"],
+                wall_threshold_n=error_info["scripted_wall_threshold_n"],
             )
         finally:
             stop_event.set()

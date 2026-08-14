@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from vptele.arm_control.scripted_collection import (
     EpisodeRunOutcome,
@@ -68,6 +69,97 @@ class StandaloneCollectionTest(unittest.TestCase):
                 runner.batch_stats,
                 {"attempted": 2, "kept": 2, "rejected": 0},
             )
+
+    def test_episode_metadata_uses_current_wall_threshold(self):
+        class FakeRecorder:
+            def __init__(self, output_dir):
+                self.output_dir = output_dir
+                self.hdf5_path = Path(output_dir) / "episode.hdf5"
+                self.episode_metadata = None
+
+            def start_episode(self, label, episode_metadata):
+                del label
+                self.episode_metadata = dict(episode_metadata)
+                return self.hdf5_path
+
+            def add_event(self, *_args, **_kwargs):
+                return None
+
+            def stop_episode(self, status):
+                del status
+                return self.hdf5_path
+
+        class FakeScriptedController:
+            def __init__(self):
+                self.wall_threshold = 0.0
+                self.run_wall_threshold = None
+
+            def _init_dofs(self):
+                return None
+
+            def _sample_error(self):
+                return None
+
+            def _sample_wall_threshold(self):
+                self.wall_threshold = 23.5
+
+            def get_last_error_info(self):
+                return {
+                    "scripted_error_xy_mm": 10.0,
+                    "scripted_error_angle_deg": 45.0,
+                    "scripted_wall_threshold_n": self.wall_threshold,
+                }
+
+            def run_episode(
+                self,
+                error_xy_mm,
+                error_angle_deg,
+                wall_threshold_n,
+            ):
+                del error_xy_mm, error_angle_deg
+                self.run_wall_threshold = wall_threshold_n
+                return SimpleNamespace(
+                    success=True,
+                    outcome="success",
+                    retry_count=0,
+                    duration_s=1.0,
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recorder = FakeRecorder(temp_dir)
+            robot_controller = SimpleNamespace(
+                arm_sign=[1] * 7,
+                hdf5_recorder=recorder,
+                task_success_auto_stop_recording=True,
+                task_success_triggered=True,
+                task_success_terminal_hold_time=0.0,
+                accept_teleop_commands=False,
+                reset_arm_to_initial_pose=lambda: None,
+            )
+            runner = ScriptedInsertionRunner(
+                robot_controller=robot_controller,
+                config={
+                    "review_mode": "manual",
+                    "hdf5_record_dir": temp_dir,
+                    "collection_mode": "direct",
+                    "manual_review_after_episode": False,
+                    "reset_arm_on_stop": False,
+                    "reset_ignore_teleop_duration": 0.0,
+                },
+            )
+            fake_controller = FakeScriptedController()
+            runner.controller = fake_controller
+            runner._set_fixed_hole_center = lambda: None
+
+            with patch("vptele.arm_control.scripted_collection.time.sleep"):
+                outcome = runner._run_one_episode()
+
+            self.assertTrue(outcome.success)
+            self.assertEqual(
+                recorder.episode_metadata["scripted_wall_threshold_n"],
+                23.5,
+            )
+            self.assertEqual(fake_controller.run_wall_threshold, 23.5)
 
     def test_standalone_import_chain_does_not_require_rospy(self):
         code = """

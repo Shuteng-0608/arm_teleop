@@ -146,7 +146,12 @@ class ScriptedPegInsertionController:
     # Public — 外部接口
     # ==================================================================
 
-    def run_episode(self, error_xy_mm=None, error_angle_deg=None) -> EpisodeResult:
+    def run_episode(
+        self,
+        error_xy_mm=None,
+        error_angle_deg=None,
+        wall_threshold_n=None,
+    ) -> EpisodeResult:
         """
         执行一条完整的 peg-in-hole 插入 episode。
 
@@ -156,6 +161,7 @@ class ScriptedPegInsertionController:
         参数:
           error_xy_mm:      XY 偏移量 (mm)，None 则随机采样
           error_angle_deg:  XY 偏移方向 (°)，None 则随机采样
+          wall_threshold_n: 预先采样的墙接触力阈值 (N)。None 则在此采样。
 
         返回:
           EpisodeResult: success=True 表示插入成功
@@ -163,7 +169,15 @@ class ScriptedPegInsertionController:
         t0 = time.time()
         timeout_s = max(1.0, float(self.cfg.get("episode_timeout_s", 180.0)))
         self._episode_deadline = time.monotonic() + timeout_s
-        self._sample_wall_threshold()
+        if wall_threshold_n is None:
+            self._sample_wall_threshold()
+        else:
+            threshold = float(wall_threshold_n)
+            if not np.isfinite(threshold) or threshold <= 0.0:
+                raise ValueError(
+                    "wall_threshold_n must be a positive finite number"
+                )
+            self._wall_threshold = threshold
 
         # ---- 设置初始 XY 误差 ----
         if error_xy_mm is not None:
