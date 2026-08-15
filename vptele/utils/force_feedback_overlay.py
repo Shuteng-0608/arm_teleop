@@ -65,6 +65,7 @@ class ForceFeedbackConfig:
         force_guidance_vector_semantics: str = "contact",
         force_guidance_correction_sign: float = -1.0,
         wrench_label: str = "comp",
+        hud_title: str = "Peg Contact HUD",
     ):
         self.enabled = bool(enabled)
         self.display_mode = str(display_mode)
@@ -174,6 +175,7 @@ class ForceFeedbackConfig:
             self.force_guidance_vector_semantics = "contact"
         self.force_guidance_correction_sign = float(force_guidance_correction_sign)
         self.wrench_label = str(wrench_label)
+        self.hud_title = str(hud_title).strip() or "Contact Force HUD"
 
         if self.display_mode not in {"overlay", "window", "off"}:
             self.display_mode = "overlay"
@@ -359,6 +361,7 @@ class ForceFeedbackConfig:
                 -1.0,
             ),
             wrench_label=config.get("force_feedback_wrench_label", "comp"),
+            hud_title=config.get("force_feedback_hud_title", "Peg Contact HUD"),
         )
 
 
@@ -717,9 +720,9 @@ def draw_force_guidance_ring_overlay(
     )
     cv2.addWeighted(overlay, 0.40, frame_bgr, 0.60, 0.0, frame_bgr)
 
-    title = "Peg Contact HUD"
-    if camera_name:
-        title = f"{title} - {camera_name}"
+    # The camera name is already drawn in the parent CCTV frame. Keeping the
+    # compact task-specific title here avoids colliding with the source label.
+    title = config.hud_title
     _put_text(frame_bgr, title, (x0 + 14, y0 + 24), 0.52, (235, 235, 235), 1)
     _put_text(
         frame_bgr,

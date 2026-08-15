@@ -75,6 +75,9 @@
                     <!-- Explicit tool inertia avoids deriving moving mass from overlapping collision segments. -->
                     <inertial pos="0 0 -0.058150" mass="0.085" diaginertia="0.000038 0.000038 0.000030" />
                     <camera name="ee_cam" pos="0.15 0.000 0.05" quat="0.984808 0 0.173648 0" fovy="80" />
+                    <!-- Visual-only adapter: close the 37 mm gap between link_7 and the socket back plate. -->
+                    <geom name="hole_tool_mount_stem_visual" type="cylinder" pos="0 0 -0.016000" size="0.016000 0.016000" material="mat_hole" contype="0" conaffinity="0" group="1" density="0" />
+                    <geom name="hole_tool_mount_flange_visual" type="cylinder" pos="0 0 -0.034500" size="0.024000 0.002500" material="mat_hole" contype="0" conaffinity="0" group="1" density="0" />
                     <geom name="tool_hole_ring_00" type="box" pos="0.019000 0.000000 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="1.000000 0.000000 0.000000 0.000000 1.000000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
                     <geom name="tool_hole_ring_01" type="box" pos="0.018353 0.004918 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.965926 0.258819 0.000000 -0.258819 0.965926 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
                     <geom name="tool_hole_ring_02" type="box" pos="0.016454 0.009500 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.866025 0.500000 0.000000 -0.500000 0.866025 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />

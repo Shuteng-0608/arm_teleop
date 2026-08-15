@@ -138,6 +138,7 @@ force_feedback_show_contact_state: true
 force_feedback_show_arrow: false
 force_feedback_smoothing_alpha: 0.25
 force_feedback_window_name: "Force Feedback HUD"
+force_feedback_hud_title: "Hole Contact HUD"
 
 force_feedback_insertion_axis_world: [0.0, -1.0, 0.0]
 force_feedback_use_compensated_wrench: true

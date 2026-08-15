@@ -2272,7 +2272,12 @@ class RobotControllerMuJoCoPegTool:
         )
 
     def _get_force_feedback_wrench(self, render_data: mujoco.MjData):
-        raw = raw_ft_wrench(self.model, render_data)
+        raw = raw_ft_wrench(
+            self.model,
+            render_data,
+            force_sensor_name=self.ft_force_sensor_name,
+            torque_sensor_name=self.ft_torque_sensor_name,
+        )
         if raw is None:
             return None, "raw"
 

@@ -62,6 +62,35 @@ class MovingHoleModelTest(unittest.TestCase):
             )
         )
 
+    def test_visual_mount_bridges_link_and_socket_without_collision(self):
+        def geom_interval(name):
+            geom_id = self._id(mujoco.mjtObj.mjOBJ_GEOM, name)
+            self.assertEqual(
+                int(self.model.geom_type[geom_id]),
+                int(mujoco.mjtGeom.mjGEOM_CYLINDER),
+            )
+            self.assertEqual(int(self.model.geom_contype[geom_id]), 0)
+            self.assertEqual(int(self.model.geom_conaffinity[geom_id]), 0)
+            center_z = float(self.model.geom_pos[geom_id, 2])
+            half_length = float(self.model.geom_size[geom_id, 1])
+            return center_z - half_length, center_z + half_length
+
+        stem_min, stem_max = geom_interval("hole_tool_mount_stem_visual")
+        flange_min, flange_max = geom_interval("hole_tool_mount_flange_visual")
+
+        back_stop_id = self._id(
+            mujoco.mjtObj.mjOBJ_GEOM,
+            "tool_hole_back_stop",
+        )
+        back_stop_rear = float(
+            self.model.geom_pos[back_stop_id, 2]
+            + self.model.geom_size[back_stop_id, 1]
+        )
+
+        self.assertAlmostEqual(stem_max, 0.0, places=9)
+        self.assertAlmostEqual(stem_min, flange_max, places=9)
+        self.assertAlmostEqual(flange_min, back_stop_rear, places=9)
+
     def test_approach_and_success_sites_leave_seating_clearance(self):
         tip = self._id(mujoco.mjtObj.mjOBJ_SITE, "fixed_peg_tip_site")
         approach = self._id(
