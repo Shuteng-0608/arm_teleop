@@ -9,7 +9,7 @@ ScriptedPegInsertionController 中。
 
 本运行器流程：
   1. 复位机械臂到初始关节角
-  2. 固定孔位到中心位置
+  2. 将固定任务目标（孔或 peg）放到中心位置
   3. 启用遥操作指令接收
   4. 等待复位过渡期
   5. 初始化 MuJoCo Jacobian IK 所需的模型缓存
@@ -342,9 +342,8 @@ class ScriptedInsertionRunner:
         self._reset_episode_signals()
 
         # ==================================================================
-        # 2. 固定孔位到中心
-        #    将 wall_task body 移到 [-0.250, -0.500, 1.000]
-        #    不使用 hole_grid_scheduler 的随机孔位
+        # 2. 将固定任务目标放到配置的中心位置。
+        #    旧场景移动 wall_task；反向场景移动 fixed_peg_fixture。
         # ==================================================================
         self._set_fixed_hole_center()
 
@@ -748,7 +747,7 @@ class ScriptedInsertionRunner:
             joint_pos = np.asarray(self.rc.data.qpos[:7], dtype=np.float64).copy()
             t_sim = float(self.rc.data.time)
 
-        ee_pos = self.rc.get_site_position("peg_tip_site")
+        ee_pos = self.rc.get_site_position(self.controller.moving_site_name)
         ee_pose = np.full(7, np.nan, dtype=np.float64)
         if ee_pos is not None:
             ee_pose[:3] = np.asarray(ee_pos, dtype=np.float64)
@@ -779,7 +778,9 @@ class ScriptedInsertionRunner:
         """Snapshot MuJoCo and controller state before stage1."""
         import mujoco
 
-        hole_body_name = self.cfg.get("hole_body_name", "wall_task")
+        hole_body_name = self.cfg.get(
+            "target_body_name", self.cfg.get("hole_body_name", "wall_task")
+        )
         body_id = mujoco.mj_name2id(
             self.rc.model,
             mujoco.mjtObj.mjOBJ_BODY,
@@ -1204,11 +1205,11 @@ class ScriptedInsertionRunner:
     # ======================================================================
 
     def _set_fixed_hole_center(self) -> None:
-        """将 wall_task body 固定到中心位置。
+        """Place the fixed task target body at its configured nominal pose.
 
-        脚本化插入使用固定孔位（不使用 hole_grid_scheduler 的随机网格）。
-        孔位由配置文件中的 fixed_hole_world_pos 指定，
-        默认为 XML 中的 wall_task 默认位置: [-0.250, -0.500, 1.000]。
+        New scenes use ``fixed_target_world_pos`` and ``target_body_name``.
+        The legacy ``fixed_hole_world_pos`` / ``hole_body_name`` names remain
+        supported so existing fixed-hole collection is unchanged.
 
         技术细节：
           - body_pos 是 MuJoCo model 中的 body 初始位置
@@ -1217,7 +1218,9 @@ class ScriptedInsertionRunner:
         """
         import mujoco
 
-        hole_body_name = self.cfg.get("hole_body_name", "wall_task")
+        hole_body_name = self.cfg.get(
+            "target_body_name", self.cfg.get("hole_body_name", "wall_task")
+        )
         body_id = mujoco.mj_name2id(
             self.rc.model,
             mujoco.mjtObj.mjOBJ_BODY,
@@ -1225,19 +1228,19 @@ class ScriptedInsertionRunner:
         )
         if body_id == -1:
             logger.warning(
-                f"Hole body '{hole_body_name}' not found; "
-                f"hole position unchanged."
+                f"Task target body '{hole_body_name}' not found; "
+                f"target position unchanged."
             )
             return
 
         # 从配置读取目标位置（默认与 XML 一致）
         default_pos = self.cfg.get(
-            "fixed_hole_world_pos",
-            [-0.250, -0.500, 1.000],
+            "fixed_target_world_pos",
+            self.cfg.get("fixed_hole_world_pos", [-0.250, -0.500, 1.000]),
         )
         # 持锁写入并刷新 forward kinematics
         with self.rc.lock:
             self.rc.model.body_pos[body_id] = default_pos
             import mujoco as mj
             mj.mj_forward(self.rc.model, self.rc.data)
-        logger.info(f"Hole set to fixed center: {default_pos}")
+        logger.info(f"Task target set to fixed center: {default_pos}")

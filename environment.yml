@@ -1,0 +1,28 @@
+name: arm_teleop
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      # MuJoCo simulation and numerical control
+      - mujoco==3.10.0
+      - numpy==2.2.6
+      - scipy==1.15.3
+
+      # Configuration, recording, image processing, and analysis
+      - PyYAML==6.0.3
+      - h5py==3.16.0
+      - opencv-python==4.14.0.94
+      - imageio==2.37.4
+      - matplotlib==3.10.9
+      - requests==2.34.2
+
+      # Apple Vision Pro tracking stream
+      - avp-stream==1.0
+
+      # ROS-free unit and integration tests
+      - pytest==9.1.1

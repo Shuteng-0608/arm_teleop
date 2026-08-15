@@ -829,6 +829,20 @@ class TeleopSystemMujoco:
             "reset_ignore_teleop_duration",
             self.config.get("reset_ignore_teleop_duration", 0.5),
         )
+        sc_cfg.setdefault(
+            "moving_site_name",
+            self.config.get("task_moving_site_name", "peg_tip_site"),
+        )
+        sc_cfg.setdefault(
+            "target_goal_site_name",
+            self.config.get("task_target_site_name", "hole_goal_site"),
+        )
+        sc_cfg.setdefault(
+            "target_body_name",
+            self.config.get(
+                "target_body_name", self.config.get("hole_body_name", "wall_task")
+            ),
+        )
 
         logger.info("正在初始化脚本插入控制器...")
 

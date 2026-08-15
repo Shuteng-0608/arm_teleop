@@ -13,10 +13,13 @@ from vptele.arm_control.scripted_collection import (
     EpisodeRunOutcome,
     ScriptedInsertionRunner,
 )
-from vptele.collect_mujoco import DEFAULT_CONFIG, build_standalone_config
+from vptele.main_scripted import DEFAULT_CONFIG, build_standalone_config
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+MOVING_HOLE_CONFIG = (
+    REPO_ROOT / "vptele" / "config" / "config_arm_right_moving_hole.yaml"
+)
 
 
 class StandaloneCollectionTest(unittest.TestCase):
@@ -36,8 +39,30 @@ class StandaloneCollectionTest(unittest.TestCase):
         self.assertFalse(config["visionpro_video_enabled"])
         self.assertFalse(config["launch_viewer"])
         self.assertFalse(config["show_camera_streams"])
+        self.assertTrue(config["scripted_controller"]["enabled"])
         self.assertEqual(config["scripted_controller"]["review_mode"], "auto")
         self.assertEqual(config["scripted_controller"]["target_episodes"], 3)
+
+    def test_scripted_entry_enables_safely_disabled_moving_hole_profile(self):
+        options = argparse.Namespace(
+            config=str(MOVING_HOLE_CONFIG),
+            target_episodes=2,
+            max_attempts=4,
+            reject_action="quarantine",
+            show_ui=True,
+            log_level=None,
+        )
+        config = build_standalone_config(options)
+
+        self.assertTrue(config["scripted_controller"]["enabled"])
+        self.assertEqual(config["scripted_controller"]["review_mode"], "auto")
+        self.assertEqual(config["scripted_controller"]["target_episodes"], 2)
+        self.assertFalse(config["enable_ros_interfaces"])
+        self.assertFalse(config["enable_recording_service"])
+        self.assertFalse(config["vp_enabled"])
+        self.assertFalse(config["visionpro_video_enabled"])
+        self.assertTrue(config["launch_viewer"])
+        self.assertTrue(config["show_camera_streams"])
 
     def test_automatic_runner_finishes_without_ros_shutdown_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -165,6 +190,7 @@ class StandaloneCollectionTest(unittest.TestCase):
         code = """
 import sys
 sys.modules['rospy'] = None
+import vptele.main_scripted
 import vptele.arm_control.robot_controller_mujoco_peg_tool_contact
 import vptele.arm_control.scripted_collection
 import vptele.core.mujoco_collection_system
@@ -180,6 +206,15 @@ print('ok')
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "ok")
+
+    def test_legacy_collect_module_reexports_new_entry(self):
+        from vptele import collect_mujoco, main_scripted
+
+        self.assertIs(collect_mujoco.main, main_scripted.main)
+        self.assertIs(
+            collect_mujoco.build_standalone_config,
+            main_scripted.build_standalone_config,
+        )
 
 
 if __name__ == "__main__":

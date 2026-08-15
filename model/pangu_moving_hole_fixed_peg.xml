@@ -1,0 +1,218 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="Right_Arm_Moving_Hole_Fixed_Peg">
+  <compiler angle="radian" meshdir="../meshes_mujoco_stable/" />
+  <default>
+    <geom contype="0" conaffinity="0" />
+  </default>
+  <option timestep="0.001" integrator="implicitfast" solver="Newton" iterations="80" tolerance="1e-8" cone="elliptic" impratio="10">
+    <!-- peg-in-hole 场景：接触计算已启用；机器人本体碰撞默认关闭，仅 peg/table/hole/floor 开启碰撞 -->
+  </option>
+  <!-- <option gravity="0 0 0"/> -->
+  <asset>
+    <mesh name="base_link" file="base_link.STL" />
+    <mesh name="link_1" file="link_1.STL" />
+    <mesh name="link_2" file="link_2.STL" />
+    <mesh name="link_3" file="link_3.STL" />
+    <mesh name="link_4" file="link_4.STL" />
+    <mesh name="link_5" file="link_5.STL" />
+    <mesh name="link_6" file="link_6.STL" />
+    <mesh name="link_7" file="link_7.STL" />
+    <material name="mat_table" rgba="0.45 0.45 0.45 1" />
+    <material name="mat_hole" rgba="0.32 0.32 0.34 1" />
+    <material name="mat_peg" rgba="0.90 0.18 0.10 1" />
+    <material name="mat_goal" rgba="0.10 0.80 0.20 0.45" />
+    <material name="mat_room_floor"
+              rgba="0.42 0.42 0.42 1"
+              specular="0.03"
+              shininess="0.15" />
+
+    <material name="mat_room_wall"
+              rgba="0.58 0.58 0.58 1"
+              specular="0.02"
+              shininess="0.10" />
+  </asset>
+  <worldbody>
+    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="base_link" />
+    <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="base_link" />
+    <!-- ARM -->
+    <body name="link_1" pos="-0.114 0 1.37902" quat="0.5 0.5 -0.5 -0.5">
+      <inertial pos="0.0366162 1.21175e-05 0.0525334" quat="0.981443 1.9392e-06 0.191754 0.000264747" mass="0.315131" diaginertia="0.000716968 0.000587776 0.000434534" />
+      <joint name="joint_1" pos="0 0 0" axis="0 0 -1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_1" />
+      <geom type="mesh" rgba="1 1 1 1" mesh="link_1" />
+      <body name="link_2" pos="0.0211 0 0.1" quat="0.707107 0 0.707107 0">
+        <inertial pos="9.54196e-06 -0.0443889 -0.0130022" quat="-0.172407 0.686388 -0.171633 0.685339" mass="6.85816" diaginertia="0.00551613 0.0052887 0.00427721" />
+        <joint name="joint_2" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="link_2" />
+        <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="link_2" />
+        <body name="link_3" pos="0 -0.093 -0.0211" quat="0 0 -0.707107 0.707107">
+          <inertial pos="-0.00079542 0.00226356 0.170223" quat="0.999998 -0.00189533 -5.25498e-06 9.69898e-05" mass="0.624474" diaginertia="0.00178083 0.00166096 0.000302557" />
+          <joint name="joint_3" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_3" />
+          <geom type="mesh" rgba="1 1 1 1" mesh="link_3" />
+          <body name="link_4" pos="-0.001 -0.00899995 0.266867" quat="0.5 0.5 -0.5 -0.5">
+            <inertial pos="-0.000282345 0.0727351 0.000126694" quat="0.506302 0.483855 0.4854 0.523383" mass="0.792032" diaginertia="0.000670828 0.000450358 0.000444735" />
+            <joint name="joint_4" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="link_4" />
+            <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="link_4" />
+            <body name="link_5" pos="0 0.071233 0" quat="0.5 0.5 0.5 -0.5">
+              <inertial pos="0.000372562 0.00120167 -0.0970513" quat="0.999822 -0.0186126 0.000438947 -0.00301413" mass="0.411936" diaginertia="0.000672976 0.000623031 0.00013219" />
+              <joint name="joint_5" pos="0 0 0" axis="0 0 -1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_5" />
+              <geom type="mesh" rgba="1 1 1 1" mesh="link_5" />
+              <body name="link_6" pos="0 -0.000607882 -0.184202" quat="0.5 -0.5 -0.5 0.5">
+                <inertial pos="0.00186406 0.0052948 1.14075e-12" quat="0.700539 0.700539 -0.0961489 -0.0961489" mass="0.00838811" diaginertia="4.96142e-07 4.31204e-07 3.14868e-07" />
+                <joint name="joint_6" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="link_6" />
+                <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="link_6" />
+                <body name="link_7" pos="0.00310788 0.0131985 0" quat="0 0.707107 0 -0.707107">
+                  <inertial pos="-5.56422e-10 -0.00911648 -0.00249067" quat="0.705467 0.0481217 -0.0481037 0.705469" mass="0.0617602" diaginertia="2.2763e-05 1.5881e-05 1.18654e-05" />
+                  <joint name="joint_7" pos="0 0 0" axis="0 0 -1" actuatorfrcrange="-150 150" damping="1.0" armature="0.01" frictionloss="0.0" />
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.776471 0.756863 0.737255 1" mesh="link_7" />
+                  <geom type="mesh" rgba="0.776471 0.756863 0.737255 1" mesh="link_7" />
+                  <!-- MOVING HOLE TOOL: the socket is rigidly mounted to link_7. -->
+                  <body name="hole_tool" pos="0 -0.0125 0.0025" quat="0.707107 -0.707107 0 0">
+                    <!-- Explicit tool inertia avoids deriving moving mass from overlapping collision segments. -->
+                    <inertial pos="0 0 -0.058150" mass="0.085" diaginertia="0.000038 0.000038 0.000030" />
+                    <camera name="ee_cam" pos="0.15 0.000 0.05" quat="0.984808 0 0.173648 0" fovy="80" />
+                    <geom name="tool_hole_ring_00" type="box" pos="0.019000 0.000000 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="1.000000 0.000000 0.000000 0.000000 1.000000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_01" type="box" pos="0.018353 0.004918 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.965926 0.258819 0.000000 -0.258819 0.965926 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_02" type="box" pos="0.016454 0.009500 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.866025 0.500000 0.000000 -0.500000 0.866025 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_03" type="box" pos="0.013435 0.013435 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.707107 0.707107 0.000000 -0.707107 0.707107 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_04" type="box" pos="0.009500 0.016454 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.500000 0.866025 0.000000 -0.866025 0.500000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_05" type="box" pos="0.004918 0.018353 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.258819 0.965926 0.000000 -0.965926 0.258819 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_06" type="box" pos="0.000000 0.019000 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.000000 1.000000 0.000000 -1.000000 0.000000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_07" type="box" pos="-0.004918 0.018353 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.258819 0.965926 0.000000 -0.965926 -0.258819 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_08" type="box" pos="-0.009500 0.016454 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.500000 0.866025 0.000000 -0.866025 -0.500000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_09" type="box" pos="-0.013435 0.013435 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.707107 0.707107 0.000000 -0.707107 -0.707107 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_10" type="box" pos="-0.016454 0.009500 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.866025 0.500000 0.000000 -0.500000 -0.866025 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_11" type="box" pos="-0.018353 0.004918 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.965926 0.258819 0.000000 -0.258819 -0.965926 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_12" type="box" pos="-0.019000 0.000000 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-1.000000 0.000000 0.000000 0.000000 -1.000000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_13" type="box" pos="-0.018353 -0.004918 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.965926 -0.258819 0.000000 0.258819 -0.965926 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_14" type="box" pos="-0.016454 -0.009500 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.866025 -0.500000 0.000000 0.500000 -0.866025 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_15" type="box" pos="-0.013435 -0.013435 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.707107 -0.707107 0.000000 0.707107 -0.707107 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_16" type="box" pos="-0.009500 -0.016454 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.500000 -0.866025 0.000000 0.866025 -0.500000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_17" type="box" pos="-0.004918 -0.018353 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="-0.258819 -0.965926 0.000000 0.965926 -0.258819 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_18" type="box" pos="0.000000 -0.019000 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.000000 -1.000000 0.000000 1.000000 0.000000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_19" type="box" pos="0.004918 -0.018353 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.258819 -0.965926 0.000000 0.965926 0.258819 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_20" type="box" pos="0.009500 -0.016454 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.500000 -0.866025 0.000000 0.866025 0.500000 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_21" type="box" pos="0.013435 -0.013435 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.707107 -0.707107 0.000000 0.707107 0.707107 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_22" type="box" pos="0.016454 -0.009500 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.866025 -0.500000 0.000000 0.500000 0.866025 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <geom name="tool_hole_ring_23" type="box" pos="0.018353 -0.004918 -0.067500" size="0.005000 0.002487 0.022500" xyaxes="0.965926 -0.258819 0.000000 0.258819 0.965926 0.000000" material="mat_hole" contype="1" conaffinity="1" friction="0.8 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <!-- Blind-hole bottom: its front face is at local z=-0.045 m. -->
+                    <geom name="tool_hole_back_stop" type="cylinder" pos="0 0 -0.041000" size="0.024000 0.004000" material="mat_hole" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+                    <!-- A 2 mm seating clearance avoids simultaneous bottom/base impacts. -->
+                    <site name="hole_goal_site" type="sphere" pos="0 0 -0.047000" size="0.006" rgba="0 0 0 0" />
+                    <site name="hole_entrance_site" type="sphere" pos="0 0 -0.090000" size="0.002" rgba="0 0 0 0" />
+                    <site name="hole_ft_sensor_site" pos="0 0 0" size="0.006" rgba="0 0 1 0.35" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <!-- <light name="task_key_light" pos="0.6 -1.0 2.2" dir="-0.4 0.7 -1" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" /> -->
+    <!-- Soft top fill light: reduce shadows around peg and hole -->
+    <light name="task_top_fill_light"
+          mode="fixed"
+          directional="false"
+          pos="-0.250 -0.500 2.100"
+          dir="0.000 0.000 -1.000"
+          diffuse="0.75 0.75 0.75"
+          ambient="0.30 0.30 0.30"
+          specular="0.04 0.04 0.04"
+          castshadow="false" />
+
+    <!-- Front/camera-side fill light: illuminate the peg before insertion -->
+    <light name="task_front_fill_light"
+          mode="fixed"
+          directional="false"
+          pos="-0.250 0.150 1.350"
+          dir="0.000 -1.000 -0.250"
+          diffuse="0.35 0.35 0.35"
+          ambient="0.15 0.15 0.15"
+          specular="0.03 0.03 0.03"
+          castshadow="false" />
+
+    <!-- Weak side key light: keep some 3D structure and edge contrast -->
+    <light name="task_side_key_light"
+          mode="fixed"
+          directional="false"
+          pos="0.350 -0.150 1.600"
+          dir="-0.650 -0.650 -0.350"
+          diffuse="0.35 0.35 0.35"
+          ambient="0.10 0.10 0.10"
+          specular="0.05 0.05 0.05"
+          castshadow="false" />
+    <geom name="floor" type="plane" pos="0 0 0" size="2.0 2.0 0.02" rgba="0.80 0.82 0.85 1" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+    <!-- Center of Table -->
+    <!-- Pos of Round Hole Fixture -->
+    <camera name="wall_task_cam" pos="0.55 -1.20 1.15" xyaxes="1 0 0 0 0.55 0.84" />
+    <camera name="wall_side_cam" pos="-0.40 -0.95 1.00" xyaxes="1 0 0 0 0.45 0.89" />
+    <!-- BASE-TOP GLOBAL CAMERA: fixed camera near the robot base top, looking at the wall task region -->
+    <camera name="base_top_cam" pos="0.00000 -0.10000 1.50000" xyaxes="-0.847998 0.529999 0.000000 -0.385518 -0.616828 0.686221" fovy="75" />
+    <camera name="cctv_cam" pos="-0.10000 -0.30000 1.10000" xyaxes="-0.800000 0.600000 0.000000 -0.222834 -0.297113 0.928477" fovy="75" />
+    <!-- FIXED PEG: 45 mm exposed length, aligned with the moving socket axis. -->
+    <body name="fixed_peg_fixture" pos="-0.250 -0.543500 1.000">
+      <geom name="fixed_peg_base" type="box" pos="0 -0.027500 0" size="0.050000 0.005000 0.050000" material="mat_table" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+      <geom name="fixed_cylindrical_peg" type="cylinder" pos="0 0 0" quat="0.707107 -0.707107 0 0" size="0.011000 0.022500" material="mat_peg" contype="1" conaffinity="1" friction="1.0 0.005 0.0001" condim="4" solref="0.004 1" solimp="0.90 0.95 0.001" margin="0.0005" gap="0.0000" />
+      <site name="fixed_peg_tip_site" type="sphere" pos="0 0.022500 0" size="0.006" rgba="0 0 0 0" />
+      <!-- Target for hole_goal_site when the socket entrance first reaches the peg tip. -->
+      <site name="fixed_peg_approach_goal_site" type="sphere" pos="0 0.065500 0" size="0.002" rgba="0 0 0 0" />
+    </body>
+    <body name="visual_room_background" pos="0 0 0">
+        <!-- Larger visual-only floor -->
+        <geom name="room_floor"
+              type="box"
+              pos="0.000 -0.300 0.000"
+              size="2.200 2.000 0.015"
+              material="mat_room_floor"
+              contype="0"
+              conaffinity="0" />
+
+        <!-- Back wall, farther behind the task area -->
+        <geom name="room_back_wall"
+              type="box"
+              pos="0.000 -2.300 1.100"
+              size="2.200 0.020 1.100"
+              material="mat_room_wall"
+              contype="0"
+              conaffinity="0" />
+
+        <!-- Left wall -->
+        <geom name="room_left_wall"
+              type="box"
+              pos="-2.200 -0.300 1.100"
+              size="0.020 2.000 1.100"
+              material="mat_room_wall"
+              contype="0"
+              conaffinity="0" />
+
+        <!-- Right wall -->
+        <geom name="room_right_wall"
+              type="box"
+              pos="2.200 -0.300 1.100"
+              size="0.020 2.000 1.100"
+              material="mat_room_wall"
+              contype="0"
+              conaffinity="0" />
+    </body>
+  </worldbody>
+  <actuator>
+    <!-- Only 7 arm actuators are kept for the moving-hole tool model -->
+    <!-- 为每个关节添加执行器 -->
+    <position name="motor_joint_1" joint="joint_1" kp="900" kv="45" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-30 30" forcelimited="true" />
+    <position name="motor_joint_2" joint="joint_2" kp="900" kv="45" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-30 30" forcelimited="true" />
+    <position name="motor_joint_3" joint="joint_3" kp="800" kv="40" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-20 20" forcelimited="true" />
+    <position name="motor_joint_4" joint="joint_4" kp="700" kv="35" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-20 20" forcelimited="true" />
+    <position name="motor_joint_5" joint="joint_5" kp="450" kv="25" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="motor_joint_6" joint="joint_6" kp="250" kv="18" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="motor_joint_7" joint="joint_7" kp="180" kv="14" ctrlrange="-3.2 3.2" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+  </actuator>
+  <sensor>
+    <force name="hole_ft_force" site="hole_ft_sensor_site" />
+    <torque name="hole_ft_torque" site="hole_ft_sensor_site" />
+  </sensor>
+</mujoco>

@@ -13,6 +13,36 @@ from vptele.arm_control.scripted_insertion import (
 
 
 class ScriptedInsertionRandomizationTest(unittest.TestCase):
+    def test_role_mapping_uses_moving_hole_and_fixed_peg_sites(self):
+        rc = Mock()
+        rc.arm_sign = [1] * 7
+        controller = ScriptedPegInsertionController(
+            robot_controller=rc,
+            ik_service_proxy=None,
+            config={
+                "moving_site_name": "hole_goal_site",
+                "target_goal_site_name": "fixed_peg_tip_site",
+                "target_approach_site_name": "fixed_peg_approach_goal_site",
+                "target_body_name": "fixed_peg_fixture",
+                "initial_robot_pose": [0, 0, 0, 0, 0, 0],
+            },
+        )
+        positions = {
+            "hole_goal_site": [1.0, 2.0, 3.0],
+            "fixed_peg_tip_site": [4.0, 5.0, 6.0],
+            "fixed_peg_approach_goal_site": [4.0, 5.045, 6.0],
+        }
+        rc.get_site_position.side_effect = positions.get
+
+        np.testing.assert_allclose(controller._peg_w(), positions["hole_goal_site"])
+        np.testing.assert_allclose(
+            controller._hole_goal(), positions["fixed_peg_tip_site"]
+        )
+        np.testing.assert_allclose(
+            controller._hole_entrance(),
+            positions["fixed_peg_approach_goal_site"],
+        )
+
     def test_presampled_wall_threshold_is_not_resampled(self):
         controller = ScriptedPegInsertionController.__new__(
             ScriptedPegInsertionController

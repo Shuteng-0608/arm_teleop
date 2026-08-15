@@ -105,6 +105,27 @@ class RobotControllerMuJoCoPegTool:
         self.config = config or {}
         self.model_path = model_path
 
+        # Task-role names are configurable so the same controller supports
+        # both a moving peg entering a fixed hole and a moving hole covering
+        # a fixed peg.  Legacy defaults preserve the original scene.
+        self.ft_force_sensor_name = self.config.get(
+            "hdf5_ft_force_sensor_name", "peg_ft_force"
+        )
+        self.ft_torque_sensor_name = self.config.get(
+            "hdf5_ft_torque_sensor_name", "peg_ft_torque"
+        )
+        self.task_peg_geom_name = self.config.get(
+            "hdf5_peg_geom_name", "cylindrical_peg"
+        )
+        self.task_moving_site_name = self.config.get(
+            "task_moving_site_name",
+            self.config.get("task_success_peg_site_name", "peg_tip_site"),
+        )
+        self.task_target_site_name = self.config.get(
+            "task_target_site_name",
+            self.config.get("task_success_hole_site_name", "hole_goal_site"),
+        )
+
 
 
         
@@ -151,7 +172,10 @@ class RobotControllerMuJoCoPegTool:
             dtype=np.int32,
         )
         self._sensor_address_cache = {}
-        for sensor_name in ("peg_ft_force", "peg_ft_torque"):
+        for sensor_name in (
+            self.ft_force_sensor_name,
+            self.ft_torque_sensor_name,
+        ):
             sensor_id = mujoco.mj_name2id(
                 self.model,
                 mujoco.mjtObj.mjOBJ_SENSOR,
@@ -300,12 +324,12 @@ class RobotControllerMuJoCoPegTool:
         ft_force_sensor_id = mujoco.mj_name2id(
             self.model,
             mujoco.mjtObj.mjOBJ_SENSOR,
-            "peg_ft_force",
+            self.ft_force_sensor_name,
         )
         ft_torque_sensor_id = mujoco.mj_name2id(
             self.model,
             mujoco.mjtObj.mjOBJ_SENSOR,
-            "peg_ft_torque",
+            self.ft_torque_sensor_name,
         )
 
         if ft_force_sensor_id != -1:
@@ -390,7 +414,7 @@ class RobotControllerMuJoCoPegTool:
         self.peg_geom_id = mujoco.mj_name2id(
             self.model,
             mujoco.mjtObj.mjOBJ_GEOM,
-            "cylindrical_peg",
+            self.task_peg_geom_name,
         )
 
         self.peg_mat_id = mujoco.mj_name2id(
@@ -502,6 +526,14 @@ class RobotControllerMuJoCoPegTool:
                 ft_gravity_sensor_sign=float(
                     self.config.get("hdf5_ft_gravity_sensor_sign", -1.0)
                 ),
+                ee_body_name=self.config.get(
+                    "hdf5_ee_body_name", "peg_tool"
+                ),
+                task_name=self.config.get(
+                    "hdf5_task_name", "wall_peg_in_hole"
+                ),
+                ft_force_sensor_name=self.ft_force_sensor_name,
+                ft_torque_sensor_name=self.ft_torque_sensor_name,
                 peg_geom_name=self.config.get(
                     "hdf5_peg_geom_name",
                     "cylindrical_peg",
@@ -516,6 +548,10 @@ class RobotControllerMuJoCoPegTool:
                 ),
                 hole_goal_site_name=self.config.get(
                     "hdf5_hole_goal_site_name",
+                    self.config.get("task_success_hole_site_name", "hole_goal_site"),
+                ),
+                sampled_target_site_name=self.config.get(
+                    "hdf5_sampled_target_site_name",
                     self.config.get("task_success_hole_site_name", "hole_goal_site"),
                 ),
                 hole_ring_geom_prefix=self.config.get(
@@ -847,8 +883,11 @@ class RobotControllerMuJoCoPegTool:
             )
 
         self.hole_body_name = self.config.get(
-            "hole_body_name",
-            self.config.get("hole_random_body_name", "wall_task"),
+            "target_body_name",
+            self.config.get(
+                "hole_body_name",
+                self.config.get("hole_random_body_name", "wall_task"),
+            ),
         )
         self.hole_body_id = mujoco.mj_name2id(
             self.model,
@@ -2742,8 +2781,8 @@ class RobotControllerMuJoCoPegTool:
         Return [Fx, Fy, Fz, Tx, Ty, Tz] from MuJoCo force/torque sensors if present.
         The values are expressed in the ft_sensor_site frame.
         """
-        f = self.get_sensor_data("peg_ft_force")
-        t = self.get_sensor_data("peg_ft_torque")
+        f = self.get_sensor_data(self.ft_force_sensor_name)
+        t = self.get_sensor_data(self.ft_torque_sensor_name)
         if f is None or t is None:
             return None
         return f + t
@@ -2760,7 +2799,7 @@ class RobotControllerMuJoCoPegTool:
                 c = self.data.contact[i]
                 g1 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom1)
                 g2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom2)
-                if g1 == "cylindrical_peg" or g2 == "cylindrical_peg":
+                if g1 == self.task_peg_geom_name or g2 == self.task_peg_geom_name:
                     print(f"[contact {i}] {g1} <-> {g2}, dist={c.dist:.6f}")
     
     def _is_hdf5_recording_active(self) -> bool:
@@ -2849,8 +2888,8 @@ class RobotControllerMuJoCoPegTool:
 
     def _get_peg_ft_sensor_locked(self):
         """Return [Fx, Fy, Fz, Tx, Ty, Tz] from MuJoCo FT sensors."""
-        f = self._get_sensor_data_locked("peg_ft_force")
-        t = self._get_sensor_data_locked("peg_ft_torque")
+        f = self._get_sensor_data_locked(self.ft_force_sensor_name)
+        t = self._get_sensor_data_locked(self.ft_torque_sensor_name)
 
         if f is None or t is None:
             return None
@@ -3344,6 +3383,10 @@ class RobotControllerMuJoCoPegTool:
                 "hole_nominal_body_pos": self.hole_nominal_body_pos.tolist(),
                 "hole_actual_body_pos": body_pos.tolist(),
                 "hole_offset_from_nominal_xyz": offset.tolist(),
+                "target_body_name": self.hole_body_name,
+                "target_nominal_body_pos": self.hole_nominal_body_pos.tolist(),
+                "target_actual_body_pos": body_pos.tolist(),
+                "target_offset_from_nominal_xyz": offset.tolist(),
             }
         )
         self.current_hole_sample = context
@@ -3425,8 +3468,8 @@ class RobotControllerMuJoCoPegTool:
         # 如果后面还想画别的自定义元素，也统一放在这个函数里画。
         viewer.user_scn.ngeom = 0
 
-        peg_tip = self._get_site_xpos_for_viewer("peg_tip_site")
-        hole_center = self._get_site_xpos_for_viewer("hole_center_site")
+        peg_tip = self._get_site_xpos_for_viewer(self.task_moving_site_name)
+        hole_center = self._get_site_xpos_for_viewer(self.task_target_site_name)
 
         if peg_tip is None or hole_center is None:
             self.set_peg_color(self.default_peg_rgba)

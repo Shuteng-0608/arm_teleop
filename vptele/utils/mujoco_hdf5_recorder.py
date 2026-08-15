@@ -85,12 +85,14 @@ class MujocoHDF5Recorder:
         joint_names: Optional[List[str]] = None,
         actuator_names: Optional[List[str]] = None,
         ee_body_name: str = "peg_tool",
+        task_name: str = "wall_peg_in_hole",
         ft_force_sensor_name: str = "peg_ft_force",
         ft_torque_sensor_name: str = "peg_ft_torque",
         peg_geom_name: str = "cylindrical_peg",
         peg_tip_site_name: str = "peg_tip_site",
         hole_center_site_name: str = "hole_goal_site",
         hole_goal_site_name: Optional[str] = None,
+        sampled_target_site_name: Optional[str] = None,
         hole_ring_geom_prefix: str = "wall_hole_ring_",
         hole_axis_body: Optional[List[float]] = None,
         image_compression: Optional[str] = "lzf",   # "lzf", "gzip", or None
@@ -148,11 +150,15 @@ class MujocoHDF5Recorder:
         self.joint_names = list(joint_names or [f"joint_{i}" for i in range(1, 8)])
         self.actuator_names = list(actuator_names or [f"motor_joint_{i}" for i in range(1, 8)])
         self.ee_body_name = ee_body_name
+        self.task_name = str(task_name)
         self.ft_force_sensor_name = ft_force_sensor_name
         self.ft_torque_sensor_name = ft_torque_sensor_name
         self.peg_geom_name = peg_geom_name
         self.peg_tip_site_name = peg_tip_site_name
         self.hole_goal_site_name = hole_goal_site_name or hole_center_site_name
+        self.sampled_target_site_name = (
+            sampled_target_site_name or self.hole_goal_site_name
+        )
         # Compatibility alias for existing HDF5 field names and callers.
         self.hole_center_site_name = self.hole_goal_site_name
         self.hole_ring_geom_prefix = str(hole_ring_geom_prefix)
@@ -263,6 +269,11 @@ class MujocoHDF5Recorder:
             self.hole_goal_site_name,
         )
         self.hole_center_site_id = self.hole_goal_site_id
+        self.sampled_target_site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            self.sampled_target_site_name,
+        )
         self.task_geometry_metadata = self._infer_task_geometry_metadata()
 
         self.camera_ids: Dict[str, int] = {}
@@ -442,6 +453,10 @@ class MujocoHDF5Recorder:
             raise ValueError(f"Peg tip site not found: {self.peg_tip_site_name}")
         if self.hole_goal_site_id == -1:
             raise ValueError(f"Hole goal site not found: {self.hole_goal_site_name}")
+        if self.sampled_target_site_id == -1:
+            raise ValueError(
+                f"Sampled target site not found: {self.sampled_target_site_name}"
+            )
 
         axis = np.asarray(self.hole_axis_body, dtype=np.float64)
         if axis.shape != (3,) or not np.all(np.isfinite(axis)):
@@ -511,6 +526,7 @@ class MujocoHDF5Recorder:
             "peg_length_m": float(2.0 * self.model.geom_size[self.peg_geom_id, 1]),
             "peg_tip_site_name": self.peg_tip_site_name,
             "hole_goal_site_name": self.hole_goal_site_name,
+            "sampled_target_site_name": self.sampled_target_site_name,
             "hole_ring_geom_prefix": self.hole_ring_geom_prefix,
             "hole_ring_segment_count": len(ring_ids),
             "hole_ring_geom_names": ring_names,
@@ -551,12 +567,16 @@ class MujocoHDF5Recorder:
 
             peg_tip_world = self._site_pos(self.peg_tip_site_id)
             hole_goal_world = self._site_pos(self.hole_goal_site_id)
+            sampled_target_world = self._site_pos(self.sampled_target_site_id)
             hole_offset = np.asarray(
                 self.episode_context.get(
-                    "hole_offset_from_nominal_xyz",
+                    "target_offset_from_nominal_xyz",
                     self.episode_context.get(
-                        "hole_actual_offset_xyz",
-                        [0.0, 0.0, 0.0],
+                        "hole_offset_from_nominal_xyz",
+                        self.episode_context.get(
+                            "hole_actual_offset_xyz",
+                            [0.0, 0.0, 0.0],
+                        ),
                     ),
                 ),
                 dtype=np.float64,
@@ -569,6 +589,14 @@ class MujocoHDF5Recorder:
                     "hole_goal_site_initial_pos_world": hole_goal_world.tolist(),
                     "hole_goal_site_nominal_pos_world": (
                         hole_goal_world - hole_offset
+                        if self.sampled_target_site_id == self.hole_goal_site_id
+                        else hole_goal_world
+                    ).tolist(),
+                    "sampled_target_site_initial_pos_world": (
+                        sampled_target_world.tolist()
+                    ),
+                    "sampled_target_site_nominal_pos_world": (
+                        sampled_target_world - hole_offset
                     ).tolist(),
                     "hole_actual_offset_xyz": hole_offset.tolist(),
                     "hole_offset_from_nominal_xyz": hole_offset.tolist(),
@@ -1227,7 +1255,8 @@ class MujocoHDF5Recorder:
         g.attrs["peg_tip_site_name"] = self.peg_tip_site_name
         g.attrs["hole_center_site_name"] = self.hole_center_site_name
         g.attrs["hole_goal_site_name"] = self.hole_goal_site_name
-        g.attrs["task_name"] = "wall_peg_in_hole"
+        g.attrs["sampled_target_site_name"] = self.sampled_target_site_name
+        g.attrs["task_name"] = self.task_name
         g.attrs["task_success"] = "unknown"
         random_seed = self.episode_context.get(
             "hole_grid_seed",

@@ -2,14 +2,19 @@
 
 ## 目标
 
-在 MuJoCo 仿真中实现自动 peg-in-hole 插入控制器，复用 ROS IK 服务 + HDF5 记录器，生成与人遥操作格式一致的数据，用于对比实验。
+在 MuJoCo 仿真中实现自动 peg-in-hole 插入控制器，使用 MuJoCo Jacobian IK
+和 HDF5 记录器，生成与人遥操作格式一致的数据。自动采集入口不启动或依赖
+ROS、Vision Pro 和 ROS IK 服务。
 
 ## 新增文件
 
 | 文件 | 说明 |
 |------|------|
+| `vptele/main_scripted.py` | 无 ROS 自动批量采集入口 |
 | `vptele/arm_control/scripted_insertion.py` | 核心控制器：三阶段状态机、标定、Jacobian IK、重力补偿 |
-| `vptele/arm_control/scripted_insertion_ros.py` | ROS 外挂节点：Trigger 服务、episode 生命周期、HDF5 管理 |
+| `vptele/arm_control/scripted_collection.py` | episode 生命周期、质量审核、批次清单和保留策略 |
+| `vptele/core/mujoco_collection_system.py` | 无 ROS 仿真、控制器和记录器生命周期 |
+| `vptele/arm_control/scripted_insertion_ros.py` | 旧 ROS 兼容适配器，不被新入口导入 |
 
 ## 修改文件
 
@@ -22,11 +27,11 @@
 ## 整体流程
 
 ```
-rosservice call /scripted_insertion/run "{}"
+python -m vptele.main_scripted --target-episodes 100
   │
   ├─ 1. reset_arm_to_initial_pose()
   ├─ 2. 固定孔位中心
-  ├─ 3. 标定 IK↔World（首次 ~30s，缓存到 .npz）
+  ├─ 3. 初始化 MuJoCo Jacobian IK
   ├─ 4. 采样随机 XY 误差
   ├─ 5. start_episode (HDF5)
   ├─ 6. APPROACH → ALIGN → INSERT
@@ -51,9 +56,9 @@ rosservice call /scripted_insertion/run "{}"
 ## ALIGN：对齐孔中心
 
 分三步：
-1. **回撤** 3-8mm（ROS IK），离开墙面
-2. **ROS IK 粗对齐**（最多 3 次），收敛到 ~3mm
-3. **MuJoCo Jacobian 精对齐**（最多 6 次）+ 重力补偿 + 6-DOF 方向约束，收敛到 <1mm
+1. **回撤** 3-8mm，离开墙面
+2. **MuJoCo Jacobian 对齐** + 重力补偿 + 6-DOF 方向约束
+3. 收敛到配置阈值后进入插入阶段
 
 ### MuJoCo Jacobian IK
 

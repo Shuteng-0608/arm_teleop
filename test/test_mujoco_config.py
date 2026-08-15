@@ -17,6 +17,9 @@ from vptele.utils.mujoco_config import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "vptele" / "config" / "config_arm_right_peg.yaml"
+MOVING_HOLE_CONFIG_PATH = (
+    REPO_ROOT / "vptele" / "config" / "config_arm_right_moving_hole.yaml"
+)
 
 
 class MujocoConfigTest(unittest.TestCase):
@@ -32,6 +35,22 @@ class MujocoConfigTest(unittest.TestCase):
         record_dir = Path(self.config["hdf5_record_dir"])
         self.assertTrue(record_dir.is_absolute())
         self.assertEqual(record_dir.parent, REPO_ROOT / "data")
+
+    def test_moving_hole_config_is_valid_and_role_mapped(self):
+        config = load_mujoco_config(str(MOVING_HOLE_CONFIG_PATH))
+        validate_mujoco_config(config)
+
+        self.assertEqual(
+            Path(config["mujoco_model_path"]),
+            REPO_ROOT / "model" / "pangu_moving_hole_fixed_peg.xml",
+        )
+        self.assertEqual(config["hdf5_ee_body_name"], "hole_tool")
+        self.assertEqual(config["hdf5_peg_geom_name"], "fixed_cylindrical_peg")
+        self.assertEqual(config["task_moving_site_name"], "hole_goal_site")
+        self.assertEqual(config["task_target_site_name"], "fixed_peg_tip_site")
+        self.assertEqual(config["target_body_name"], "fixed_peg_fixture")
+        self.assertEqual(config["task_success_distance"], 0.001)
+        self.assertFalse(config["scripted_controller"]["enabled"])
 
     def test_operator_and_dataset_camera_roles_are_separated(self):
         self.assertEqual(self.config["visionpro_video_port"], 9999)

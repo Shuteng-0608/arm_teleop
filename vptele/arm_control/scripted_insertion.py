@@ -83,6 +83,16 @@ class ScriptedPegInsertionController:
         self.cfg = config                    # 配置字典 (config_arm_right_peg.yaml)
         self.rng = np.random.default_rng()
         self.ik_method = str(self.cfg.get("ik_method", "optimal_ref"))
+        self.moving_site_name = self.cfg.get("moving_site_name", "peg_tip_site")
+        self.target_goal_site_name = self.cfg.get(
+            "target_goal_site_name", "hole_goal_site"
+        )
+        self.target_approach_site_name = self.cfg.get(
+            "target_approach_site_name", ""
+        )
+        self.target_body_name = self.cfg.get(
+            "target_body_name", self.cfg.get("hole_body_name", "wall_task")
+        )
 
         # ==================================================================
         # IK 参考位姿：来自配置文件 initial_robot_pose
@@ -139,7 +149,7 @@ class ScriptedPegInsertionController:
         )
 
         # MuJoCo 对象缓存 (延迟初始化)
-        self._site_id: Optional[int] = None    # peg_tip_site 的 MuJoCo ID
+        self._site_id: Optional[int] = None    # moving task site's MuJoCo ID
         self._arm_dofs: List[int] = []          # 7 个关节的 DOF 地址
 
     # ==================================================================
@@ -311,11 +321,13 @@ class ScriptedPegInsertionController:
                     f"mag={m:.1f}mm  angle={self._err_deg:.0f}°  {q}")
 
     def _init_dofs(self):
-        """惰性缓存 peg_tip_site ID 和 7 个关节的 DOF 地址 (模型不变，只查一次)"""
+        """Cache the moving task site and seven arm DOF addresses."""
         if self._site_id is not None:
             return
         self._site_id = mujoco.mj_name2id(
-            self.rc.model, mujoco.mjtObj.mjOBJ_SITE, "peg_tip_site")
+            self.rc.model, mujoco.mjtObj.mjOBJ_SITE, self.moving_site_name)
+        if self._site_id == -1:
+            raise ValueError(f"Moving task site not found: {self.moving_site_name}")
         self._arm_dofs = []
         for jn in self.rc.arm_joint_names:
             jid = mujoco.mj_name2id(self.rc.model, mujoco.mjtObj.mjOBJ_JOINT, jn)
@@ -1226,8 +1238,10 @@ class ScriptedPegInsertionController:
         return False
 
     def _peg_w(self) -> np.ndarray:
-        """读取 peg_tip_site 的世界位置 (MuJoCo mj_forward 实时计算)"""
-        return np.asarray(self.rc.get_site_position("peg_tip_site"), dtype=np.float64)
+        """Return the configured moving task site's world position."""
+        return np.asarray(
+            self.rc.get_site_position(self.moving_site_name), dtype=np.float64
+        )
 
     def _peg_xmat(self) -> np.ndarray:
         """读取 peg_tip_site 的完整世界姿态矩阵。"""
@@ -1235,12 +1249,25 @@ class ScriptedPegInsertionController:
             return self.rc.data.site_xmat[self._site_id].copy().reshape(3, 3)
 
     def _hole_goal(self) -> np.ndarray:
-        """读取 hole_goal_site 的世界位置 (孔底/目标点)"""
-        return np.asarray(self.rc.get_site_position("hole_goal_site"), dtype=np.float64)
+        """Return the configured fixed target goal site's world position."""
+        return np.asarray(
+            self.rc.get_site_position(self.target_goal_site_name),
+            dtype=np.float64,
+        )
 
     def _hole_entrance(self) -> np.ndarray:
-        """孔口世界位置 = hole_goal 的 XZ + wall_task body 的 Y (墙面位置)"""
-        w = self.rc.get_body_position("wall_task")
+        """Return the moving-site target at first task contact."""
+        if self.target_approach_site_name:
+            approach = self.rc.get_site_position(self.target_approach_site_name)
+            if approach is None:
+                raise ValueError(
+                    "Target approach site not found: "
+                    f"{self.target_approach_site_name}"
+                )
+            return np.asarray(approach, dtype=np.float64)
+
+        # Legacy fixed-hole scene: derive the entrance plane from wall_task.
+        w = self.rc.get_body_position(self.target_body_name)
         g = self._hole_goal()
         if w is None:
             return g - self.INSERT_AXIS_WORLD * 0.021

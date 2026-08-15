@@ -63,6 +63,20 @@ class MujocoAutomaticCollectionSystem:
             "reset_ignore_teleop_duration",
             self.config.get("reset_ignore_teleop_duration", 0.5),
         )
+        scripted_config.setdefault(
+            "moving_site_name",
+            self.config.get("task_moving_site_name", "peg_tip_site"),
+        )
+        scripted_config.setdefault(
+            "target_goal_site_name",
+            self.config.get("task_target_site_name", "hole_goal_site"),
+        )
+        scripted_config.setdefault(
+            "target_body_name",
+            self.config.get(
+                "target_body_name", self.config.get("hole_body_name", "wall_task")
+            ),
+        )
         self.runner = ScriptedInsertionRunner(
             robot_controller=self.robot_controller,
             config=scripted_config,
