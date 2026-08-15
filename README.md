@@ -26,6 +26,24 @@ python scripts/view_mujoco_model.py \
   --model model/pangu_moving_hole_fixed_peg.xml
 ```
 
+## ROS-free Vision Pro teleoperation
+
+Start human teleoperation and manual HDF5 collection without ROS:
+
+```bash
+conda activate arm_teleop
+python -m vptele.main_vr \
+  --config vptele/config/config_arm_right_moving_hole.yaml \
+  --vp-ip 172.20.10.2
+```
+
+Use `r` (or Enter) to reset/calibrate/start an episode, `k` to keep it, `d`
+to discard it, `c` to recalibrate, and `q` to shut down safely. For hardware-
+free commissioning, add `--synthetic`; add `--headless` to disable all local
+windows. See [docs/vr_teleop_python.md](docs/vr_teleop_python.md).
+
+## Legacy ROS teleoperation
+
 1. Ensure ROS Master is running
 ```bash
 roscore

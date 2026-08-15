@@ -216,6 +216,18 @@ arm_config:
   pose_filter_beta: 0.1
   joints_filter_min_cutoff: 0.1
   joints_filter_beta: 0.1
+  # Pure-Python main_vr.py uses this calibrated MuJoCo site and its Jacobian.
+  # Position mapping preserves the legacy AVP Y->robot X, Z->Y, X->Z axes.
+  ik_site_name: "hole_goal_site"
+  ik_damping: 0.01
+  ik_max_iterations: 80
+  ik_max_joint_step: 0.12
+  ik_position_tolerance: 0.00005
+  ik_orientation_tolerance: 0.002
+  ik_orientation_weight: 0.35
+  ik_gravity_compensation: true
+  max_target_step: 0.01
+  max_target_offset: [0.20, 0.20, 0.20]
 
 # 日志配置
 logging:

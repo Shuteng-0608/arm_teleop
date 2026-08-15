@@ -1,5 +1,8 @@
 import sys
 import os
+from typing import Any, Optional
+
+import numpy as np
 try:
     from utils.logger import get_logger
 except ImportError:
@@ -12,10 +15,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 try:
     from avp_stream import VisionProStreamer as AVPStreamer
-    
-except ImportError:
-    logger.error("错误: 无法导入avp_stream模块，请确保它已正确安装")
-    sys.exit(1)
+except ImportError as exc:
+    AVPStreamer = None
+    _AVP_IMPORT_ERROR = exc
+else:
+    _AVP_IMPORT_ERROR = None
 
 
 
@@ -30,6 +34,10 @@ class VPStreamer:
             ip (str): VisionPro的IP地址
             record (bool): 是否录制数据
         """
+        if AVPStreamer is None:
+            raise RuntimeError(
+                "avp-stream is not installed in the active Python environment"
+            ) from _AVP_IMPORT_ERROR
         try:
             self.streamer = AVPStreamer(ip, record=record)
             self._video_stream_started = False
@@ -108,7 +116,39 @@ class VPStreamer:
     @property
     def latest(self):
         """获取最新的数据帧"""
-        return self.streamer.latest
+        getter = getattr(self.streamer, "get_latest", None)
+        if callable(getter):
+            return getter()
+        return getattr(self.streamer, "latest", None)
+
+    def get_latest(self):
+        """Return the newest frame for both avp-stream 1.x and 2.x."""
+        return self.latest
+
+    @staticmethod
+    def _tracking_value(data: Any, key: str) -> Optional[Any]:
+        """Read one legacy key from either a dict or TrackingData object."""
+        if data is None:
+            return None
+        getter = getattr(data, "get", None)
+        if callable(getter):
+            value = getter(key, None)
+            if value is not None:
+                return value
+
+        if key == "head":
+            return getattr(data, "head", None)
+
+        side, _, part = key.partition("_")
+        hand = getattr(data, side, None)
+        if hand is None:
+            return None
+        if part == "wrist":
+            value = getattr(hand, "wrist", None)
+            if value is not None:
+                value = np.asarray(value)
+                return value[np.newaxis] if value.shape == (4, 4) else value
+        return None
     
     def get_hand_position(self, hand="right"):
         """
@@ -125,10 +165,7 @@ class VPStreamer:
             return None
             
         key = f"{hand}_wrist"
-        if key in data:
-            # logger.info(f"{hand}手腕位置: {data[key]}")
-            return data[key]
-        return None
+        return self._tracking_value(data, key)
     
     def get_fingers_data(self, hand="right"):
         """
@@ -145,9 +182,7 @@ class VPStreamer:
             return None
             
         key = f"{hand}_fingers"
-        if key in data:
-            return data[key]
-        return None
+        return self._tracking_value(data, key)
     
     def get_head_data(self):
         """
@@ -161,9 +196,10 @@ class VPStreamer:
             return None
             
         key = "head"
-        if key in data:
-            return data[key]
-        return None
+        value = self._tracking_value(data, key)
+        if value is not None and np.asarray(value).shape == (4, 4):
+            return np.asarray(value)[np.newaxis]
+        return value
     
 if __name__ == "__main__":
     # 测试VPStreamer类

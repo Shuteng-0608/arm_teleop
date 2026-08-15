@@ -22,7 +22,7 @@ dependencies:
       - requests==2.34.2
 
       # Apple Vision Pro tracking stream
-      - avp-stream==1.0
+      - avp-stream==2.51
 
       # ROS-free unit and integration tests
       - pytest==9.1.1
