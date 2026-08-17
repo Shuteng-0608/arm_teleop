@@ -2,7 +2,6 @@
 
 import argparse
 import csv
-import math
 import os
 import time
 from datetime import datetime
@@ -73,11 +72,11 @@ def parse_args():
         "--right-ik-service", default="/arm_teleop/right_arm_ik_srv"
     )
     parser.add_argument("--service-timeout", type=float, default=15.0)
-    parser.add_argument("--movej-vel", type=float, default=0.15)
-    parser.add_argument("--movej-acc", type=float, default=1.0)
-    parser.add_argument("--movej-jerk", type=float, default=5.0)
+    parser.add_argument("--movej-vel", type=float, default=0.5)
+    parser.add_argument("--movej-acc", type=float, default=5.0)
+    parser.add_argument("--movej-jerk", type=float, default=10.0)
     parser.add_argument("--left-home-tolerance", type=float, default=0.15)
-    parser.add_argument("--first-frame-tolerance", type=float, default=0.08)
+    parser.add_argument("--initial-pose-tolerance", type=float, default=0.08)
     parser.add_argument("--maximum-step", type=float, default=0.03)
     parser.add_argument("--maximum-velocity", type=float, default=0.8)
     parser.add_argument("--maximum-lateness", type=float, default=0.05)
@@ -89,7 +88,7 @@ def parse_args():
         "movej_acc",
         "movej_jerk",
         "left_home_tolerance",
-        "first_frame_tolerance",
+        "initial_pose_tolerance",
         "maximum_step",
         "maximum_velocity",
         "maximum_lateness",
@@ -299,8 +298,6 @@ def run_execute(args, input_path, frames, source_summary, mapper):
     solver = OnlineRedundancySolver(wait_for_ik_service(args), args)
     output_path, output_file, writer = open_output(args)
     try:
-        first_target = mapper.ik_target(frames[0].transform)
-        first_result = solver.solve(frames[0], first_target)
         feedback_service, movej_service, teleop_service, log_service = lower_services(
             args
         )
@@ -322,10 +319,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
             "left arm is {:.6f} rad away from the stop-service home pose; "
             "refusing right-only playback".format(left_home_error)
         )
-    head_z_rotation = before["others"][4] / 0.8
-    if not math.isfinite(head_z_rotation) or abs(head_z_rotation) > math.pi / 4.0 + 1e-6:
-        output_file.close()
-        raise RuntimeError("current auxiliary-axis target is outside the teleop clamp")
+    head_z_rotation = 0.0
     left_hold_joints = tuple(LEFT_HOME_JOINTS)
     publisher = rospy.Publisher(
         "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=20
@@ -337,25 +331,33 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         "before_movej": before,
         "left_hold_joints": left_hold_joints,
         "left_home_max_error_rad": left_home_error,
-        "first_frame_from_start_max_delta_rad": maximum_error(
-            before["right"], first_result["joints"]
+        "initial_pose_from_start_max_delta_rad": maximum_error(
+            before["right"], INITIAL_RIGHT_JOINTS
         ),
+        "settings": {
+            "ik_method": "redundancy_selector",
+            "movej_vel": args.movej_vel,
+            "movej_acc": args.movej_acc,
+            "movej_jerk": args.movej_jerk,
+            "head_z_rotation": head_z_rotation,
+        },
     }
     teleop_started = False
     log_started = False
     completed = 0
     try:
-        call_movej(movej_service, first_result["joints"], args)
+        # Match main_ros initialization before changing only the right-arm IK method.
+        call_movej(movej_service, INITIAL_RIGHT_JOINTS, args)
         after_movej = call_feedback(feedback_service)
         audit["after_movej"] = after_movej
-        first_error = maximum_error(
-            after_movej["right"], first_result["joints"]
+        initial_pose_error = maximum_error(
+            after_movej["right"], INITIAL_RIGHT_JOINTS
         )
-        audit["first_frame_max_error_rad"] = first_error
-        if first_error > args.first_frame_tolerance:
+        audit["initial_pose_max_error_rad"] = initial_pose_error
+        if initial_pose_error > args.initial_pose_tolerance:
             raise RuntimeError(
-                "right arm failed first-frame verification: {:.6f} rad > {:.6f} rad".format(
-                    first_error, args.first_frame_tolerance
+                "right arm failed initial-pose verification: {:.6f} rad > {:.6f} rad".format(
+                    initial_pose_error, args.initial_pose_tolerance
                 )
             )
         connection_deadline = time.monotonic() + args.service_timeout
@@ -370,28 +372,8 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         teleop_started = True
         playback_start = time.monotonic()
         source_start = frames[0].timestamp
-        publisher.publish(
-            make_message(
-                0, first_result["joints"], left_hold_joints, head_z_rotation
-            )
-        )
-        first_publish = time.monotonic()
-        writer.writerow(
-            result_row(
-                input_path,
-                source_summary,
-                frames[0],
-                first_target,
-                first_result,
-                0.0,
-                first_publish - playback_start,
-                first_publish - playback_start,
-            )
-        )
-        output_file.flush()
-        completed = 1
 
-        for frame in frames[1:]:
+        for frame in frames:
             deadline = playback_start + frame.timestamp - source_start
             wait_until(deadline)
             solver_started = time.monotonic()
@@ -404,6 +386,10 @@ def run_execute(args, input_path, frames, source_summary, mapper):
                     "frame {} is {:.6f} s late; refusing delayed command".format(
                         frame.index, lateness
                     )
+                )
+            if completed == 0:
+                audit["first_command_from_initial_max_delta_rad"] = maximum_error(
+                    INITIAL_RIGHT_JOINTS, result["joints"]
                 )
             publisher.publish(
                 make_message(

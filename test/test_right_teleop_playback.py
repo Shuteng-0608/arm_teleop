@@ -2,14 +2,17 @@ import csv
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
+from genpy import Time as RosTime
 
 from core.right_teleop_playback import (
     load_teleop_trajectory,
     rounded_solver_state,
     validate_online_solution,
 )
+from playback_right_joint_trajectory import make_message
 
 
 MATRIX_FIELDS = [
@@ -74,6 +77,19 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside"):
             validate_online_solution(joints)
 
+    def test_command_contains_both_seven_joint_arms(self):
+        right = [float(index) for index in range(7)]
+        left = [float(-index) for index in range(7)]
+        with mock.patch(
+            "playback_right_joint_trajectory.rospy.Time.now",
+            return_value=RosTime(),
+        ):
+            message = make_message(3, right, left, 0.0)
+        self.assertEqual(list(message.right_arm.arm_joints), right)
+        self.assertEqual(list(message.left_arm.arm_joints), left)
+        self.assertEqual(message.right_arm.arm_id, 1)
+        self.assertEqual(message.left_arm.arm_id, 0)
+
     def test_runtime_entry_uses_online_ik_not_precomputed_joints(self):
         script = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -95,6 +111,24 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         self.assertIn("left_hold_joints = tuple(LEFT_HOME_JOINTS)", source)
         self.assertEqual(source.count("left_hold_joints,\n"), 3)
         self.assertIn("verify aris_node is still running", source)
+        self.assertIn('parser.add_argument("--movej-vel", type=float, default=0.5)', source)
+        self.assertIn('parser.add_argument("--movej-acc", type=float, default=5.0)', source)
+        self.assertIn('parser.add_argument("--movej-jerk", type=float, default=10.0)', source)
+        self.assertIn(
+            "call_movej(movej_service, INITIAL_RIGHT_JOINTS, args)", source
+        )
+        self.assertIn("head_z_rotation = 0.0", source)
+        execute_source = source[
+            source.index("def run_execute"):source.index("def main")
+        ]
+        self.assertLess(
+            execute_source.index("set_teleop(teleop_service, True)"),
+            execute_source.index("for frame in frames:"),
+        )
+        self.assertLess(
+            execute_source.index("for frame in frames:"),
+            execute_source.index("result = solver.solve(frame, target)"),
+        )
 
 
 if __name__ == "__main__":
