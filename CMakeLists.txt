@@ -221,6 +221,25 @@ include_directories(
 add_executable(ik_service_right_node src/ik_service.cpp)
 add_executable(ik_service_left_node src/ik_service_left.cpp)
 
+add_dependencies(
+  ik_service_right_node
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+add_dependencies(
+  ik_service_left_node
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+
+if(NOT ArmKinematics_CONFIG_DIR)
+  message(FATAL_ERROR "ArmKinematics runtime configuration directory is missing")
+endif()
+target_compile_definitions(
+  ik_service_right_node PRIVATE
+  ARM_KINEMATICS_SELECTOR_CONFIG_PATH="${ArmKinematics_CONFIG_DIR}/redundancy_selector.yaml"
+)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -240,7 +259,7 @@ target_link_libraries(ik_service_right_node
   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
   
   # arm_kinematics_core
-  /usr/local/lib/libarm_kinematics.so
+  ArmKinematics::arm_kinematics
   /usr/lib/libceres.so
 
 )
@@ -274,6 +293,7 @@ catkin_install_python(PROGRAMS
   scripts/avp_test.py
   scripts/mh6_modbus_ros.py
   vptele/main_ros.py
+  vptele/offline_compare_right_ik.py
   vptele/main_mujoco.py
   scripts/movej_agent.py
   test/record_play.py

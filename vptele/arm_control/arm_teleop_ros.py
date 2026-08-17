@@ -20,6 +20,7 @@ import threading
 import csv
 from datetime import datetime
 from std_srvs.srv import SetBool, SetBoolResponse
+from core.right_arm_trajectory import map_right_hand_to_robot_euler
 
 from arm_angle.srv import PredictArmAngle, PredictArmAngleRequest
 
@@ -549,6 +550,13 @@ class ArmTeleopROS:
         参数:
             hand_transform: 4x4 变换矩阵，包含位置和旋转信息
         """
+        if hand_side == "right":
+            return map_right_hand_to_robot_euler(
+                hand_transform,
+                self.initial_hand_position_right,
+                self.initial_right_robot_pose,
+            )
+
         # 提取手部位置
         hand_position = hand_transform[:3, 3]
         
@@ -609,6 +617,13 @@ class ArmTeleopROS:
         参数:
             hand_transform: 4x4 变换矩阵，包含位置和旋转信息
         """
+        if hand_side == "right":
+            return map_right_hand_to_robot_euler(
+                hand_transform,
+                self.initial_hand_position_right,
+                self.initial_right_robot_pose_aa,
+            )
+
         # 提取手部位置
         hand_position = hand_transform[:3, 3]
         

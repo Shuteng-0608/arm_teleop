@@ -4,8 +4,36 @@
 // #include "/home/pangu/pangu/src/arm_teleop/lib/kInematics_advanced/Arm_kinematics_cal_cpp-test_refactor/include/arm_kinematics/arm_kinematics.h"
 // #include "tools.h"
 #include "arm_kinematics/arm_kinematics.h"
+#include "arm_kinematics/redundancy/redundancy_configuration_selector.h"
 #include <ros/package.h>
 using namespace arm_kinematics;
+
+#ifndef ARM_KINEMATICS_SELECTOR_CONFIG_PATH
+#define ARM_KINEMATICS_SELECTOR_CONFIG_PATH \
+    "/usr/local/share/ArmKinematics/config/redundancy_selector.yaml"
+#endif
+
+namespace {
+
+const char* selectionStatusName(
+    arm_kinematics::redundancy::SelectionStatus status) {
+    using arm_kinematics::redundancy::SelectionStatus;
+    switch (status) {
+        case SelectionStatus::kSelected:
+            return "selected";
+        case SelectionStatus::kFallbackBaseline:
+            return "fallback_baseline";
+        case SelectionStatus::kHoldPrevious:
+            return "hold_previous";
+        case SelectionStatus::kInvalidInput:
+            return "invalid_input";
+        case SelectionStatus::kNumericalFailure:
+            return "numerical_failure";
+    }
+    return "unknown";
+}
+
+}  // namespace
 
 class ArmKinematicsServer {
 
@@ -13,9 +41,16 @@ private:
     
     ros::ServiceServer service_;
     CombinedSolver solver_;
+    arm_kinematics::redundancy::RedundancyConfigurationSelector
+        redundancy_selector_;
 
 public:
-    ArmKinematicsServer(ros::NodeHandle& nh, const std::string& config_path) : solver_(config_path) {
+    ArmKinematicsServer(
+        ros::NodeHandle& nh,
+        const std::string& config_path,
+        const std::string& selector_config_path)
+        : solver_(config_path),
+          redundancy_selector_(config_path, selector_config_path) {
         try {      
             ROS_INFO("[right_arm_teleop] Inverse Kinematics solvers initialized successfully");
         } catch (const std::exception& e) {
@@ -90,6 +125,29 @@ public:
         //     ROS_INFO("[%6.3f, %6.3f, %6.3f, %6.3f]", 
         //             Tee(i,0), Tee(i,1), Tee(i,2), Tee(i,3));
         // }
+
+        if (req.method == "redundancy_selector") {
+            arm_kinematics::redundancy::SelectorInput selector_input;
+            selector_input.target_pose = Tee;
+            for (int joint = 0; joint < 7; ++joint) {
+                selector_input.previous_joints[joint] = init_joints_array[joint];
+            }
+            selector_input.previous_arm_angle = req.current_arm_angle;
+
+            const auto selector_result = redundancy_selector_.select(selector_input);
+            res.success = selector_result.has_executable_solution;
+            res.message = std::string("redundancy_selector:") +
+                selectionStatusName(selector_result.status);
+            res.search_cnt = -1;
+            if (res.success) {
+                for (int joint = 0; joint < 7; ++joint) {
+                    res.solution[joint] =
+                        selector_result.executable_joints[joint];
+                }
+                res.new_arm_angle = selector_result.selected_arm_angle;
+            }
+            return true;
+        }
 
         // 选择求解方法
         IKResult ik_res;
@@ -168,16 +226,29 @@ public:
 int main(int argc, char** argv) {
     ros::init(argc, argv, "right_arm_kinematics_server");
     ros::NodeHandle nh;
+    ros::NodeHandle private_nh("~");
     
     // 获取配置文件路径
     // std::string config_path;
     // config_path = "~arm_teleop/config/kinematics_params.yaml";
-    std::string config_path = ros::package::getPath("arm_teleop") + "/config/kinematics_params.yaml";
+    const std::string default_config_path =
+        ros::package::getPath("arm_teleop") + "/config/kinematics_params.yaml";
+    std::string config_path;
+    private_nh.param<std::string>(
+        "kinematics_config_path", config_path, default_config_path);
+    std::string selector_config_path;
+    private_nh.param<std::string>(
+        "selector_config_path",
+        selector_config_path,
+        ARM_KINEMATICS_SELECTOR_CONFIG_PATH);
     // config_path = nh.param<std::string>("config_path", "config/arm_kinematics.yaml");
     ROS_INFO("[right_arm_teleop] Using config file: %s", config_path.c_str());
+    ROS_INFO(
+        "[right_arm_teleop] Using selector config file: %s",
+        selector_config_path.c_str());
 
     try {
-        ArmKinematicsServer server(nh, config_path);
+        ArmKinematicsServer server(nh, config_path, selector_config_path);
         ROS_INFO("[right_arm_teleop] Arm IK Service ready");
         ros::spin();
     } catch (const std::exception& e) {
