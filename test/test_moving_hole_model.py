@@ -239,6 +239,29 @@ class MovingHoleModelTest(unittest.TestCase):
             places=8,
         )
 
+        with controller.lock:
+            qpos = controller._get_current_arm_qpos_locked()
+            hold = controller._get_gravity_compensated_hold_command_locked(qpos)
+            actuator_torque = np.zeros(len(controller.arm_joint_names))
+            for index, joint_name in enumerate(controller.arm_joint_names):
+                actuator_id = controller.actuator_map[joint_name]
+                gain = float(controller.model.actuator_gainprm[actuator_id, 0])
+                actuator_torque[index] = gain * (hold[index] - qpos[index])
+
+            inverse_data = mujoco.MjData(controller.model)
+            inverse_data.qpos[:] = controller.data.qpos
+            inverse_data.qvel[:] = 0.0
+            inverse_data.qacc[:] = 0.0
+            mujoco.mj_forward(controller.model, inverse_data)
+            inverse_force = np.zeros(controller.model.nv)
+            mujoco.mj_rne(controller.model, inverse_data, 0, inverse_force)
+            expected_torque = inverse_force[
+                controller._arm_joint_dof_addresses
+            ]
+
+        np.testing.assert_allclose(actuator_torque, expected_torque, atol=1e-10)
+        self.assertGreater(float(np.linalg.norm(hold - qpos)), 1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

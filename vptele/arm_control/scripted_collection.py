@@ -921,6 +921,22 @@ class ScriptedInsertionRunner:
             if self._batch_stop_event.is_set():
                 return False
             with self.rc.lock:
+                if bool(
+                    getattr(self.rc, "task_success_triggered", False)
+                    or getattr(self.rc, "terminal_hold_active", False)
+                ):
+                    recorder = getattr(self.rc, "hdf5_recorder", None)
+                    if recorder is not None:
+                        recorder.add_event(
+                            "scripted_replay_stopped_on_task_success",
+                            {"trace_index": int(i)},
+                        )
+                    logger.info(
+                        "TWO_STAGE replay stopped at %d/%d after task success",
+                        i,
+                        len(commands),
+                    )
+                    return True
                 cmd = [float(v) for v in command[:n]]
                 self.rc.target_joints[:n] = cmd
                 self.rc.command_joints[:n] = cmd

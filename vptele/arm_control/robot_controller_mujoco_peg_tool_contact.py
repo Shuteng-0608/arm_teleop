@@ -3230,11 +3230,58 @@ class RobotControllerMuJoCoPegTool:
         return q
 
 
+    def _get_gravity_compensated_hold_command_locked(
+        self,
+        qpos: np.ndarray,
+    ) -> np.ndarray:
+        """Return position-actuator targets that hold ``qpos`` statically.
+
+        A MuJoCo position actuator produces zero torque when ``ctrl == qpos``.
+        The small target offset computed here supplies the inverse-dynamics
+        gravity torque, preventing the arm from sagging during terminal hold.
+        Call inside ``self.lock`` so the live full-model qpos can be copied
+        consistently for bodies outside the seven controlled arm joints.
+        """
+        qpos = np.asarray(qpos, dtype=np.float64).reshape(-1)
+        if qpos.shape != (len(self.arm_joint_names),):
+            raise ValueError("hold qpos length does not match arm_joint_names")
+
+        inverse_data = mujoco.MjData(self.model)
+        inverse_data.qpos[:] = self.data.qpos
+        for index, joint_name in enumerate(self.arm_joint_names):
+            joint_id = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                joint_name,
+            )
+            if joint_id < 0:
+                continue
+            inverse_data.qpos[int(self.model.jnt_qposadr[joint_id])] = qpos[index]
+
+        inverse_data.qvel[:] = 0.0
+        inverse_data.qacc[:] = 0.0
+        mujoco.mj_forward(self.model, inverse_data)
+        inverse_force = np.zeros(self.model.nv, dtype=np.float64)
+        mujoco.mj_rne(self.model, inverse_data, 0, inverse_force)
+
+        command = qpos.copy()
+        for index, joint_name in enumerate(self.arm_joint_names):
+            actuator_id = self.actuator_map.get(joint_name)
+            if actuator_id is None or actuator_id < 0:
+                continue
+            gain = float(self.model.actuator_gainprm[actuator_id, 0])
+            if abs(gain) <= 1e-9:
+                continue
+            dof_address = int(self._arm_joint_dof_addresses[index])
+            command[index] += float(inverse_force[dof_address]) / gain
+        return command
+
+
     def _start_terminal_hold_locked(self, distance: float, now: float):
         """
         Enter terminal hold:
         - block new teleop commands
-        - blend command_joints to current qpos
+        - blend command_joints to a gravity-compensated static target
         - keep recording for terminal hold duration
         """
         if self.terminal_hold_active:
@@ -3255,7 +3302,9 @@ class RobotControllerMuJoCoPegTool:
             dtype=float,
         ).copy()
 
-        self.terminal_hold_command_goal = qpos_now.copy()
+        self.terminal_hold_command_goal = (
+            self._get_gravity_compensated_hold_command_locked(qpos_now)
+        )
 
         print(
             "[TaskSuccessAutoStop] Site success reached. "
@@ -3275,7 +3324,8 @@ class RobotControllerMuJoCoPegTool:
     def _update_terminal_hold_locked(self, now: float):
         """
         During terminal hold, overwrite target/command with a safe hold command.
-        The command blends from previous command to current qpos, then stays there.
+        The command blends from the previous command to a gravity-compensated
+        static target, then stays there.
         """
         if not self.terminal_hold_active:
             return
@@ -3292,7 +3342,8 @@ class RobotControllerMuJoCoPegTool:
         q_goal = self.terminal_hold_command_goal
 
         if q_start is None or q_goal is None:
-            q_goal = self._get_current_arm_qpos_locked()
+            qpos_now = self._get_current_arm_qpos_locked()
+            q_goal = self._get_gravity_compensated_hold_command_locked(qpos_now)
             q_start = q_goal.copy()
             self.terminal_hold_command_start = q_start
             self.terminal_hold_command_goal = q_goal

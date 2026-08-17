@@ -4,10 +4,13 @@ import argparse
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import numpy as np
 
 from vptele.arm_control.scripted_collection import (
     EpisodeRunOutcome,
@@ -214,6 +217,43 @@ print('ok')
         self.assertIs(
             collect_mujoco.build_standalone_config,
             main_scripted.build_standalone_config,
+        )
+
+    def test_two_stage_replay_never_overwrites_terminal_hold(self):
+        class FakeRecorder:
+            def __init__(self):
+                self.events = []
+
+            def add_event(self, name, metadata=None):
+                self.events.append((name, metadata))
+
+        applied = []
+        recorder = FakeRecorder()
+        robot_controller = SimpleNamespace(
+            arm_sign=[1] * 7,
+            hdf5_recorder=recorder,
+            lock=threading.RLock(),
+            task_success_triggered=True,
+            terminal_hold_active=True,
+            target_joints=[0.0] * 7,
+            command_joints=[0.0] * 7,
+            _apply_actuator_targets=lambda command: applied.append(list(command)),
+        )
+        runner = ScriptedInsertionRunner(
+            robot_controller=robot_controller,
+            config={"hdf5_record_dir": tempfile.gettempdir()},
+        )
+
+        replay_ok = runner._replay_command_trace(
+            np.ones((3, 7)),
+            replay_hz=1000.0,
+        )
+
+        self.assertTrue(replay_ok)
+        self.assertEqual(applied, [])
+        self.assertEqual(
+            recorder.events,
+            [("scripted_replay_stopped_on_task_success", {"trace_index": 0})],
         )
 
 

@@ -364,7 +364,7 @@ task_success_stop_accepting_teleop: true
 # 成功后继续记录 terminal hold
 task_success_terminal_hold_time: 5.0
 
-# 触发成功后，用 0.2 秒从当前 command 平滑切到当前 qpos
+# 触发成功后，用 0.2 秒从当前 command 平滑切到带重力补偿的静态保持目标
 task_success_blend_to_qpos_time: 0.2
 
 # 只在 HDF5 recording active 时检查成功条件
