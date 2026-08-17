@@ -92,6 +92,9 @@ class RightTeleopPlaybackTest(unittest.TestCase):
             "else:\n        run_execute(args, input_path, frames, source_summary, mapper)",
             source,
         )
+        self.assertIn("left_hold_joints = tuple(LEFT_HOME_JOINTS)", source)
+        self.assertEqual(source.count("left_hold_joints,\n"), 3)
+        self.assertIn("verify aris_node is still running", source)
 
 
 if __name__ == "__main__":

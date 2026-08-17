@@ -304,10 +304,14 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         feedback_service, movej_service, teleop_service, log_service = lower_services(
             args
         )
-        publisher = rospy.Publisher(
-            "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=20
-        )
-        before = call_feedback(feedback_service)
+        try:
+            before = call_feedback(feedback_service)
+        except rospy.ServiceException as error:
+            raise RuntimeError(
+                "lower feedback service failed; verify aris_node is still running: {}".format(
+                    error
+                )
+            ) from error
     except Exception:
         output_file.close()
         raise
@@ -322,11 +326,16 @@ def run_execute(args, input_path, frames, source_summary, mapper):
     if not math.isfinite(head_z_rotation) or abs(head_z_rotation) > math.pi / 4.0 + 1e-6:
         output_file.close()
         raise RuntimeError("current auxiliary-axis target is outside the teleop clamp")
+    left_hold_joints = tuple(LEFT_HOME_JOINTS)
+    publisher = rospy.Publisher(
+        "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=20
+    )
     audit = {
         "source_trajectory": source_summary.__dict__,
         "calculation_output": output_path,
         "started_at": datetime.now().isoformat(),
         "before_movej": before,
+        "left_hold_joints": left_hold_joints,
         "left_home_max_error_rad": left_home_error,
         "first_frame_from_start_max_delta_rad": maximum_error(
             before["right"], first_result["joints"]
@@ -363,7 +372,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         source_start = frames[0].timestamp
         publisher.publish(
             make_message(
-                0, first_result["joints"], before["left"], head_z_rotation
+                0, first_result["joints"], left_hold_joints, head_z_rotation
             )
         )
         first_publish = time.monotonic()
@@ -400,7 +409,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
                 make_message(
                     frame.index,
                     result["joints"],
-                    before["left"],
+                    left_hold_joints,
                     head_z_rotation,
                 )
             )
@@ -427,7 +436,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
                 make_message(
                     sequence,
                     solver.previous_output_joints,
-                    before["left"],
+                    left_hold_joints,
                     head_z_rotation,
                 )
             )
