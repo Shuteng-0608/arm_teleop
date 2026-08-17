@@ -38,7 +38,7 @@ class TeleopSystemROS:
         else:
             # from core.vp_streamer_avp import VPStreamer
             from core.vp_streamer_avp_offline import VPStreamer
-        csv_test_path = r"/home/pangu/pangu/src/arm_teleop/data_log/vp_raw_record_20260709_225223.csv" # 请替换为你实际的 CSV 文件名
+        csv_test_path = r"/home/pangu/pangu/src/arm_teleop/data_log/circle_engineering.csv" # 请替换为你实际的 CSV 文件名
         # streamer = VPStreamer(csv_path=csv_test_path, loop=True)
             
         self.vp_streamer = VPStreamer(csv_path=csv_test_path, loop=False)
