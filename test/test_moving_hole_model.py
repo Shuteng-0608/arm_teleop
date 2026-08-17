@@ -206,6 +206,39 @@ class MovingHoleModelTest(unittest.TestCase):
         self.assertEqual(controller.hole_body_name, "fixed_peg_fixture")
         self.assertEqual(len(controller.get_peg_ft_sensor()), 6)
 
+        compensated_world = controller.get_gravity_compensated_ft_wrench_world()
+        self.assertIsNotNone(compensated_world)
+        self.assertEqual(len(compensated_world), 6)
+        self.assertTrue(np.all(np.isfinite(compensated_world)))
+        sensor_id = self._id(
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            "hole_ft_force",
+        )
+        self.assertEqual(
+            controller.control_ft_sensor_site_id,
+            int(controller.model.sensor_objid[sensor_id]),
+        )
+        self.assertEqual(
+            mujoco.mj_id2name(
+                controller.model,
+                mujoco.mjtObj.mjOBJ_SITE,
+                controller.control_ft_sensor_site_id,
+            ),
+            "hole_ft_sensor_site",
+        )
+        raw = np.asarray(controller.get_peg_ft_sensor(), dtype=np.float64)
+        rotation = controller.data.site_xmat[
+            controller.control_ft_sensor_site_id
+        ].reshape(3, 3)
+        raw_force_world = rotation @ raw[:3]
+        removed_gravity = raw_force_world - np.asarray(compensated_world[:3])
+        expected_weight = 0.085 * 9.81
+        self.assertAlmostEqual(
+            float(np.linalg.norm(removed_gravity)),
+            expected_weight,
+            places=8,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

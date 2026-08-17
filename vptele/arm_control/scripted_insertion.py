@@ -1500,21 +1500,23 @@ class ScriptedPegInsertionController:
 
     def _ft_world(self):
         """
-        读取 FT 力传感器值，并转换到世界坐标系。
+        Return the gravity-compensated FT wrench in the world frame.
 
-        MuJoCo 力传感器返回的是传感器局部坐标系的值，
-        需要乘以 site_xmat (传感器 site 的旋转矩阵) 转到世界坐标系。
-        这样 Fx, Fy, Fz 分别对应世界 X, Y, Z 方向的力。
+        Force-controlled phases intentionally have no raw-wrench fallback.
+        This prevents tool weight or a missing compensation configuration
+        from being interpreted as contact or a lateral correction signal.
         """
-        w = self.rc.get_peg_ft_sensor()
-        if w is None:
+        getter = getattr(
+            self.rc,
+            "get_gravity_compensated_ft_wrench_world",
+            None,
+        )
+        if not callable(getter):
+            raise RuntimeError(
+                "robot controller does not provide gravity-compensated "
+                "world-frame FT wrench"
+            )
+        wrench = getter()
+        if wrench is None:
             return None
-        w = np.asarray(w, dtype=np.float64)
-        sid = mujoco.mj_name2id(self.rc.model,
-                                mujoco.mjtObj.mjOBJ_SITE, "ft_sensor_site")
-        if sid >= 0:
-            with self.rc.lock:
-                R_ = self.rc.data.site_xmat[sid].copy().reshape(3, 3)  # 传感器 → 世界
-            w[:3] = R_ @ w[:3]    # 力旋转
-            w[3:6] = R_ @ w[3:6]  # 力矩旋转
-        return w
+        return np.asarray(wrench, dtype=np.float64).reshape(6)

@@ -190,6 +190,44 @@ class RobotControllerMuJoCoPegTool:
                 )
             )
 
+        # Scripted contact control must never use the raw wrench: its force
+        # thresholds and lateral correction are defined in a gravity-free
+        # world frame.  Keep this path independent from the optional HUD
+        # settings so disabling/changing the display cannot change control.
+        force_sensor_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            self.ft_force_sensor_name,
+        )
+        torque_sensor_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SENSOR,
+            self.ft_torque_sensor_name,
+        )
+        self.control_ft_sensor_site_id = -1
+        if force_sensor_id != -1:
+            self.control_ft_sensor_site_id = int(
+                self.model.sensor_objid[force_sensor_id]
+            )
+        elif torque_sensor_id != -1:
+            self.control_ft_sensor_site_id = int(
+                self.model.sensor_objid[torque_sensor_id]
+            )
+        self.control_ft_gravity_tool_body_names = list(
+            self.config.get("hdf5_ft_gravity_tool_body_names", ["peg_tool"])
+        )
+        self.control_ft_gravity_tool_body_ids = ft_body_ids(
+            self.model,
+            self.control_ft_gravity_tool_body_names,
+        )
+        self.control_ft_gravity_world = np.asarray(
+            self.config.get("hdf5_ft_gravity_world", [0.0, 0.0, -9.81]),
+            dtype=np.float64,
+        )
+        self.control_ft_gravity_sensor_sign = float(
+            self.config.get("hdf5_ft_gravity_sensor_sign", -1.0)
+        )
+
         self.actuator_map = self._create_actuator_map()
 
         # Default: actuator mode for physical contact.
@@ -2791,6 +2829,48 @@ class RobotControllerMuJoCoPegTool:
         if f is None or t is None:
             return None
         return f + t
+
+    def get_gravity_compensated_ft_wrench_world(self) -> Optional[List[float]]:
+        """Return the gravity-compensated FT wrench in the world frame.
+
+        Unlike the HUD helper, this control-facing API has no raw fallback.
+        Missing sensors, tool mass, or sensor pose therefore return ``None``
+        instead of silently feeding an uncompensated wrench to force control.
+        """
+        with self.lock:
+            raw = raw_ft_wrench(
+                self.model,
+                self.data,
+                force_sensor_name=self.ft_force_sensor_name,
+                torque_sensor_name=self.ft_torque_sensor_name,
+            )
+            if raw is None:
+                return None
+
+            gravity = gravity_wrench_sensor_frame(
+                model=self.model,
+                data=self.data,
+                ft_site_id=self.control_ft_sensor_site_id,
+                tool_body_ids=self.control_ft_gravity_tool_body_ids,
+                gravity_world=self.control_ft_gravity_world,
+                sensor_sign=self.control_ft_gravity_sensor_sign,
+            )
+            compensated = compensated_ft_wrench(
+                raw_wrench=raw,
+                gravity_wrench=gravity,
+                compensation_mode="gravity",
+            )
+            if compensated is None or not np.all(np.isfinite(compensated)):
+                return None
+
+            _, rotation_world_sensor = ft_sensor_pose_world(
+                self.data,
+                self.control_ft_sensor_site_id,
+            )
+            wrench_world = np.asarray(compensated, dtype=np.float64).copy()
+            wrench_world[:3] = rotation_world_sensor @ wrench_world[:3]
+            wrench_world[3:6] = rotation_world_sensor @ wrench_world[3:6]
+            return wrench_world.tolist()
 
     def print_task_contacts(self, max_contacts: int = 10):
         """
