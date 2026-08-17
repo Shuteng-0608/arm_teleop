@@ -66,6 +66,15 @@ def build_cli_parser() -> argparse.ArgumentParser:
         help="handling for episodes rejected by the quality gate",
     )
     parser.add_argument(
+        "--scenario",
+        choices=("collision", "clean"),
+        default=None,
+        help=(
+            "collection scenario; collision keeps the configured rim/in-hole "
+            "contacts, clean uses zero offset and disables deliberate contact"
+        ),
+    )
+    parser.add_argument(
         "--show-ui",
         action="store_true",
         help="show the passive viewer and camera windows (headless by default)",
@@ -94,6 +103,10 @@ def build_standalone_config(options: argparse.Namespace):
     # profile to remain safely disabled for interactive main_mujoco.py runs.
     scripted_config = dict(config.get("scripted_controller") or {})
     scripted_config["enabled"] = True
+    scripted_config.setdefault("scenario", "collision")
+    scenario = getattr(options, "scenario", None)
+    if scenario is not None:
+        scripted_config["scenario"] = str(scenario).strip().lower()
     config["scripted_controller"] = scripted_config
     config.update(
         {

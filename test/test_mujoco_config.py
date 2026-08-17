@@ -56,6 +56,7 @@ class MujocoConfigTest(unittest.TestCase):
         self.assertEqual(config["task_success_terminal_hold_time"], 2.0)
         self.assertFalse(config["scripted_controller"]["enabled"])
         scripted = config["scripted_controller"]
+        self.assertEqual(scripted["scenario"], "collision")
         self.assertEqual(
             scripted["error_coverage_mode"], "stratified_radius_angle"
         )
@@ -65,6 +66,12 @@ class MujocoConfigTest(unittest.TestCase):
             scripted["wall_contact_detect_force_n"],
             scripted["wall_contact_force_min"],
         )
+
+    def test_invalid_scripted_scenario_is_rejected(self):
+        config = load_mujoco_config(str(MOVING_HOLE_CONFIG_PATH))
+        config["scripted_controller"]["scenario"] = "unknown"
+        with self.assertRaisesRegex(MujocoConfigError, "scenario must be"):
+            validate_mujoco_config(config)
 
     def test_operator_and_dataset_camera_roles_are_separated(self):
         self.assertEqual(self.config["visionpro_video_port"], 9999)

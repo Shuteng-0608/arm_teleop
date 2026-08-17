@@ -16,7 +16,11 @@ from vptele.arm_control.scripted_collection import (
     EpisodeRunOutcome,
     ScriptedInsertionRunner,
 )
-from vptele.main_scripted import DEFAULT_CONFIG, build_standalone_config
+from vptele.main_scripted import (
+    DEFAULT_CONFIG,
+    build_cli_parser,
+    build_standalone_config,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +61,24 @@ class StandaloneCollectionTest(unittest.TestCase):
         self.assertTrue(config["scripted_controller"]["enabled"])
         self.assertEqual(config["scripted_controller"]["review_mode"], "auto")
         self.assertEqual(config["scripted_controller"]["target_episodes"], 3)
+        self.assertEqual(config["scripted_controller"]["scenario"], "collision")
+
+    def test_clean_scenario_cli_override(self):
+        options = build_cli_parser().parse_args(
+            [
+                "--config",
+                str(MOVING_HOLE_CONFIG),
+                "--target-episodes",
+                "100",
+                "--scenario",
+                "clean",
+            ]
+        )
+        config = build_standalone_config(options)
+
+        scripted = config["scripted_controller"]
+        self.assertEqual(scripted["scenario"], "clean")
+        self.assertEqual(scripted["target_episodes"], 100)
 
     def test_scripted_entry_enables_safely_disabled_moving_hole_profile(self):
         options = argparse.Namespace(

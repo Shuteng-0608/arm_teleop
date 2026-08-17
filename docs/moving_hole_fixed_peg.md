@@ -56,15 +56,33 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 conda run -n arm_teleop \
   python -m pytest -q test/test_moving_hole_model.py
 ```
 
-After the commissioning checks above pass, run ROS-free scripted collection:
+After the commissioning checks above pass, run the 100-episode collision batch:
 
 ```bash
 conda activate arm_teleop
 python -m vptele.main_scripted \
   --config vptele/config/config_arm_right_moving_hole.yaml \
   --target-episodes 100 \
+  --scenario collision \
   --reject-action quarantine
 ```
+
+Run a separate 100-episode clean batch with:
+
+```bash
+python -m vptele.main_scripted \
+  --config vptele/config/config_arm_right_moving_hole.yaml \
+  --target-episodes 100 \
+  --scenario clean \
+  --reject-action quarantine
+```
+
+The clean scenario fixes the X/Z offset at zero, treats contact-free arrival at
+the centered entrance as success, skips the post-contact retract, and disables
+the in-hole disturbance. A debounced 3 N contact during the clean approach is
+reported as `unexpected_contact` and the episode is rejected. Both scenarios
+retain the same two-stage replay, sensor recording, success gates and terminal
+hold.
 
 Add `--show-ui` for the passive MuJoCo viewer and camera windows. Without that
 flag the batch remains headless. `main_scripted.py` enables the scripted

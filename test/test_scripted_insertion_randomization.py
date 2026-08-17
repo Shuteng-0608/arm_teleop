@@ -14,6 +14,36 @@ from vptele.arm_control.scripted_insertion import (
 
 
 class ScriptedInsertionRandomizationTest(unittest.TestCase):
+    def test_clean_scenario_uses_zero_offset_and_no_in_hole_disturbance(self):
+        rc = Mock()
+        rc.arm_sign = [1] * 7
+        controller = ScriptedPegInsertionController(
+            robot_controller=rc,
+            ik_service_proxy=None,
+            config={
+                "scenario": "clean",
+                "initial_robot_pose": [0, 0, 0, 0, 0, 0],
+                "error_coverage_mode": "stratified_radius_angle",
+                "rim_contact_radii_mm": [4.0, 8.0],
+                "rim_contact_angle_bins": 4,
+                "in_hole_correction_enabled": True,
+            },
+        )
+
+        controller._sample_error()
+        controller._sample_in_hole_disturbance()
+        controller._sample_wall_threshold()
+        info = controller.get_last_error_info()
+
+        self.assertEqual(info["scripted_collection_scenario"], "clean")
+        self.assertEqual(info["scripted_error_xy_mm"], 0.0)
+        self.assertEqual(info["scripted_error_angle_deg"], 0.0)
+        self.assertEqual(info["scripted_error_coverage_mode"], "clean")
+        self.assertEqual(info["scripted_wall_threshold_n"], 0.0)
+        self.assertEqual(info["scripted_in_hole_correction_enabled"], 0)
+        self.assertIsNone(controller._in_hole_disturbance_scheduler)
+        self.assertIsNone(controller._in_hole_disturbance_sample)
+
     def test_stratified_error_sampling_uses_configured_radius_angle_cells(self):
         rc = Mock()
         rc.arm_sign = [1] * 7
@@ -99,6 +129,32 @@ class ScriptedInsertionRandomizationTest(unittest.TestCase):
 
         self.assertIs(result, expected)
         self.assertEqual(controller._wall_threshold, 23.5)
+        controller._sample_wall_threshold.assert_not_called()
+
+    def test_clean_episode_accepts_zero_contact_target(self):
+        controller = ScriptedPegInsertionController.__new__(
+            ScriptedPegInsertionController
+        )
+        controller.cfg = {"scenario": "clean", "episode_timeout_s": 1.0}
+        controller.scenario = "clean"
+        controller._wall_threshold = 1.0
+        controller._in_hole_disturbance_scheduler = None
+        controller._in_hole_disturbance_sample = None
+        controller._sample_wall_threshold = Mock()
+        controller._init_dofs = Mock()
+        controller._peg_w = Mock(return_value=np.zeros(3, dtype=np.float64))
+        controller._peg_xmat = Mock(return_value=np.eye(3, dtype=np.float64))
+        expected = EpisodeResult(False, "stop", Phase.APPROACH, 0, 0.0)
+        controller._approach = Mock(return_value=expected)
+
+        result = controller.run_episode(
+            error_xy_mm=0.0,
+            error_angle_deg=0.0,
+            wall_threshold_n=0.0,
+        )
+
+        self.assertIs(result, expected)
+        self.assertEqual(controller._wall_threshold, 0.0)
         controller._sample_wall_threshold.assert_not_called()
 
     def test_approach_uses_feedback_speed_and_bounded_contact_detection(self):
@@ -194,6 +250,84 @@ class ScriptedInsertionRandomizationTest(unittest.TestCase):
         del controller.rc.get_gravity_compensated_ft_wrench_world
         with self.assertRaisesRegex(RuntimeError, "gravity-compensated"):
             controller._ft_world()
+
+    def test_clean_approach_succeeds_without_contact(self):
+        controller = ScriptedPegInsertionController.__new__(
+            ScriptedPegInsertionController
+        )
+        controller.cfg = {
+            "scenario": "clean",
+            "approach_standoff_m": 0.03,
+            "approach_control_period_s": 0.03,
+            "approach_force_poll_period_s": 0.005,
+            "approach_free_speed_m_s": 0.05,
+            "approach_far_speed_m_s": 0.025,
+            "approach_near_speed_m_s": 0.008,
+            "approach_probe_speed_m_s": 0.002,
+            "approach_far_distance_m": 0.01,
+            "approach_near_distance_m": 0.003,
+            "approach_arrival_tolerance_m": 0.0005,
+            "wall_contact_detect_force_n": 3.0,
+            "wall_contact_detect_dwell_s": 0.015,
+            "wall_contact_target_dwell_s": 0.005,
+            "wall_contact_max_push_m": 0.0015,
+        }
+        controller.scenario = "clean"
+        controller._insert_axis = np.asarray([0.0, -1.0, 0.0])
+        controller._err_w = np.zeros(3, dtype=float)
+        controller._wall_threshold = 0.0
+        controller._episode_metrics = {}
+        controller._episode_deadline = None
+        controller._arm_sign = [1] * 7
+        controller.FORCE_LIMIT = 40.0
+        controller._freeze_current_arm = Mock()
+        current = np.asarray([0.0, 0.05, 0.0], dtype=float)
+        desired = current.copy()
+
+        class FakeRC:
+            def set_arm_positions(self, _joints):
+                nonlocal current
+                current = desired.copy()
+
+        controller.rc = FakeRC()
+        controller._hole_entrance = Mock(return_value=np.zeros(3))
+        controller._peg_w = Mock(side_effect=lambda: current.copy())
+        controller._overload = Mock(return_value=False)
+        controller._episode_timed_out = Mock(return_value=False)
+
+        def solve(target, constrain_ori):
+            nonlocal desired
+            self.assertTrue(constrain_ori)
+            desired = np.asarray(target, dtype=float).copy()
+            return [0.0] * 7
+
+        controller._mujoco_ik_step = Mock(side_effect=solve)
+        controller._ft_world = Mock(return_value=np.zeros(6))
+
+        with patch("vptele.arm_control.scripted_insertion.time.sleep"):
+            result = controller._approach()
+
+        self.assertIsNone(result)
+        metrics = controller.get_episode_metrics()
+        self.assertEqual(metrics["scripted_clean_approach_completed"], 1)
+        self.assertEqual(metrics["scripted_contact_detected"], 0)
+        self.assertLess(metrics["scripted_contact_peak_force_n"], 3.0)
+        controller._freeze_current_arm.assert_not_called()
+
+        current[:] = [0.0, 0.05, 0.0]
+        desired[:] = current
+        controller._episode_metrics = {}
+        controller._ft_world.return_value = np.asarray([4.0, 0, 0, 0, 0, 0])
+        with patch("vptele.arm_control.scripted_insertion.time.sleep"):
+            contact_result = controller._approach()
+
+        self.assertIsInstance(contact_result, EpisodeResult)
+        self.assertEqual(contact_result.outcome, "unexpected_contact")
+        self.assertEqual(
+            controller.get_episode_metrics()["scripted_clean_approach_completed"],
+            0,
+        )
+        controller._freeze_current_arm.assert_called_once()
 
     def test_in_hole_disturbance_recovers_with_lateral_compensated_force(self):
         controller = ScriptedPegInsertionController.__new__(

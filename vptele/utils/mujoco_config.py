@@ -449,6 +449,12 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
             "scripted_controller.reject_action must be quarantine or delete"
         )
 
+    scenario = str(scripted_config.get("scenario", "collision")).lower()
+    if scenario not in {"collision", "clean"}:
+        raise MujocoConfigError(
+            "scripted_controller.scenario must be collision or clean"
+        )
+
     coverage_mode = str(
         scripted_config.get("error_coverage_mode", "random_fixed_radius")
     ).lower()

@@ -398,6 +398,11 @@ scripted_controller:
   # Enable after manual contact/FT sign commissioning succeeds.
   enabled: false
 
+  # collision: deliberate rim contact plus one in-hole disturbance.
+  # clean: zero lateral offset, no required rim contact, no in-hole disturbance.
+  # main_scripted.py --scenario overrides this value for one batch.
+  scenario: "collision"              # collision | clean
+
   # Startup review mode. main_mujoco.py CLI flags override these values;
   # collect_mujoco.py always selects auto.
   # manual: keep the existing console y/n review loop.

@@ -90,6 +90,9 @@ class ScriptedPegInsertionController:
         self.ik = ik_service_proxy           # ROS IK 服务代理
         self.cfg = config                    # 配置字典 (config_arm_right_peg.yaml)
         self.rng = np.random.default_rng()
+        self.scenario = str(self.cfg.get("scenario", "collision")).lower()
+        if self.scenario not in {"collision", "clean"}:
+            raise ValueError("scenario must be collision or clean")
         self.ik_method = str(self.cfg.get("ik_method", "optimal_ref"))
         self.moving_site_name = self.cfg.get("moving_site_name", "peg_tip_site")
         self.target_goal_site_name = self.cfg.get(
@@ -173,7 +176,10 @@ class ScriptedPegInsertionController:
         self._in_hole_disturbance_metadata: Dict[str, Any] = {}
         self._in_hole_disturbance_sample = None
         self._in_hole_disturbance_scheduler = None
-        if bool(self.cfg.get("in_hole_correction_enabled", False)):
+        if (
+            self.scenario == "collision"
+            and bool(self.cfg.get("in_hole_correction_enabled", False))
+        ):
             self._in_hole_disturbance_scheduler = InHoleDisturbanceScheduler(
                 depth_fractions=self.cfg.get(
                     "in_hole_disturbance_depth_fractions",
@@ -261,7 +267,10 @@ class ScriptedPegInsertionController:
                 "gravity_compensated_world_wrench"
             ),
             "scripted_in_hole_correction_enabled": int(
-                bool(self.cfg.get("in_hole_correction_enabled", False))
+                bool(
+                    self.cfg.get("in_hole_correction_enabled", False)
+                    and not self._is_clean_scenario()
+                )
             ),
         }
         if (
@@ -271,7 +280,9 @@ class ScriptedPegInsertionController:
             self._sample_in_hole_disturbance()
         timeout_s = max(1.0, float(self.cfg.get("episode_timeout_s", 180.0)))
         self._episode_deadline = time.monotonic() + timeout_s
-        if wall_threshold_n is None:
+        if self._is_clean_scenario():
+            self._wall_threshold = 0.0
+        elif wall_threshold_n is None:
             self._sample_wall_threshold()
         else:
             threshold = float(wall_threshold_n)
@@ -282,7 +293,11 @@ class ScriptedPegInsertionController:
             self._wall_threshold = threshold
 
         # ---- 设置初始 XY 误差 ----
-        if error_xy_mm is not None:
+        if self._is_clean_scenario():
+            self._err_xy = 0.0
+            self._err_deg = 0.0
+            self._err_w = np.zeros(3, dtype=np.float64)
+        elif error_xy_mm is not None:
             # 使用预先采样的误差 (ROS 节点已采样)
             self._err_xy = float(error_xy_mm)
             self._err_deg = float(error_angle_deg)
@@ -302,31 +317,37 @@ class ScriptedPegInsertionController:
         # ---- 阶段 1: APPROACH — 瞄偏接近墙面，撞墙即停 ----
         r = self._approach()
         if r: return r
-        # TODO
-        # ---- APPROACH 结束后，先冻结接触状态，再沿世界 +Y 平滑回撤 ----
-        retract_mm = float(self.rng.uniform(3.0, 8.0))
-        p = self._peg_w()
-        rt = p.copy()
-        rt[1] += retract_mm / 1000.0
+        if not self._is_clean_scenario():
+            # ---- 接触后冻结，再沿世界 +Y 平滑回撤 ----
+            retract_mm = float(self.rng.uniform(3.0, 8.0))
+            p = self._peg_w()
+            rt = p.copy()
+            rt[1] += retract_mm / 1000.0
 
-        self._freeze_current_arm("wall contact")
-        time.sleep(float(self.cfg.get("post_contact_settle_s", 0.15)))
+            self._freeze_current_arm("wall contact")
+            time.sleep(float(self.cfg.get("post_contact_settle_s", 0.15)))
 
-        if not self._smooth_move_ee(
-            target_w=rt,
-            total_steps=int(self.cfg.get("smooth_retract_steps", 18)),
-            step_wait_s=float(self.cfg.get("smooth_retract_step_wait_s", 0.04)),
-            constrain_ori=True,
-            phase=Phase.ALIGN,
-            log_prefix="SMOOTH_RETRACT",
-        ):
-            return EpisodeResult(False, "ik", Phase.ALIGN, 0, 0.0)
+            if not self._smooth_move_ee(
+                target_w=rt,
+                total_steps=int(self.cfg.get("smooth_retract_steps", 18)),
+                step_wait_s=float(self.cfg.get("smooth_retract_step_wait_s", 0.04)),
+                constrain_ori=True,
+                phase=Phase.ALIGN,
+                log_prefix="SMOOTH_RETRACT",
+            ):
+                return EpisodeResult(False, "ik", Phase.ALIGN, 0, 0.0)
 
-        self._wait_force_release(
-            threshold_n=float(self.cfg.get("post_retract_force_release_n", 6.0)),
-            timeout_s=float(self.cfg.get("post_retract_force_release_timeout_s", 1.0)),
-        )
-        logger.info(f"APPROACH smoothly retracted {retract_mm:.1f}mm")
+            self._wait_force_release(
+                threshold_n=float(
+                    self.cfg.get("post_retract_force_release_n", 6.0)
+                ),
+                timeout_s=float(
+                    self.cfg.get("post_retract_force_release_timeout_s", 1.0)
+                ),
+            )
+            logger.info(f"APPROACH smoothly retracted {retract_mm:.1f}mm")
+        else:
+            logger.info("APPROACH clean arrival: no contact/retract phase")
         # ---- 阶段 2: waypoint 对准 + 插入（已知孔位置，直进直出） ----
         start_w = self._peg_w().copy()
         hole_g = self._hole_goal().copy()
@@ -374,6 +395,7 @@ class ScriptedPegInsertionController:
     def get_last_error_info(self):
         """获取最近一次采样的 XY 误差信息 (用于写入 episode_metadata)"""
         result = {
+            "scripted_collection_scenario": self.scenario,
             "scripted_error_xy_mm": self._err_xy,
             "scripted_error_angle_deg": self._err_deg,
             "scripted_wall_threshold_n": self._wall_threshold,
@@ -386,10 +408,15 @@ class ScriptedPegInsertionController:
         """Return scalar approach/contact diagnostics for trace metadata."""
         return dict(self._episode_metrics)
 
+    def _is_clean_scenario(self) -> bool:
+        return str(
+            getattr(self, "scenario", self.cfg.get("scenario", "collision"))
+        ).lower() == "clean"
+
     def _sample_in_hole_disturbance(self) -> None:
         """Consume one deterministic in-hole disturbance coverage cell."""
         scheduler = self._in_hole_disturbance_scheduler
-        if scheduler is None:
+        if self._is_clean_scenario() or scheduler is None:
             self._in_hole_disturbance_sample = None
             self._in_hole_disturbance_metadata = {
                 "scripted_in_hole_correction_enabled": 0,
@@ -421,6 +448,10 @@ class ScriptedPegInsertionController:
 
     def _sample_wall_threshold(self):
         """每条 episode 重新采样墙接触力阈值。"""
+        if self._is_clean_scenario():
+            self._wall_threshold = 0.0
+            logger.info("WALL_THRESHOLD: clean scenario has no contact target")
+            return
         f_min = float(self.cfg.get("wall_contact_force_min", 15.0))
         f_max = float(self.cfg.get("wall_contact_force_max", 28.0))
         if f_max < f_min:
@@ -439,6 +470,16 @@ class ScriptedPegInsertionController:
         attempt.  The legacy mode keeps the old fixed-radius/random-angle
         behavior for profiles that have not opted into coverage scheduling.
         """
+        if self._is_clean_scenario():
+            self._err_xy = 0.0
+            self._err_deg = 0.0
+            self._err_w = np.zeros(3, dtype=np.float64)
+            self._error_sample_metadata = {
+                "scripted_error_coverage_mode": "clean",
+                "scripted_error_radius_mm": 0.0,
+            }
+            logger.info("ERROR: clean scenario uses zero X/Z offset")
+            return
         if self._error_scheduler is not None:
             sample = self._error_scheduler.take()
             sample_metadata = sample.to_dict()
@@ -647,14 +688,17 @@ class ScriptedPegInsertionController:
 
     def _approach(self) -> Optional[EpisodeResult]:
         """
-        Move to the offset rim target using measured site feedback.
+        Move to the configured rim or clean entrance target.
 
         Free-space motion and near-contact probing use separate configured
         speeds.  A low debounced force detects contact; after detection a
         bounded additional push may build the requested contact force.  This
         avoids spending tens of seconds crawling through the final 20 mm and
-        prevents an unbounded force-seeking command.
+        prevents an unbounded force-seeking command.  The clean scenario uses
+        the same speed profile but succeeds on contact-free arrival and rejects
+        a debounced unexpected contact.
         """
+        require_contact = not self._is_clean_scenario()
         hole_e = self._hole_entrance()  # 孔口世界位置 (墙面处)
         contact_w = hole_e + self._err_w  # 孔口平面上的偏差接触目标
         standoff_m = float(self.cfg.get("approach_standoff_m", 0.030))
@@ -708,7 +752,10 @@ class ScriptedPegInsertionController:
             raise ValueError(
                 "approach distances must satisfy 0 < near < far"
             )
-        if not 0.0 < detect_force <= self._wall_threshold < self.FORCE_LIMIT:
+        if (
+            require_contact
+            and not 0.0 < detect_force <= self._wall_threshold < self.FORCE_LIMIT
+        ):
             raise ValueError(
                 "contact thresholds must satisfy 0 < detect <= target < overload"
             )
@@ -718,7 +765,9 @@ class ScriptedPegInsertionController:
             + np.linalg.norm(contact_w - pre_w)
         )
         target_offset_mm = float(np.linalg.norm(self._err_w[[0, 2]]) * 1000.0)
-        logger.info(f"APPROACH: two-segment {d_total*1000:.0f}mm, "
+        scenario_name = "clean" if not require_contact else "collision"
+        logger.info(f"APPROACH: scenario={scenario_name} "
+                    f"two-segment {d_total*1000:.0f}mm, "
                     f"pre={[round(float(v),4) for v in pre_w]} → "
                     f"contact={[round(float(v),4) for v in contact_w]}  "
                     f"offset_target={target_offset_mm:.2f}mm  "
@@ -772,6 +821,35 @@ class ScriptedPegInsertionController:
             )
             return "contact"
 
+        def finish_clean():
+            pw = self._peg_w()
+            offset_xz_mm = math.sqrt(
+                (float(pw[0]) - float(hole_e[0])) ** 2
+                + (float(pw[2]) - float(hole_e[2])) ** 2
+            ) * 1000.0
+            duration = time.monotonic() - approach_start
+            self._episode_metrics.update(
+                {
+                    "scripted_approach_duration_s": float(duration),
+                    "scripted_clean_approach_completed": 1,
+                    "scripted_contact_detected": 0,
+                    "scripted_contact_target_reached": 0,
+                    "scripted_contact_actual_offset_mm": float(offset_xz_mm),
+                    "scripted_contact_target_offset_mm": 0.0,
+                    "scripted_contact_offset_error_mm": float(offset_xz_mm),
+                    "scripted_contact_peak_force_n": float(peak_force),
+                    "scripted_contact_push_depth_mm": 0.0,
+                }
+            )
+            logger.info(
+                "APPROACH clean complete: duration=%.2fs peak=%.2fN "
+                "offset=%.2fmm",
+                duration,
+                peak_force,
+                offset_xz_mm,
+            )
+            return "clean"
+
         def move_segment(target_w: np.ndarray, detect_wall: bool, label: str):
             nonlocal peak_force, detect_accum, target_accum
             nonlocal contact_detected, contact_push_m
@@ -788,6 +866,8 @@ class ScriptedPegInsertionController:
                 dr = float(np.linalg.norm(delta))
                 if not detect_wall and dr <= arrival_tolerance:
                     return None
+                if detect_wall and not require_contact and dr <= arrival_tolerance:
+                    return finish_clean()
 
                 if not detect_wall:
                     speed = free_speed
@@ -798,7 +878,10 @@ class ScriptedPegInsertionController:
                     axial_gap = max(
                         0.0, float(np.dot(contact_w - actual_w, self._insert_axis))
                     )
-                    if contact_detected or axial_gap <= probe_activation_distance:
+                    if require_contact and (
+                        contact_detected
+                        or axial_gap <= probe_activation_distance
+                    ):
                         if not probe_active:
                             probe_active = True
                             probe_command_w = actual_w.copy()
@@ -885,6 +968,31 @@ class ScriptedPegInsertionController:
                         detect_accum += force_poll_period
                     else:
                         detect_accum = 0.0
+                    if not require_contact:
+                        if detect_accum >= detect_dwell:
+                            self._episode_metrics.update(
+                                {
+                                    "scripted_approach_duration_s": float(
+                                        time.monotonic() - approach_start
+                                    ),
+                                    "scripted_clean_approach_completed": 0,
+                                    "scripted_contact_detected": 1,
+                                    "scripted_contact_peak_force_n": float(
+                                        peak_force
+                                    ),
+                                }
+                            )
+                            self._freeze_current_arm(
+                                "unexpected clean approach contact"
+                            )
+                            return EpisodeResult(
+                                False,
+                                "unexpected_contact",
+                                Phase.APPROACH,
+                                0,
+                                0.0,
+                            )
+                        continue
                     if not contact_detected and detect_accum >= detect_dwell:
                         contact_detected = True
                         self._episode_metrics[
@@ -918,7 +1026,7 @@ class ScriptedPegInsertionController:
         r = move_segment(contact_w, detect_wall=True, label="contact")
         if isinstance(r, EpisodeResult):
             return r
-        if r == "contact":
+        if r in {"contact", "clean"}:
             return None
         return EpisodeResult(False, "contact_not_detected", Phase.APPROACH, 0, 0.0)
 
@@ -1064,10 +1172,9 @@ class ScriptedPegInsertionController:
     ) -> Optional[EpisodeResult]:
         """Inject one bounded lateral disturbance, then release it by force.
 
-        The disturbance command is deliberately labelled non-expert.  Once a
-        debounced lateral contact is detected, axial motion pauses and the
-        gravity-compensated world-frame lateral force drives a bounded
-        admittance correction.  Only the recovery command is expert action.
+        Once a debounced lateral contact is detected, axial motion pauses and
+        the gravity-compensated world-frame lateral force drives a bounded
+        admittance correction.
         """
         sample = self._in_hole_disturbance_sample
         if sample is None:
