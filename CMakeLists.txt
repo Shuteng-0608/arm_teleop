@@ -111,6 +111,8 @@ add_message_files(
 add_service_files(
   FILES
   ArmIK.srv
+  FeedbackService.srv
+  LogService.srv
   MovejService.srv
   StartDualTeleOP.srv
 )
@@ -294,6 +296,7 @@ catkin_install_python(PROGRAMS
   scripts/mh6_modbus_ros.py
   vptele/main_ros.py
   vptele/offline_compare_right_ik.py
+  vptele/playback_right_joint_trajectory.py
   vptele/main_mujoco.py
   scripts/movej_agent.py
   test/record_play.py

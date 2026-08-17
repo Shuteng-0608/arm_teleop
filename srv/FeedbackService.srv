@@ -1,0 +1,9 @@
+string request
+---
+float64[7] joints_left
+float64[7] joints_right
+float64[5] joints_others
+
+float64[7] ee_pq_left
+float64[7] ee_pq_right
+string response
