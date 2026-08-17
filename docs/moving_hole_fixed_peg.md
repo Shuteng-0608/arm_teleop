@@ -130,3 +130,19 @@ have value 1. The stage-1 trace stores the per-command mask, and stage 2 copies
 it to `scripted_replay/expert_action_mask` with replay phase events. Training
 code should filter mask-zero disturbance commands rather than treating them
 as expert actions.
+
+## Success and terminal hold
+
+Success requires the seating-site distance to remain below 1 mm while the
+gravity-compensated force stays below 5 N total and 3 N laterally, and the arm
+joint-speed norm stays below 0.10 rad/s. This prevents a moving or wall-loaded
+socket from being accepted solely because its virtual sites briefly overlap.
+
+Terminal hold uses a position-actuator target with inverse-dynamics gravity
+feed-forward. Stage-2 replay stops before writing another trace command as
+soon as task success is latched, so post-success retract commands from stage 1
+cannot override the hold. The hold completes after at least 0.5 s and 0.25 s
+of continuous stability, with a 2 s maximum. A compensated force above 8 N
+total or 5 N laterally for 0.05 s re-anchors the controller at the actual pose
+to release servo preload, records `terminal_hold_safety_abort`, and rejects the
+episode.

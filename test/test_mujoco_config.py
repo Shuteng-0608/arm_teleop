@@ -50,6 +50,10 @@ class MujocoConfigTest(unittest.TestCase):
         self.assertEqual(config["task_target_site_name"], "fixed_peg_tip_site")
         self.assertEqual(config["target_body_name"], "fixed_peg_fixture")
         self.assertEqual(config["task_success_distance"], 0.001)
+        self.assertEqual(config["task_success_max_force_norm"], 5.0)
+        self.assertEqual(config["task_success_max_lateral_force"], 3.0)
+        self.assertEqual(config["task_success_terminal_hold_min_time"], 0.5)
+        self.assertEqual(config["task_success_terminal_hold_time"], 2.0)
         self.assertFalse(config["scripted_controller"]["enabled"])
         scripted = config["scripted_controller"]
         self.assertEqual(
@@ -177,6 +181,20 @@ class MujocoConfigTest(unittest.TestCase):
         config["record_hdf5"] = False
         config["enable_recording_service"] = True
         with self.assertRaisesRegex(MujocoConfigError, "requires record_hdf5"):
+            validate_mujoco_config(config)
+
+    def test_invalid_terminal_hold_safety_config_is_rejected(self):
+        config = load_mujoco_config(str(MOVING_HOLE_CONFIG_PATH))
+        config["task_success_terminal_hold_min_time"] = 3.0
+        with self.assertRaisesRegex(MujocoConfigError, "min_time <= max_time"):
+            validate_mujoco_config(config)
+
+        config = load_mujoco_config(str(MOVING_HOLE_CONFIG_PATH))
+        config["terminal_hold_max_lateral_force"] = 2.0
+        with self.assertRaisesRegex(
+            MujocoConfigError,
+            "terminal_hold_max_lateral_force",
+        ):
             validate_mujoco_config(config)
 
     def test_invalid_async_pipeline_capacity_is_rejected(self):

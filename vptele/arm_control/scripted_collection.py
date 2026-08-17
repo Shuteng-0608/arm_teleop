@@ -1257,7 +1257,7 @@ class ScriptedInsertionRunner:
             reset_ft()
 
     def _wait_for_terminal_hold_completion(self) -> bool:
-        """Let the controller maintain its configured terminal hold before stop."""
+        """Wait until adaptive terminal hold completes or safety-aborts."""
         hold_seconds = max(
             0.0,
             float(getattr(self.rc, "task_success_terminal_hold_time", 0.0)),
@@ -1269,6 +1269,20 @@ class ScriptedInsertionRunner:
             if self._batch_stop_event.is_set():
                 return False
             with self.rc.lock:
+                if bool(
+                    getattr(self.rc, "terminal_hold_safety_aborted", False)
+                ):
+                    logger.warning(
+                        "Terminal hold aborted: %s",
+                        getattr(
+                            self.rc,
+                            "terminal_hold_completion_reason",
+                            "unknown",
+                        ),
+                    )
+                    return False
+                if bool(getattr(self.rc, "terminal_hold_stop_started", False)):
+                    return True
                 start = getattr(self.rc, "terminal_hold_start_time", None)
                 sim_now = float(self.rc.data.time)
             if start is not None and sim_now - float(start) >= hold_seconds:

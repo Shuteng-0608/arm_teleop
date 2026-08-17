@@ -30,6 +30,26 @@ class MovingHoleModelTest(unittest.TestCase):
         self.assertNotEqual(object_id, -1, name)
         return object_id
 
+    def _make_runtime_controller(self):
+        from vptele.arm_control.robot_controller_mujoco_peg_tool_contact import (
+            RobotControllerMuJoCoPegTool,
+        )
+
+        config = build_controller_config(load_mujoco_config(str(CONFIG_PATH)))
+        config.update(
+            {
+                "auto_start": False,
+                "launch_viewer": False,
+                "show_camera_streams": False,
+                "record_hdf5": False,
+                "record_data": False,
+                "enable_ros_interfaces": False,
+                "visionpro_video_enabled": False,
+                "task_success_auto_stop_recording": False,
+            }
+        )
+        return RobotControllerMuJoCoPegTool(str(MODEL_PATH), config=config)
+
     def test_task_roles_and_geometry_are_wired_correctly(self):
         hole_body = self._id(mujoco.mjtObj.mjOBJ_BODY, "hole_tool")
         link7_body = self._id(mujoco.mjtObj.mjOBJ_BODY, "link_7")
@@ -180,23 +200,7 @@ class MovingHoleModelTest(unittest.TestCase):
                 self.assertEqual(int(metadata.attrs["hole_ring_segment_count"]), 24)
 
     def test_runtime_controller_accepts_role_and_sensor_names(self):
-        from vptele.arm_control.robot_controller_mujoco_peg_tool_contact import (
-            RobotControllerMuJoCoPegTool,
-        )
-
-        config = build_controller_config(load_mujoco_config(str(CONFIG_PATH)))
-        config.update(
-            {
-                "auto_start": False,
-                "launch_viewer": False,
-                "show_camera_streams": False,
-                "record_hdf5": False,
-                "record_data": False,
-                "enable_ros_interfaces": False,
-                "visionpro_video_enabled": False,
-            }
-        )
-        controller = RobotControllerMuJoCoPegTool(str(MODEL_PATH), config=config)
+        controller = self._make_runtime_controller()
 
         self.assertEqual(controller.ft_force_sensor_name, "hole_ft_force")
         self.assertEqual(controller.ft_torque_sensor_name, "hole_ft_torque")
@@ -261,6 +265,62 @@ class MovingHoleModelTest(unittest.TestCase):
 
         np.testing.assert_allclose(actuator_torque, expected_torque, atol=1e-10)
         self.assertGreater(float(np.linalg.norm(hold - qpos)), 1e-6)
+
+    def test_success_gates_use_compensated_lateral_force_and_arm_speed(self):
+        controller = self._make_runtime_controller()
+        with controller.lock:
+            controller.data.qvel[controller._arm_joint_dof_addresses] = 0.0
+            controller.get_gravity_compensated_ft_wrench_world = lambda: [
+                2.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            ]
+            stable = controller._get_task_success_stability_locked()
+            self.assertTrue(stable["success_stable"])
+            self.assertAlmostEqual(stable["lateral_force_n"], 2.0)
+
+            controller.get_gravity_compensated_ft_wrench_world = lambda: [
+                6.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            ]
+            overloaded = controller._get_task_success_stability_locked()
+            self.assertFalse(overloaded["success_stable"])
+            self.assertTrue(overloaded["hold_force_over"])
+
+            controller.get_gravity_compensated_ft_wrench_world = lambda: [
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            ]
+            controller.data.qvel[
+                controller._arm_joint_dof_addresses[0]
+            ] = 0.11
+            moving = controller._get_task_success_stability_locked()
+            self.assertFalse(moving["success_stable"])
+
+    def test_terminal_hold_finishes_when_stable_and_aborts_on_force(self):
+        controller = self._make_runtime_controller()
+        controller.get_gravity_compensated_ft_wrench_world = lambda: [
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ]
+        with controller.lock:
+            controller.data.qvel[controller._arm_joint_dof_addresses] = 0.0
+            controller._start_terminal_hold_locked(distance=0.0005, now=0.0)
+            controller._update_terminal_hold_locked(now=0.1)
+            controller._update_terminal_hold_locked(now=0.5)
+            self.assertTrue(controller.terminal_hold_stop_started)
+            self.assertFalse(controller.terminal_hold_safety_aborted)
+            self.assertEqual(controller.terminal_hold_completion_reason, "stable")
+
+            controller._reset_task_success_state_locked()
+            controller._start_terminal_hold_locked(distance=0.0005, now=1.0)
+            controller.get_gravity_compensated_ft_wrench_world = lambda: [
+                9.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            ]
+            controller._update_terminal_hold_locked(now=1.0)
+            controller._update_terminal_hold_locked(now=1.051)
+            self.assertTrue(controller.terminal_hold_stop_started)
+            self.assertTrue(controller.terminal_hold_safety_aborted)
+            self.assertFalse(controller.task_success_triggered)
+            self.assertEqual(
+                controller.terminal_hold_completion_reason,
+                "force_limit",
+            )
 
 
 if __name__ == "__main__":

@@ -745,9 +745,38 @@ class TeleopSystemMujoco:
                 "task_success_terminal_hold_time",
                 1.0,
             ),
+            "task_success_terminal_hold_min_time": self.config.get(
+                "task_success_terminal_hold_min_time",
+                self.config.get("task_success_terminal_hold_time", 1.0),
+            ),
+            "task_success_terminal_hold_stable_dwell_time": self.config.get(
+                "task_success_terminal_hold_stable_dwell_time",
+                0.0,
+            ),
             "task_success_blend_to_qpos_time": self.config.get(
                 "task_success_blend_to_qpos_time",
                 0.2,
+            ),
+            "task_success_max_force_norm": self.config.get(
+                "task_success_max_force_norm", float("inf")
+            ),
+            "task_success_max_lateral_force": self.config.get(
+                "task_success_max_lateral_force", float("inf")
+            ),
+            "task_success_max_arm_speed": self.config.get(
+                "task_success_max_arm_speed", float("inf")
+            ),
+            "task_success_force_axis_world": self.config.get(
+                "task_success_force_axis_world", [0.0, 1.0, 0.0]
+            ),
+            "terminal_hold_max_force_norm": self.config.get(
+                "terminal_hold_max_force_norm", float("inf")
+            ),
+            "terminal_hold_max_lateral_force": self.config.get(
+                "terminal_hold_max_lateral_force", float("inf")
+            ),
+            "terminal_hold_force_abort_dwell_time": self.config.get(
+                "terminal_hold_force_abort_dwell_time", 0.05
             ),
             "task_success_only_when_recording": self.config.get(
                 "task_success_only_when_recording",

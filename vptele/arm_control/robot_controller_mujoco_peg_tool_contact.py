@@ -839,8 +839,47 @@ class RobotControllerMuJoCoPegTool:
             self.config.get("task_success_terminal_hold_time", 1.0)
         )
 
+        self.task_success_terminal_hold_min_time = float(
+            self.config.get(
+                "task_success_terminal_hold_min_time",
+                self.task_success_terminal_hold_time,
+            )
+        )
+
+        self.task_success_terminal_hold_stable_dwell_time = float(
+            self.config.get("task_success_terminal_hold_stable_dwell_time", 0.0)
+        )
+
         self.task_success_blend_to_qpos_time = float(
             self.config.get("task_success_blend_to_qpos_time", 0.2)
+        )
+
+        self.task_success_max_force_norm = float(
+            self.config.get("task_success_max_force_norm", float("inf"))
+        )
+        self.task_success_max_lateral_force = float(
+            self.config.get("task_success_max_lateral_force", float("inf"))
+        )
+        self.task_success_max_arm_speed = float(
+            self.config.get("task_success_max_arm_speed", float("inf"))
+        )
+        success_force_axis = np.asarray(
+            self.config.get("task_success_force_axis_world", [0.0, 1.0, 0.0]),
+            dtype=np.float64,
+        ).reshape(3)
+        success_axis_norm = float(np.linalg.norm(success_force_axis))
+        if success_axis_norm <= 1e-9:
+            raise ValueError("task_success_force_axis_world must be non-zero")
+        self.task_success_force_axis_world = success_force_axis / success_axis_norm
+
+        self.terminal_hold_max_force_norm = float(
+            self.config.get("terminal_hold_max_force_norm", float("inf"))
+        )
+        self.terminal_hold_max_lateral_force = float(
+            self.config.get("terminal_hold_max_lateral_force", float("inf"))
+        )
+        self.terminal_hold_force_abort_dwell_time = float(
+            self.config.get("terminal_hold_force_abort_dwell_time", 0.05)
         )
 
         self.task_success_peg_site_id = mujoco.mj_name2id(
@@ -870,6 +909,10 @@ class RobotControllerMuJoCoPegTool:
             print("[TaskSuccessAutoStop] distance:", self.task_success_distance)
             print("[TaskSuccessAutoStop] dwell time:", self.task_success_dwell_time)
             print("[TaskSuccessAutoStop] terminal hold:", self.task_success_terminal_hold_time)
+            print(
+                "[TaskSuccessAutoStop] minimum stable hold:",
+                self.task_success_terminal_hold_min_time,
+            )
             print("[TaskSuccessAutoStop] blend to qpos:", self.task_success_blend_to_qpos_time)
 
             if self.task_success_peg_site_id == -1:
@@ -891,6 +934,10 @@ class RobotControllerMuJoCoPegTool:
         self.terminal_hold_command_start = None
         self.terminal_hold_command_goal = None
         self.terminal_hold_stop_started = False
+        self.terminal_hold_stable_start_time = None
+        self.terminal_hold_force_over_start_time = None
+        self.terminal_hold_safety_aborted = False
+        self.terminal_hold_completion_reason = ""
 
         self.pending_auto_completed_review = False
         self.pending_auto_completed_episode_path = ""
@@ -1170,7 +1217,11 @@ class RobotControllerMuJoCoPegTool:
             )
             return False
     
-    def _auto_stop_recording_for_task_success(self):
+    def _auto_stop_recording_for_task_success(
+        self,
+        status: str = "auto_stop_task_success",
+        event_name: str = "auto_stop_task_success",
+    ):
         """
         Stop HDF5 recording after terminal hold.
 
@@ -1188,12 +1239,12 @@ class RobotControllerMuJoCoPegTool:
 
             with self.lock:
                 try:
-                    self.hdf5_recorder.add_event("auto_stop_task_success")
+                    self.hdf5_recorder.add_event(event_name)
                 except Exception as e:
                     print(f"[TaskSuccessAutoStop] Failed to add auto-stop event: {e}")
 
                 hdf5_path = self.hdf5_recorder.stop_episode(
-                    status="auto_stop_task_success"
+                    status=status
                 )
 
             episode_path = str(hdf5_path) if hdf5_path is not None else ""
@@ -1204,7 +1255,8 @@ class RobotControllerMuJoCoPegTool:
             self.pending_auto_completed_episode_dir = episode_dir
 
             print(
-                "[TaskSuccessAutoStop] Recording auto-stopped and temporarily kept.\n"
+                "[TaskSuccessAutoStop] Recording auto-stopped and temporarily kept "
+                f"with status={status}.\n"
                 f"  episode_path = {episode_path}\n"
                 "  Press Enter in the keyboard client, then choose keep/discard."
             )
@@ -3188,6 +3240,10 @@ class RobotControllerMuJoCoPegTool:
         self.terminal_hold_command_start = None
         self.terminal_hold_command_goal = None
         self.terminal_hold_stop_started = False
+        self.terminal_hold_stable_start_time = None
+        self.terminal_hold_force_over_start_time = None
+        self.terminal_hold_safety_aborted = False
+        self.terminal_hold_completion_reason = ""
 
         self.pending_auto_completed_review = False
         self.pending_auto_completed_episode_path = ""
@@ -3277,6 +3333,133 @@ class RobotControllerMuJoCoPegTool:
         return command
 
 
+    def _get_task_success_stability_locked(self) -> Dict[str, Any]:
+        """Measure force and motion gates using compensated world-frame force."""
+        wrench = self.get_gravity_compensated_ft_wrench_world()
+        force_available = wrench is not None and len(wrench) >= 3
+        if force_available:
+            force = np.asarray(wrench[:3], dtype=np.float64)
+            force_norm = float(np.linalg.norm(force))
+            axial = float(np.dot(force, self.task_success_force_axis_world))
+            lateral = force - axial * self.task_success_force_axis_world
+            lateral_force = float(np.linalg.norm(lateral))
+        else:
+            force_norm = float("inf")
+            lateral_force = float("inf")
+
+        arm_speed = float(
+            np.linalg.norm(self.data.qvel[self._arm_joint_dof_addresses])
+        )
+        force_required = bool(
+            np.isfinite(self.task_success_max_force_norm)
+            or np.isfinite(self.task_success_max_lateral_force)
+            or np.isfinite(self.terminal_hold_max_force_norm)
+            or np.isfinite(self.terminal_hold_max_lateral_force)
+        )
+        success_stable = bool(
+            (force_available or not force_required)
+            and force_norm <= self.task_success_max_force_norm
+            and lateral_force <= self.task_success_max_lateral_force
+            and arm_speed <= self.task_success_max_arm_speed
+        )
+        hold_force_over = bool(
+            force_available
+            and (
+                force_norm > self.terminal_hold_max_force_norm
+                or lateral_force > self.terminal_hold_max_lateral_force
+            )
+        )
+        return {
+            "force_available": bool(force_available),
+            "force_norm_n": force_norm,
+            "lateral_force_n": lateral_force,
+            "arm_speed_rad_s": arm_speed,
+            "success_stable": success_stable,
+            "hold_force_over": hold_force_over,
+        }
+
+
+    def _add_terminal_hold_event_locked(
+        self,
+        name: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        if self.hdf5_recorder is None:
+            return
+        try:
+            if getattr(self.hdf5_recorder, "active", False):
+                self.hdf5_recorder.add_event(name, metadata)
+        except Exception as exc:
+            print(f"[TaskSuccessAutoStop] Failed to add {name} event: {exc}")
+
+
+    def _finish_terminal_hold_locked(
+        self,
+        *,
+        success: bool,
+        reason: str,
+        now: float,
+        metrics: Dict[str, Any],
+    ) -> None:
+        if self.terminal_hold_stop_started:
+            return
+
+        self.terminal_hold_stop_started = True
+        self.terminal_hold_safety_aborted = not success
+        self.terminal_hold_completion_reason = str(reason)
+        event_metadata = {
+            "reason": str(reason),
+            "elapsed_s": float(now - self.terminal_hold_start_time),
+            "force_norm_n": float(metrics["force_norm_n"]),
+            "lateral_force_n": float(metrics["lateral_force_n"]),
+            "arm_speed_rad_s": float(metrics["arm_speed_rad_s"]),
+        }
+
+        if success:
+            self._add_terminal_hold_event_locked(
+                "terminal_hold_complete",
+                event_metadata,
+            )
+            print(
+                "[TaskSuccessAutoStop] Terminal hold finished: "
+                f"reason={reason}, elapsed={event_metadata['elapsed_s']:.3f}s."
+            )
+            auto_status = "auto_stop_task_success"
+            auto_event = "auto_stop_task_success"
+        else:
+            self.task_success_triggered = False
+            # Re-anchor at the actual pose with only gravity feed-forward. This
+            # removes contact-induced servo preload without allowing arm sag.
+            qpos_now = self._get_current_arm_qpos_locked()
+            release_command = self._get_gravity_compensated_hold_command_locked(
+                qpos_now
+            )
+            self.terminal_hold_command_start = release_command.copy()
+            self.terminal_hold_command_goal = release_command.copy()
+            n = len(self.arm_joint_names)
+            self.target_joints[:n] = release_command.tolist()
+            self.command_joints[:n] = release_command.tolist()
+            self._apply_actuator_targets(self.command_joints)
+            self._add_terminal_hold_event_locked(
+                "terminal_hold_safety_abort",
+                event_metadata,
+            )
+            print(
+                "[TaskSuccessAutoStop] Terminal hold safety abort: "
+                f"reason={reason}, force={event_metadata['force_norm_n']:.3f}N, "
+                f"lateral={event_metadata['lateral_force_n']:.3f}N."
+            )
+            auto_status = "terminal_hold_safety_abort"
+            auto_event = "auto_stop_terminal_hold_safety_abort"
+
+        if self.task_success_auto_stop_recording:
+            threading.Thread(
+                target=self._auto_stop_recording_for_task_success,
+                kwargs={"status": auto_status, "event_name": auto_event},
+                daemon=True,
+            ).start()
+
+
     def _start_terminal_hold_locked(self, distance: float, now: float):
         """
         Enter terminal hold:
@@ -3291,6 +3474,10 @@ class RobotControllerMuJoCoPegTool:
         self.terminal_hold_active = True
         self.terminal_hold_start_time = float(now)
         self.terminal_hold_stop_started = False
+        self.terminal_hold_stable_start_time = None
+        self.terminal_hold_force_over_start_time = None
+        self.terminal_hold_safety_aborted = False
+        self.terminal_hold_completion_reason = ""
 
         if self.task_success_stop_accepting_teleop:
             self.accept_teleop_commands = False
@@ -3356,25 +3543,57 @@ class RobotControllerMuJoCoPegTool:
 
         self._apply_actuator_targets(self.command_joints)
 
+        if self.terminal_hold_stop_started:
+            return
+
+        metrics = self._get_task_success_stability_locked()
+        if metrics["hold_force_over"]:
+            if self.terminal_hold_force_over_start_time is None:
+                self.terminal_hold_force_over_start_time = float(now)
+            over_duration = now - self.terminal_hold_force_over_start_time
+            if over_duration >= self.terminal_hold_force_abort_dwell_time:
+                self._finish_terminal_hold_locked(
+                    success=False,
+                    reason="force_limit",
+                    now=now,
+                    metrics=metrics,
+                )
+                return
+        else:
+            self.terminal_hold_force_over_start_time = None
+
+        if metrics["success_stable"]:
+            if self.terminal_hold_stable_start_time is None:
+                self.terminal_hold_stable_start_time = float(now)
+        else:
+            self.terminal_hold_stable_start_time = None
+
+        stable_duration = (
+            0.0
+            if self.terminal_hold_stable_start_time is None
+            else now - self.terminal_hold_stable_start_time
+        )
+        if (
+            elapsed >= self.task_success_terminal_hold_min_time
+            and metrics["success_stable"]
+            and stable_duration
+            >= self.task_success_terminal_hold_stable_dwell_time
+        ):
+            self._finish_terminal_hold_locked(
+                success=True,
+                reason="stable",
+                now=now,
+                metrics=metrics,
+            )
+            return
+
         if elapsed >= self.task_success_terminal_hold_time:
-            if not self.terminal_hold_stop_started:
-                self.terminal_hold_stop_started = True
-
-                if self.task_success_auto_stop_recording:
-                    print(
-                        "[TaskSuccessAutoStop] Terminal hold finished. "
-                        "Auto-stopping HDF5 recording."
-                    )
-
-                    threading.Thread(
-                        target=self._auto_stop_recording_for_task_success,
-                        daemon=True,
-                    ).start()
-                else:
-                    print(
-                        "[TaskSuccessAutoStop] Terminal hold finished. "
-                        "External scripted lifecycle will stop recording."
-                    )
+            self._finish_terminal_hold_locked(
+                success=False,
+                reason="stability_timeout",
+                now=now,
+                metrics=metrics,
+            )
 
 
     def _update_task_success_auto_stop_locked(self):
@@ -3414,7 +3633,8 @@ class RobotControllerMuJoCoPegTool:
             self.task_success_hole_site_id,
         )
 
-        if dist <= self.task_success_distance:
+        stability = self._get_task_success_stability_locked()
+        if dist <= self.task_success_distance and stability["success_stable"]:
             self.task_success_accumulated_time += dt
         else:
             self.task_success_accumulated_time = 0.0

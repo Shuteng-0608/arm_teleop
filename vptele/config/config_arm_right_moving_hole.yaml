@@ -358,11 +358,27 @@ task_success_distance: 0.001
 # 连续满足距离阈值多久才算成功，避免单帧误触发
 task_success_dwell_time: 0.10
 
+# 成功不仅要求几何到位，还要求重力补偿后的接触力较小且机械臂已减速。
+# 固定 peg 的轴线沿世界 Y，横向力因此是 XZ 平面内的合力。
+task_success_force_axis_world: [0.0, 1.0, 0.0]
+task_success_max_force_norm: 5.0
+task_success_max_lateral_force: 3.0
+task_success_max_arm_speed: 0.10
+
 # 成功后停止接收新的遥操作命令
 task_success_stop_accepting_teleop: true
 
-# 成功后继续记录 terminal hold
-task_success_terminal_hold_time: 5.0
+# 自适应 terminal hold：至少保持 0.5 秒；连续稳定 0.25 秒后即可结束；
+# 2 秒仍不稳定则拒绝该 episode，不再固定等待 5 秒。
+task_success_terminal_hold_min_time: 0.5
+task_success_terminal_hold_stable_dwell_time: 0.25
+task_success_terminal_hold_time: 2.0
+
+# 保持阶段的二级安全阈值。重力补偿后的力持续越界 0.05 秒时，
+# 重新锚定当前位置以卸掉位置伺服预载，并将本条数据判为失败。
+terminal_hold_max_force_norm: 8.0
+terminal_hold_max_lateral_force: 5.0
+terminal_hold_force_abort_dwell_time: 0.05
 
 # 触发成功后，用 0.2 秒从当前 command 平滑切到带重力补偿的静态保持目标
 task_success_blend_to_qpos_time: 0.2

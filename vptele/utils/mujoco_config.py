@@ -335,6 +335,67 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
             "force feedback thresholds must be strictly increasing"
         )
 
+    terminal_hold_max_time = _require_positive(
+        config.get("task_success_terminal_hold_time", 1.0),
+        "task_success_terminal_hold_time",
+        allow_zero=True,
+    )
+    terminal_hold_min_time = _require_positive(
+        config.get("task_success_terminal_hold_min_time", terminal_hold_max_time),
+        "task_success_terminal_hold_min_time",
+        allow_zero=True,
+    )
+    _require_positive(
+        config.get("task_success_terminal_hold_stable_dwell_time", 0.0),
+        "task_success_terminal_hold_stable_dwell_time",
+        allow_zero=True,
+    )
+    if terminal_hold_min_time > terminal_hold_max_time:
+        raise MujocoConfigError(
+            "task success terminal hold times must satisfy min_time <= max_time"
+        )
+
+    success_force_axis = _require_vector(
+        config.get("task_success_force_axis_world", [0.0, 1.0, 0.0]),
+        "task_success_force_axis_world",
+        3,
+    )
+    if sum(float(value) ** 2 for value in success_force_axis) <= 1e-18:
+        raise MujocoConfigError("task_success_force_axis_world must be non-zero")
+
+    for key in (
+        "task_success_max_force_norm",
+        "task_success_max_lateral_force",
+        "task_success_max_arm_speed",
+        "terminal_hold_max_force_norm",
+        "terminal_hold_max_lateral_force",
+        "terminal_hold_force_abort_dwell_time",
+    ):
+        if key in config:
+            _require_positive(config[key], key)
+
+    success_force = config.get("task_success_max_force_norm")
+    hold_force = config.get("terminal_hold_max_force_norm")
+    if (
+        success_force is not None
+        and hold_force is not None
+        and float(hold_force) < float(success_force)
+    ):
+        raise MujocoConfigError(
+            "terminal_hold_max_force_norm must be >= task_success_max_force_norm"
+        )
+    success_lateral = config.get("task_success_max_lateral_force")
+    hold_lateral = config.get("terminal_hold_max_lateral_force")
+    if (
+        success_lateral is not None
+        and hold_lateral is not None
+        and float(hold_lateral) < float(success_lateral)
+    ):
+        raise MujocoConfigError(
+            "terminal_hold_max_lateral_force must be >= "
+            "task_success_max_lateral_force"
+        )
+
     scripted_config = _require_mapping(
         config.get("scripted_controller", {}),
         "scripted_controller",

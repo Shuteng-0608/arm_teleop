@@ -851,7 +851,9 @@ def analyze_episode(args) -> Dict[str, Any]:
             "times": event_times,
             "has_task_success_site_reached": "task_success_site_reached" in events,
             "has_terminal_hold_start": "terminal_hold_start" in events,
+            "has_terminal_hold_complete": "terminal_hold_complete" in events,
             "has_auto_stop_task_success": "auto_stop_task_success" in events,
+            "has_scripted_replay_success": "scripted_replay_success" in events,
             "has_joint_torque_over_limit": "joint_torque_over_limit" in events,
         }
 
@@ -865,10 +867,30 @@ def analyze_episode(args) -> Dict[str, Any]:
             idx = events.index("terminal_hold_start")
             terminal_start_time = float(event_times[idx])
 
+        terminal_complete_time = None
+        if "terminal_hold_complete" in events and event_times:
+            idx = events.index("terminal_hold_complete")
+            terminal_complete_time = float(event_times[idx])
+
         if args.expect_auto_success:
-            for ev in ["task_success_site_reached", "terminal_hold_start", "auto_stop_task_success"]:
+            for ev in [
+                "task_success_site_reached",
+                "terminal_hold_start",
+                "terminal_hold_complete",
+            ]:
                 if ev not in events:
                     add_issue(issues, "WARN", f"Expected event missing: {ev}")
+            lifecycle_success_events = {
+                "auto_stop_task_success",
+                "scripted_success",
+                "scripted_replay_success",
+            }
+            if not lifecycle_success_events.intersection(events):
+                add_issue(
+                    issues,
+                    "WARN",
+                    "Expected successful recording-stop event missing",
+                )
 
         # -------------------------------------------------------------
         # Action / command consistency
@@ -1077,9 +1099,26 @@ def analyze_episode(args) -> Dict[str, Any]:
         # Terminal hold
         # -------------------------------------------------------------
         terminal = {}
-        t_end = float(t_state[-1])
-        state_tail = t_state >= t_end - args.terminal_sec
-        force_tail = t_force >= float(t_force[-1]) - args.terminal_sec
+        if terminal_start_time is not None:
+            terminal_end = (
+                terminal_complete_time
+                if terminal_complete_time is not None
+                else float(t_state[-1])
+            )
+            state_tail = (t_state >= terminal_start_time) & (
+                t_state <= terminal_end
+            )
+            force_tail = (t_force >= terminal_start_time) & (
+                t_force <= terminal_end
+            )
+            terminal["window_source"] = "terminal_hold_events"
+            terminal["window_start_s"] = terminal_start_time
+            terminal["window_end_s"] = terminal_end
+        else:
+            t_end = float(t_state[-1])
+            state_tail = t_state >= t_end - args.terminal_sec
+            force_tail = t_force >= float(t_force[-1]) - args.terminal_sec
+            terminal["window_source"] = "episode_tail"
 
         if np.sum(state_tail) >= 3:
             qvel_tail = qvel[state_tail]
