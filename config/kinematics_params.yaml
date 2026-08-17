@@ -11,7 +11,7 @@ dh_parameters:
   a_ee: 0.0395          # 工具端偏移 (m)
 
   # 新增参数，目前用于天工机器人的计算
-  a_ew: -0.02             # 肘部到腕部x偏移 (m)
+  a_ew: -0.00             # 肘部到腕部x偏移 (m)
 
 # 驱动转化参数 (Conversion Drive Parameters)
 Conversion_drive_params:
