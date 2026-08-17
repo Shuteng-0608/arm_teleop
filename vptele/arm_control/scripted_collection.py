@@ -376,6 +376,13 @@ class ScriptedInsertionRunner:
         # ==================================================================
         self.controller._init_dofs()  # 缓存 site ID 和 DOF 地址
         self.controller._sample_error()
+        sample_in_hole = getattr(
+            self.controller,
+            "_sample_in_hole_disturbance",
+            None,
+        )
+        if callable(sample_in_hole):
+            sample_in_hole()
         # The threshold must be sampled before metadata is captured. Pass the
         # same value into run_episode() so the controller does not resample it
         # after the HDF5 episode context has already been assembled.
@@ -443,6 +450,13 @@ class ScriptedInsertionRunner:
         #      控制器内部异常 → stop_episode("scripted_error") → 返回失败
         # ==================================================================
         try:
+            set_event_callback = getattr(
+                self.controller,
+                "set_event_callback",
+                None,
+            )
+            if callable(set_event_callback):
+                set_event_callback(recorder.add_event)
             result = self.controller.run_episode(
                 error_xy_mm=error_info["scripted_error_xy_mm"],
                 error_angle_deg=error_info["scripted_error_angle_deg"],
@@ -459,11 +473,14 @@ class ScriptedInsertionRunner:
                 decision_reasons=[f"controller_error:{exc}"],
             )
             return self._finalize_automatic_failure(outcome)
+        finally:
+            if callable(getattr(self.controller, "set_event_callback", None)):
+                self.controller.set_event_callback(None)
 
         approach_metrics = getattr(
             self.controller, "get_episode_metrics", lambda: {}
         )()
-        recorder.add_event("scripted_approach_metrics", approach_metrics)
+        recorder.add_event("scripted_episode_metrics", approach_metrics)
 
         # ==================================================================
         # 9. 停止 HDF5 记录
@@ -612,7 +629,12 @@ class ScriptedInsertionRunner:
             "stage1_success": int(bool(stage1_result.success)),
             "stage1_outcome": str(stage1_result.outcome),
             "replay_action_source": "stage1_trace.hdf5:/stage1_trace/action_command",
-            "stage1_ft_convention": "ft_wrench=world-rotated sensor force; ft_wrench_raw=raw sensor frame",
+            "stage1_ft_convention": (
+                "ft_wrench=gravity-compensated world-frame wrench; "
+                "ft_wrench_raw=raw sensor-frame wrench"
+            ),
+            "scripted_replay_has_expert_action_mask": 1,
+            "scripted_disturbance_actions_are_expert": 0,
             **error_info,
             **approach_metrics,
         }
@@ -632,7 +654,18 @@ class ScriptedInsertionRunner:
         replay_ok = False
         replay_error = ""
         try:
-            replay_ok = self._replay_command_trace(commands, replay_hz)
+            replay_ok = self._replay_command_trace(
+                commands,
+                replay_hz,
+                phase_codes=np.asarray(
+                    stage1_trace.get("scripted_phase_code", []),
+                    dtype=np.int8,
+                ),
+                expert_action_mask=np.asarray(
+                    stage1_trace.get("expert_action_mask", []),
+                    dtype=np.int8,
+                ),
+            )
         except Exception as exc:
             replay_error = str(exc)
             logger.exception(f"TWO_STAGE replay failed: {exc}")
@@ -673,7 +706,11 @@ class ScriptedInsertionRunner:
                 replay_hz=replay_hz,
             )
             if stage1_path is not None:
-                self._annotate_stage2_with_stage1_path(final_path, stage1_path)
+                self._annotate_stage2_with_stage1_path(
+                    final_path,
+                    stage1_path,
+                    stage1_trace,
+                )
 
         review_result = SimpleNamespace(
             success=execution_success,
@@ -711,6 +748,8 @@ class ScriptedInsertionRunner:
             "ee_pose": [],
             "ft_wrench": [],
             "ft_wrench_raw": [],
+            "scripted_phase_code": [],
+            "expert_action_mask": [],
         }
 
         def sampler():
@@ -739,10 +778,14 @@ class ScriptedInsertionRunner:
             stop_event.set()
             thread.join(timeout=1.0)
 
-        trace_np = {
-            key: np.asarray(values, dtype=np.float64)
-            for key, values in trace.items()
-        }
+        trace_np = {}
+        for key, values in trace.items():
+            dtype = (
+                np.int8
+                if key in {"scripted_phase_code", "expert_action_mask"}
+                else np.float64
+            )
+            trace_np[key] = np.asarray(values, dtype=dtype)
         logger.info(
             f"TWO_STAGE: stage1 result={result.outcome}, "
             f"success={result.success}, samples={len(trace_np['timestamps'])}"
@@ -774,6 +817,12 @@ class ScriptedInsertionRunner:
         else:
             ft_world_arr = np.asarray(ft_world, dtype=np.float64)
 
+        annotation = getattr(
+            self.controller,
+            "get_control_annotation",
+            lambda: {"scripted_phase_code": 0, "expert_action_mask": 1},
+        )()
+
         return {
             "timestamps": np.asarray([time.time() - wall_t0, t_sim], dtype=np.float64),
             "action_command": action_command,
@@ -781,6 +830,14 @@ class ScriptedInsertionRunner:
             "ee_pose": ee_pose,
             "ft_wrench": ft_world_arr,
             "ft_wrench_raw": ft_raw_arr,
+            "scripted_phase_code": np.asarray(
+                annotation["scripted_phase_code"],
+                dtype=np.float64,
+            ),
+            "expert_action_mask": np.asarray(
+                annotation["expert_action_mask"],
+                dtype=np.float64,
+            ),
         }
 
     def _snapshot_replay_initial_state(self) -> Dict[str, Any]:
@@ -832,11 +889,34 @@ class ScriptedInsertionRunner:
             if reset_fn is not None:
                 reset_fn()
 
-    def _replay_command_trace(self, commands: np.ndarray, replay_hz: float) -> bool:
+    def _replay_command_trace(
+        self,
+        commands: np.ndarray,
+        replay_hz: float,
+        phase_codes: Optional[np.ndarray] = None,
+        expert_action_mask: Optional[np.ndarray] = None,
+    ) -> bool:
         """Replay internal actuator position commands from stage1."""
         period = 1.0 / max(float(replay_hz), 1e-6)
         t_next = time.time()
         n = min(commands.shape[1], 7)
+        phase_codes = np.asarray(
+            phase_codes if phase_codes is not None else [],
+            dtype=np.int8,
+        ).reshape(-1)
+        expert_action_mask = np.asarray(
+            expert_action_mask if expert_action_mask is not None else [],
+            dtype=np.int8,
+        ).reshape(-1)
+        phase_names = {
+            0: "inactive",
+            1: "insert",
+            2: "disturbance",
+            3: "recovery",
+            4: "complete",
+            5: "failed",
+        }
+        previous_phase = None
         for i, command in enumerate(commands):
             if self._batch_stop_event.is_set():
                 return False
@@ -845,6 +925,25 @@ class ScriptedInsertionRunner:
                 self.rc.target_joints[:n] = cmd
                 self.rc.command_joints[:n] = cmd
                 self.rc._apply_actuator_targets(self.rc.command_joints)
+            if i < len(phase_codes):
+                phase_code = int(phase_codes[i])
+                if phase_code != previous_phase:
+                    previous_phase = phase_code
+                    expert = (
+                        int(expert_action_mask[i])
+                        if i < len(expert_action_mask)
+                        else int(phase_code != 2)
+                    )
+                    recorder = getattr(self.rc, "hdf5_recorder", None)
+                    if recorder is not None:
+                        recorder.add_event(
+                            f"scripted_replay_{phase_names.get(phase_code, 'unknown')}",
+                            {
+                                "trace_index": int(i),
+                                "phase_code": phase_code,
+                                "expert_action": bool(expert),
+                            },
+                        )
             if i % 30 == 0:
                 logger.info(f"TWO_STAGE replay: {i}/{len(commands)}")
             t_next += period
@@ -876,8 +975,18 @@ class ScriptedInsertionRunner:
 
             g.attrs["is_training_observation"] = 0
             g.attrs["action_command_convention"] = "data.ctrl[0:7] sampled during stage1"
-            g.attrs["ft_wrench_convention"] = "world-rotated sensor wrench, not HDF5 gravity-compensated"
-            g.attrs["ft_wrench_raw_convention"] = "raw peg FT sensor frame"
+            g.attrs["ft_wrench_convention"] = (
+                "gravity-compensated world-frame wrench"
+            )
+            g.attrs["ft_wrench_raw_convention"] = (
+                "raw configured FT sensor-frame wrench"
+            )
+            g.attrs["phase_code_convention"] = (
+                "0=inactive,1=insert,2=disturbance,3=recovery,4=complete,5=failed"
+            )
+            g.attrs["expert_action_mask_convention"] = (
+                "0=system-injected disturbance,1=expert action"
+            )
             g.attrs["stage1_success"] = int(bool(stage1_result.success))
             g.attrs["stage1_outcome"] = str(stage1_result.outcome)
             g.attrs["replay_success"] = int(bool(replay_success))
@@ -963,16 +1072,28 @@ class ScriptedInsertionRunner:
                 "ee_pose": shape_of("ee_pose"),
                 "ft_wrench": shape_of("ft_wrench"),
                 "ft_wrench_raw": shape_of("ft_wrench_raw"),
+                "scripted_phase_code": shape_of("scripted_phase_code"),
+                "expert_action_mask": shape_of("expert_action_mask"),
             },
             "force_norm": force_stats,
             "approach_metrics": getattr(
+                self.controller, "get_episode_metrics", lambda: {}
+            )(),
+            # Full controller diagnostics. ``approach_metrics`` is retained
+            # as a compatibility alias for existing analysis scripts.
+            "episode_metrics": getattr(
                 self.controller, "get_episode_metrics", lambda: {}
             )(),
             "notes": {
                 "stage1_is_training_observation": False,
                 "stage2_episode_hdf5_is_training_data": True,
                 "action_command_convention": "data.ctrl[0:7] sampled during stage1",
-                "ft_wrench_convention": "world-rotated sensor wrench, not HDF5 gravity-compensated",
+                "ft_wrench_convention": (
+                    "gravity-compensated world-frame wrench"
+                ),
+                "expert_action_mask_convention": (
+                    "0=system-injected disturbance,1=expert action"
+                ),
             },
         }
 
@@ -980,7 +1101,12 @@ class ScriptedInsertionRunner:
             json.dump(summary, f, indent=2, ensure_ascii=False)
         logger.info(f"Stage1 summary written to {summary_path}")
 
-    def _annotate_stage2_with_stage1_path(self, final_path, stage1_path: Path) -> None:
+    def _annotate_stage2_with_stage1_path(
+        self,
+        final_path,
+        stage1_path: Path,
+        stage1_trace: Dict[str, np.ndarray],
+    ) -> None:
         """Record the separate stage1 file path in the stage2 training HDF5."""
         import h5py
 
@@ -994,6 +1120,30 @@ class ScriptedInsertionRunner:
             meta.attrs["stage1_trace_file"] = stage1_path.name
             meta.attrs["stage1_trace_path"] = str(stage1_path)
             meta.attrs["replay_action_source"] = "stage1_trace.hdf5:/stage1_trace/action_command"
+            meta.attrs["scripted_replay_has_expert_action_mask"] = 1
+            meta.attrs["scripted_disturbance_actions_are_expert"] = 0
+            replay = f.require_group("scripted_replay")
+            for name in (
+                "timestamps",
+                "scripted_phase_code",
+                "expert_action_mask",
+            ):
+                if name in replay:
+                    del replay[name]
+                replay.create_dataset(
+                    name,
+                    data=np.asarray(stage1_trace.get(name, [])),
+                    compression="gzip",
+                )
+            replay.attrs["alignment"] = (
+                "one row per replayed stage1 action_command"
+            )
+            replay.attrs["phase_code_convention"] = (
+                "0=inactive,1=insert,2=disturbance,3=recovery,4=complete,5=failed"
+            )
+            replay.attrs["expert_action_mask_convention"] = (
+                "0=system-injected disturbance,1=expert action"
+            )
 
     def _review_episode(self, episode_path, result):
         """Choose keep/discard manually or through the deterministic gate."""

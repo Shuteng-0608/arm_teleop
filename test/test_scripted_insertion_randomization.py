@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -169,6 +170,112 @@ class ScriptedInsertionRandomizationTest(unittest.TestCase):
         self.assertEqual(metrics["scripted_contact_target_reached"], 1)
         self.assertAlmostEqual(metrics["scripted_contact_target_offset_mm"], 4.0)
         self.assertLess(controller._mujoco_ik_step.call_count, 150)
+
+    def test_force_world_requires_gravity_compensated_controller_api(self):
+        controller = ScriptedPegInsertionController.__new__(
+            ScriptedPegInsertionController
+        )
+        controller.rc = Mock()
+        controller.rc.get_gravity_compensated_ft_wrench_world.return_value = [
+            1.0,
+            2.0,
+            3.0,
+            0.1,
+            0.2,
+            0.3,
+        ]
+
+        np.testing.assert_allclose(
+            controller._ft_world(),
+            [1.0, 2.0, 3.0, 0.1, 0.2, 0.3],
+        )
+        controller.rc.get_peg_ft_sensor.assert_not_called()
+
+        del controller.rc.get_gravity_compensated_ft_wrench_world
+        with self.assertRaisesRegex(RuntimeError, "gravity-compensated"):
+            controller._ft_world()
+
+    def test_in_hole_disturbance_recovers_with_lateral_compensated_force(self):
+        controller = ScriptedPegInsertionController.__new__(
+            ScriptedPegInsertionController
+        )
+        controller.cfg = {
+            "in_hole_control_period_s": 0.01,
+            "in_hole_disturbance_ramp_steps": 2,
+            "in_hole_disturbance_hold_steps": 0,
+            "in_hole_contact_detect_force_n": 2.0,
+            "in_hole_contact_detect_dwell_s": 0.01,
+            "in_hole_contact_detection_min_fraction": 0.70,
+            "in_hole_contact_target_force_n": 5.0,
+            "in_hole_contact_target_dwell_s": 0.01,
+            "in_hole_contact_release_force_n": 1.0,
+            "in_hole_contact_release_dwell_s": 0.01,
+            "in_hole_force_limit_n": 25.0,
+            "in_hole_force_filter_alpha": 1.0,
+            "in_hole_correction_gain_m_per_n": 0.001,
+            "in_hole_force_correction_sign": -1.0,
+            "in_hole_correction_max_step_m": 0.001,
+            "in_hole_correction_max_travel_m": 0.006,
+            "in_hole_correction_timeout_s": 1.0,
+            "in_hole_return_center_steps": 2,
+        }
+        controller._insert_axis = np.asarray([0.0, -1.0, 0.0])
+        controller._in_hole_disturbance_sample = SimpleNamespace(
+            depth_fraction=0.5,
+            direction_deg=0.0,
+            amplitude_mm=4.0,
+        )
+        controller._episode_metrics = {}
+        controller._episode_deadline = None
+        controller._arm_sign = [1] * 7
+        controller._in_hole_phase = "insert"
+        controller._in_hole_phase_code = 1
+        controller._expert_action_mask = 1
+        events = []
+        controller._event_callback = lambda name, extra: events.append((name, extra))
+        current = np.asarray([0.0, 0.0, 0.0], dtype=np.float64)
+        desired = current.copy()
+
+        class FakeRC:
+            def set_arm_positions(self, _joints):
+                nonlocal current
+                current = desired.copy()
+
+        controller.rc = FakeRC()
+        controller._peg_w = Mock(side_effect=lambda: current.copy())
+        controller._episode_timed_out = Mock(return_value=False)
+        controller._freeze_current_arm = Mock()
+        controller._smooth_move_ee = Mock(return_value=True)
+
+        def solve(target, constrain_ori):
+            nonlocal desired
+            self.assertTrue(constrain_ori)
+            desired = np.asarray(target, dtype=np.float64).copy()
+            return [0.0] * 7
+
+        controller._mujoco_ik_step = Mock(side_effect=solve)
+        controller._ft_world = Mock(
+            side_effect=lambda: np.asarray(
+                [5.0 if current[0] >= 0.003 else 0.0, 0.0, 0.0, 0, 0, 0],
+                dtype=np.float64,
+            )
+        )
+
+        with patch("vptele.arm_control.scripted_insertion.time.sleep"):
+            result = controller._run_in_hole_disturbance(
+                nominal_w=np.asarray([0.0, -0.01, 0.0]),
+                actual_depth_fraction=0.5,
+            )
+
+        self.assertIsNone(result)
+        metrics = controller.get_episode_metrics()
+        self.assertEqual(metrics["scripted_in_hole_contact_detected"], 1)
+        self.assertEqual(metrics["scripted_in_hole_contact_target_reached"], 1)
+        self.assertEqual(metrics["scripted_in_hole_recovery_success"], 1)
+        self.assertGreater(metrics["scripted_in_hole_correction_travel_mm"], 0.0)
+        self.assertIn("scripted_in_hole_disturbance", [row[0] for row in events])
+        self.assertIn("scripted_in_hole_recovery", [row[0] for row in events])
+        self.assertEqual(controller.get_control_annotation()["expert_action_mask"], 1)
 
 
 if __name__ == "__main__":

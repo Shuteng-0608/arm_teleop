@@ -480,6 +480,48 @@ scripted_controller:
   waypoint_insert_steps: 45
   waypoint_steps_per_wp: 90
 
+  # First in-hole recovery version: one deterministic X/Z disturbance per
+  # episode. The 3 mm nominal radial clearance comes from a 14 mm socket
+  # radius and 11 mm peg radius. Commands beyond that clearance create a
+  # light side contact, then gravity-compensated lateral force drives a
+  # bounded recovery while axial insertion is paused.
+  in_hole_correction_enabled: true
+  in_hole_nominal_clearance_mm: 3.0
+  in_hole_disturbance_depth_fractions: [0.30, 0.55, 0.80]
+  in_hole_disturbance_direction_bins: 8
+  in_hole_disturbance_amplitudes_mm: [3.4, 3.8]
+  in_hole_disturbance_coverage_order: "shuffled"
+  in_hole_disturbance_coverage_seed: 73
+  in_hole_disturbance_start_cycle: 0
+  in_hole_disturbance_start_index: 0
+  in_hole_disturbance_ramp_steps: 18
+  in_hole_disturbance_hold_steps: 4
+
+  in_hole_control_period_s: 0.030
+  in_hole_contact_detect_force_n: 2.0
+  in_hole_contact_detect_dwell_s: 0.030
+  # Reject gravity-compensated-but-not-inertia-compensated ramp transients.
+  # Contact detection becomes active only after 70% of the disturbance has
+  # been commanded, i.e. near the known radial clearance.
+  in_hole_contact_detection_min_fraction: 0.70
+  # After first contact, continue the already bounded smooth disturbance until
+  # a useful 5 N lateral recovery condition is reached (or the ramp ends).
+  in_hole_contact_target_force_n: 5.0
+  in_hole_contact_target_dwell_s: 0.030
+  in_hole_contact_release_force_n: 1.5
+  in_hole_contact_release_dwell_s: 0.090
+  in_hole_force_filter_alpha: 0.30
+  in_hole_force_limit_n: 25.0
+
+  # MuJoCo sensor convention for this moving-hole tool: correction motion is
+  # opposite the measured compensated reaction force.
+  in_hole_force_correction_sign: -1.0
+  in_hole_correction_gain_m_per_n: 0.00008
+  in_hole_correction_max_step_m: 0.00025
+  in_hole_correction_max_travel_m: 0.006
+  in_hole_correction_timeout_s: 3.0
+  in_hole_return_center_steps: 10
+
   # Admittance control gains during the ALIGN phase.
   # K_lateral:    lateral (X,Z) correction per Newton of measured force [m/N]
   # K_axial:      axial (Y) correction per Newton above F_target       [m/N]

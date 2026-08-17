@@ -21,7 +21,7 @@ from __future__ import annotations
 import math, time, mujoco
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -31,9 +31,13 @@ try:
     from vptele.utils.error_coverage_scheduler import (
         RimContactCoverageScheduler,
     )
+    from vptele.utils.in_hole_disturbance_scheduler import (
+        InHoleDisturbanceScheduler,
+    )
 except ModuleNotFoundError:  # Catkin's legacy package_dir exposes utils directly.
     from utils.logger import get_logger
     from utils.error_coverage_scheduler import RimContactCoverageScheduler
+    from utils.in_hole_disturbance_scheduler import InHoleDisturbanceScheduler
 
 logger = get_logger()
 
@@ -166,6 +170,41 @@ class ScriptedPegInsertionController:
         # 每个 episode 开始时会重新采样墙接触力阈值。
         self._wall_threshold = 0.0
         self._episode_metrics: Dict[str, Any] = {}
+        self._event_callback: Optional[
+            Callable[[str, Dict[str, Any]], None]
+        ] = None
+        self._in_hole_phase = "inactive"
+        self._in_hole_phase_code = 0
+        self._expert_action_mask = 1
+        self._in_hole_disturbance_metadata: Dict[str, Any] = {}
+        self._in_hole_disturbance_sample = None
+        self._in_hole_disturbance_scheduler = None
+        if bool(self.cfg.get("in_hole_correction_enabled", False)):
+            self._in_hole_disturbance_scheduler = InHoleDisturbanceScheduler(
+                depth_fractions=self.cfg.get(
+                    "in_hole_disturbance_depth_fractions",
+                    [0.30, 0.55, 0.80],
+                ),
+                direction_bins=int(
+                    self.cfg.get("in_hole_disturbance_direction_bins", 8)
+                ),
+                amplitudes_mm=self.cfg.get(
+                    "in_hole_disturbance_amplitudes_mm",
+                    [3.4, 3.8],
+                ),
+                order=self.cfg.get(
+                    "in_hole_disturbance_coverage_order", "shuffled"
+                ),
+                seed=int(
+                    self.cfg.get("in_hole_disturbance_coverage_seed", 73)
+                ),
+                start_cycle=int(
+                    self.cfg.get("in_hole_disturbance_start_cycle", 0)
+                ),
+                start_index=int(
+                    self.cfg.get("in_hole_disturbance_start_index", 0)
+                ),
+            )
 
         # ==================================================================
         # 标定缓存文件路径
@@ -224,7 +263,19 @@ class ScriptedPegInsertionController:
             "scripted_contact_detected": 0,
             "scripted_contact_peak_force_n": 0.0,
             "scripted_contact_push_depth_mm": 0.0,
+            "scripted_force_control_source": (
+                "gravity_compensated_world_wrench"
+            ),
+            "scripted_in_hole_correction_enabled": int(
+                bool(self.cfg.get("in_hole_correction_enabled", False))
+            ),
         }
+        self._set_in_hole_phase("inactive")
+        if (
+            getattr(self, "_in_hole_disturbance_scheduler", None) is not None
+            and getattr(self, "_in_hole_disturbance_sample", None) is None
+        ):
+            self._sample_in_hole_disturbance()
         timeout_s = max(1.0, float(self.cfg.get("episode_timeout_s", 180.0)))
         self._episode_deadline = time.monotonic() + timeout_s
         if wall_threshold_n is None:
@@ -335,11 +386,87 @@ class ScriptedPegInsertionController:
             "scripted_wall_threshold_n": self._wall_threshold,
         }
         result.update(self._error_sample_metadata)
+        result.update(self._in_hole_disturbance_metadata)
         return result
 
     def get_episode_metrics(self) -> Dict[str, Any]:
         """Return scalar approach/contact diagnostics for trace metadata."""
         return dict(self._episode_metrics)
+
+    def set_event_callback(
+        self,
+        callback: Optional[Callable[[str, Dict[str, Any]], None]],
+    ) -> None:
+        """Set an optional live event sink used by direct HDF5 collection."""
+        self._event_callback = callback
+
+    def get_control_annotation(self) -> Dict[str, Any]:
+        """Return the current phase and whether its command is expert action."""
+        return {
+            "scripted_phase_code": int(self._in_hole_phase_code),
+            "expert_action_mask": int(self._expert_action_mask),
+        }
+
+    def _set_in_hole_phase(
+        self,
+        phase: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        phase_codes = {
+            "inactive": 0,
+            "insert": 1,
+            "disturbance": 2,
+            "recovery": 3,
+            "complete": 4,
+            "failed": 5,
+        }
+        phase = str(phase)
+        if phase not in phase_codes:
+            raise ValueError(f"unknown in-hole phase: {phase}")
+        changed = phase != getattr(self, "_in_hole_phase", "inactive")
+        self._in_hole_phase = phase
+        self._in_hole_phase_code = phase_codes[phase]
+        self._expert_action_mask = 0 if phase == "disturbance" else 1
+        callback = getattr(self, "_event_callback", None)
+        if changed and callable(callback):
+            callback(
+                f"scripted_in_hole_{phase}",
+                dict(extra or {}),
+            )
+
+    def _sample_in_hole_disturbance(self) -> None:
+        """Consume one deterministic in-hole disturbance coverage cell."""
+        scheduler = self._in_hole_disturbance_scheduler
+        if scheduler is None:
+            self._in_hole_disturbance_sample = None
+            self._in_hole_disturbance_metadata = {
+                "scripted_in_hole_correction_enabled": 0,
+            }
+            return
+
+        sample = scheduler.take()
+        self._in_hole_disturbance_sample = sample
+        metadata = sample.to_dict()
+        metadata.update(
+            {
+                "scripted_in_hole_correction_enabled": 1,
+                "scripted_in_hole_disturbance_coverage_size": scheduler.size,
+                "scripted_in_hole_disturbance_coverage_order": scheduler.order,
+                "scripted_in_hole_disturbance_coverage_seed": scheduler.seed,
+                "scripted_disturbance_actions_are_expert": 0,
+                "scripted_force_control_source": (
+                    "gravity_compensated_world_wrench"
+                ),
+            }
+        )
+        self._in_hole_disturbance_metadata = metadata
+        logger.info(
+            "IN_HOLE sample: depth=%.0f%% direction=%.0fdeg amplitude=%.2fmm cell=%s",
+            sample.depth_fraction * 100.0,
+            sample.direction_deg,
+            sample.amplitude_mm,
+            metadata["scripted_in_hole_cell_label"],
+        )
 
     def _sample_wall_threshold(self):
         """每条 episode 重新采样墙接触力阈值。"""
@@ -898,6 +1025,13 @@ class ScriptedPegInsertionController:
         if steps_per_wp is None:
             steps_per_wp = int(self.cfg.get("waypoint_steps_per_wp", 90))
 
+        align_steps = min(
+            max(int(self.cfg.get("waypoint_align_steps", 30)), 0),
+            len(waypoints_w),
+        )
+        insert_steps = max(len(waypoints_w) - align_steps, 1)
+        disturbance_done = False
+
         for i, wp in enumerate(waypoints_w):
             if self._episode_timed_out():
                 return EpisodeResult(False, "timeout", Phase.INSERT, 0, 0.0)
@@ -907,8 +1041,31 @@ class ScriptedPegInsertionController:
             # 如果 task_success 已经触发，提前结束
             if getattr(self.rc, "task_success_triggered", False):
                 logger.info(f"WAYPOINT: task success triggered at wp {i}/{len(waypoints_w)}")
+                self._set_in_hole_phase("complete")
                 time.sleep(1.0)
                 return None
+
+            if i >= align_steps:
+                self._set_in_hole_phase("insert")
+                insert_progress = float(i - align_steps + 1) / float(insert_steps)
+                sample = self._in_hole_disturbance_sample
+                if (
+                    not disturbance_done
+                    and sample is not None
+                    and insert_progress >= float(sample.depth_fraction)
+                ):
+                    disturbance_done = True
+                    result = self._run_in_hole_disturbance(
+                        nominal_w=np.asarray(wp, dtype=np.float64),
+                        actual_depth_fraction=insert_progress,
+                    )
+                    if result is not None:
+                        self._set_in_hole_phase(
+                            "failed",
+                            {"outcome": result.outcome},
+                        )
+                        return result
+                    self._set_in_hole_phase("insert")
 
             q_int = self._mujoco_ik_step(wp, constrain_ori=True)
             if q_int is None:
@@ -930,6 +1087,376 @@ class ScriptedPegInsertionController:
 
         # 等最终稳定，检查 task_success
         time.sleep(0.5)
+        if self._in_hole_disturbance_sample is not None and not disturbance_done:
+            self._set_in_hole_phase(
+                "failed",
+                {"outcome": "in_hole_disturbance_not_reached"},
+            )
+            return EpisodeResult(
+                False,
+                "in_hole_disturbance_not_reached",
+                Phase.INSERT,
+                0,
+                0.0,
+            )
+        self._set_in_hole_phase("complete")
+        return None
+
+    def _lateral_vector(self, vector_world: np.ndarray) -> np.ndarray:
+        """Project a world-frame vector onto the insertion-normal plane."""
+        vector = np.asarray(vector_world, dtype=np.float64).reshape(3)
+        return vector - float(np.dot(vector, self._insert_axis)) * self._insert_axis
+
+    def _disturbance_direction_world(self, angle_deg: float) -> np.ndarray:
+        """Build a deterministic unit vector in the insertion-normal plane."""
+        basis_x = self._lateral_vector(np.asarray([1.0, 0.0, 0.0]))
+        if float(np.linalg.norm(basis_x)) <= 1e-9:
+            basis_x = self._lateral_vector(np.asarray([0.0, 0.0, 1.0]))
+        basis_x /= float(np.linalg.norm(basis_x))
+        basis_z = np.cross(self._insert_axis, basis_x)
+        basis_z /= float(np.linalg.norm(basis_z))
+        angle = math.radians(float(angle_deg))
+        return math.cos(angle) * basis_x + math.sin(angle) * basis_z
+
+    def _run_in_hole_disturbance(
+        self,
+        nominal_w: np.ndarray,
+        actual_depth_fraction: float,
+    ) -> Optional[EpisodeResult]:
+        """Inject one bounded lateral disturbance, then release it by force.
+
+        The disturbance command is deliberately labelled non-expert.  Once a
+        debounced lateral contact is detected, axial motion pauses and the
+        gravity-compensated world-frame lateral force drives a bounded
+        admittance correction.  Only the recovery command is expert action.
+        """
+        sample = self._in_hole_disturbance_sample
+        if sample is None:
+            return None
+
+        control_period = max(
+            0.005,
+            float(self.cfg.get("in_hole_control_period_s", 0.03)),
+        )
+        ramp_steps = max(
+            1,
+            int(self.cfg.get("in_hole_disturbance_ramp_steps", 18)),
+        )
+        hold_steps = max(
+            0,
+            int(self.cfg.get("in_hole_disturbance_hold_steps", 4)),
+        )
+        detect_force = float(
+            self.cfg.get("in_hole_contact_detect_force_n", 2.0)
+        )
+        detect_dwell = max(
+            control_period,
+            float(self.cfg.get("in_hole_contact_detect_dwell_s", 0.03)),
+        )
+        detection_min_fraction = float(
+            self.cfg.get("in_hole_contact_detection_min_fraction", 0.70)
+        )
+        release_force = float(
+            self.cfg.get("in_hole_contact_release_force_n", 1.5)
+        )
+        target_force = float(
+            self.cfg.get("in_hole_contact_target_force_n", 5.0)
+        )
+        target_dwell = max(
+            control_period,
+            float(self.cfg.get("in_hole_contact_target_dwell_s", 0.03)),
+        )
+        release_dwell = max(
+            control_period,
+            float(self.cfg.get("in_hole_contact_release_dwell_s", 0.09)),
+        )
+        force_limit = float(self.cfg.get("in_hole_force_limit_n", 25.0))
+        smoothing_alpha = float(
+            self.cfg.get("in_hole_force_filter_alpha", 0.30)
+        )
+        correction_gain = float(
+            self.cfg.get("in_hole_correction_gain_m_per_n", 0.00008)
+        )
+        correction_sign = float(
+            self.cfg.get("in_hole_force_correction_sign", -1.0)
+        )
+        max_step = float(
+            self.cfg.get("in_hole_correction_max_step_m", 0.00025)
+        )
+        max_travel = float(
+            self.cfg.get("in_hole_correction_max_travel_m", 0.006)
+        )
+        correction_timeout = float(
+            self.cfg.get("in_hole_correction_timeout_s", 3.0)
+        )
+        return_steps = max(
+            1,
+            int(self.cfg.get("in_hole_return_center_steps", 10)),
+        )
+
+        direction = self._disturbance_direction_world(sample.direction_deg)
+        disturbance_m = float(sample.amplitude_mm) / 1000.0
+        anchor = self._peg_w().copy()
+        anchor += self._lateral_vector(nominal_w - anchor)
+        disturbance_target = anchor + direction * disturbance_m
+        started = time.monotonic()
+        contact_detected = False
+        detect_accum = 0.0
+        contact_detect_time = None
+        target_accum = 0.0
+        target_reached = False
+        peak_lateral = 0.0
+        peak_total = 0.0
+        filtered_lateral = np.zeros(3, dtype=np.float64)
+        actual_amplitude_m = 0.0
+        commanded_amplitude_m = 0.0
+
+        self._set_in_hole_phase(
+            "disturbance",
+            {
+                "depth_fraction": float(actual_depth_fraction),
+                "direction_deg": float(sample.direction_deg),
+                "amplitude_mm": float(sample.amplitude_mm),
+                "expert_action": False,
+            },
+        )
+        logger.info(
+            "IN_HOLE disturbance: depth=%.1f%% direction=%.0fdeg amplitude=%.2fmm",
+            actual_depth_fraction * 100.0,
+            sample.direction_deg,
+            sample.amplitude_mm,
+        )
+
+        for step_index in range(ramp_steps + hold_steps):
+            if self._episode_timed_out():
+                return EpisodeResult(False, "timeout", Phase.INSERT, 0, 0.0)
+            if step_index < ramp_steps:
+                alpha = float(step_index + 1) / float(ramp_steps)
+                blend = 0.5 - 0.5 * math.cos(math.pi * alpha)
+            else:
+                blend = 1.0
+            commanded_amplitude_m = blend * disturbance_m
+            desired = anchor + blend * (disturbance_target - anchor)
+            q_int = self._mujoco_ik_step(desired, constrain_ori=True)
+            if q_int is None:
+                return EpisodeResult(False, "ik", Phase.INSERT, 0, 0.0)
+            command = [
+                float(q_int[index]) * float(self._arm_sign[index])
+                for index in range(7)
+            ]
+            self.rc.set_arm_positions(command)
+            time.sleep(control_period)
+
+            wrench = self._ft_world()
+            if wrench is None:
+                return EpisodeResult(
+                    False,
+                    "gravity_compensated_force_unavailable",
+                    Phase.INSERT,
+                    0,
+                    0.0,
+                )
+            total_force = float(np.linalg.norm(wrench[:3]))
+            lateral = self._lateral_vector(wrench[:3])
+            lateral_force = float(np.linalg.norm(lateral))
+            filtered_lateral = (
+                smoothing_alpha * lateral
+                + (1.0 - smoothing_alpha) * filtered_lateral
+            )
+            peak_total = max(peak_total, total_force)
+            peak_lateral = max(peak_lateral, lateral_force)
+            actual_amplitude_m = max(
+                actual_amplitude_m,
+                float(np.linalg.norm(self._lateral_vector(self._peg_w() - anchor))),
+            )
+            if total_force >= force_limit:
+                self._freeze_current_arm("in-hole force limit")
+                return EpisodeResult(
+                    False,
+                    "in_hole_force_limit",
+                    Phase.INSERT,
+                    0,
+                    0.0,
+                )
+            # Gravity compensation removes static tool weight, not inertial
+            # force from the deliberate ramp.  Do not classify early ramp
+            # transients as wall contact; first command motion near the known
+            # radial clearance, then apply the debounced force threshold.
+            if (
+                blend >= detection_min_fraction
+                and lateral_force >= detect_force
+            ):
+                detect_accum += control_period
+            else:
+                detect_accum = 0.0
+            if not contact_detected and detect_accum >= detect_dwell:
+                contact_detected = True
+                contact_detect_time = time.monotonic() - started
+            if contact_detected and lateral_force >= target_force:
+                target_accum += control_period
+            else:
+                target_accum = 0.0
+            if contact_detected and target_accum >= target_dwell:
+                target_reached = True
+                break
+
+        self._episode_metrics.update(
+            {
+                "scripted_in_hole_disturbance_actual_depth_fraction": float(
+                    actual_depth_fraction
+                ),
+                "scripted_in_hole_disturbance_actual_amplitude_mm": float(
+                    actual_amplitude_m * 1000.0
+                ),
+                "scripted_in_hole_disturbance_commanded_amplitude_mm": float(
+                    commanded_amplitude_m * 1000.0
+                ),
+                "scripted_in_hole_contact_detected": int(contact_detected),
+                "scripted_in_hole_contact_latency_s": float(
+                    contact_detect_time
+                    if contact_detect_time is not None
+                    else time.monotonic() - started
+                ),
+                "scripted_in_hole_contact_target_reached": int(target_reached),
+                "scripted_in_hole_contact_target_force_n": float(target_force),
+                "scripted_in_hole_peak_lateral_force_n": float(peak_lateral),
+                "scripted_in_hole_peak_total_force_n": float(peak_total),
+            }
+        )
+        if not contact_detected:
+            self._smooth_move_ee(
+                target_w=anchor,
+                total_steps=return_steps,
+                step_wait_s=control_period,
+                constrain_ori=True,
+                phase=Phase.INSERT,
+                log_prefix="IN_HOLE_NO_CONTACT_RETURN",
+            )
+            return EpisodeResult(
+                False,
+                "in_hole_disturbance_no_contact",
+                Phase.INSERT,
+                0,
+                0.0,
+            )
+
+        self._set_in_hole_phase(
+            "recovery",
+            {
+                "contact_lateral_force_n": float(peak_lateral),
+                "expert_action": True,
+            },
+        )
+        recovery_started = time.monotonic()
+        release_accum = 0.0
+        correction_travel = 0.0
+        recovery_steps = 0
+        recovery_success = False
+
+        while time.monotonic() - recovery_started < correction_timeout:
+            if self._episode_timed_out():
+                return EpisodeResult(False, "timeout", Phase.INSERT, 0, 0.0)
+            wrench = self._ft_world()
+            if wrench is None:
+                return EpisodeResult(
+                    False,
+                    "gravity_compensated_force_unavailable",
+                    Phase.INSERT,
+                    0,
+                    0.0,
+                )
+            total_force = float(np.linalg.norm(wrench[:3]))
+            lateral = self._lateral_vector(wrench[:3])
+            lateral_force = float(np.linalg.norm(lateral))
+            filtered_lateral = (
+                smoothing_alpha * lateral
+                + (1.0 - smoothing_alpha) * filtered_lateral
+            )
+            filtered_force = float(np.linalg.norm(filtered_lateral))
+            peak_total = max(peak_total, total_force)
+            peak_lateral = max(peak_lateral, lateral_force)
+            if total_force >= force_limit:
+                self._freeze_current_arm("in-hole recovery force limit")
+                return EpisodeResult(
+                    False,
+                    "in_hole_force_limit",
+                    Phase.INSERT,
+                    0,
+                    0.0,
+                )
+
+            if lateral_force <= release_force:
+                release_accum += control_period
+            else:
+                release_accum = 0.0
+            if release_accum >= release_dwell:
+                recovery_success = True
+                break
+
+            excess_force = max(filtered_force - release_force, 0.0)
+            if excess_force <= 0.0:
+                time.sleep(control_period)
+                continue
+            step_m = min(correction_gain * excess_force, max_step)
+            correction_travel += step_m
+            if correction_travel > max_travel:
+                break
+            correction_direction = (
+                correction_sign * filtered_lateral / max(filtered_force, 1e-9)
+            )
+            desired = self._peg_w() + correction_direction * step_m
+            q_int = self._mujoco_ik_step(desired, constrain_ori=True)
+            if q_int is None:
+                return EpisodeResult(False, "ik", Phase.INSERT, 0, 0.0)
+            command = [
+                float(q_int[index]) * float(self._arm_sign[index])
+                for index in range(7)
+            ]
+            self.rc.set_arm_positions(command)
+            recovery_steps += 1
+            time.sleep(control_period)
+
+        recovery_duration = time.monotonic() - recovery_started
+        self._episode_metrics.update(
+            {
+                "scripted_in_hole_recovery_success": int(recovery_success),
+                "scripted_in_hole_recovery_duration_s": float(recovery_duration),
+                "scripted_in_hole_recovery_steps": int(recovery_steps),
+                "scripted_in_hole_correction_travel_mm": float(
+                    correction_travel * 1000.0
+                ),
+                "scripted_in_hole_peak_lateral_force_n": float(peak_lateral),
+                "scripted_in_hole_peak_total_force_n": float(peak_total),
+            }
+        )
+        if not recovery_success:
+            self._freeze_current_arm("in-hole recovery timeout")
+            return EpisodeResult(
+                False,
+                "in_hole_recovery_failed",
+                Phase.INSERT,
+                0,
+                0.0,
+            )
+
+        current = self._peg_w().copy()
+        centered = current + self._lateral_vector(anchor - current)
+        if not self._smooth_move_ee(
+            target_w=centered,
+            total_steps=return_steps,
+            step_wait_s=control_period,
+            constrain_ori=True,
+            phase=Phase.INSERT,
+            log_prefix="IN_HOLE_RETURN_CENTER",
+        ):
+            return EpisodeResult(False, "ik", Phase.INSERT, 0, 0.0)
+
+        logger.info(
+            "IN_HOLE recovered: duration=%.2fs travel=%.2fmm peak_lat=%.1fN",
+            recovery_duration,
+            correction_travel * 1000.0,
+            peak_lateral,
+        )
         return None
 
     # ==================================================================

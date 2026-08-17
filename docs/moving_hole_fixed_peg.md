@@ -97,5 +97,36 @@ contact diagnostics, including:
 
 These values are present in the stage-2 episode context, the stage-1 HDF5
 metadata and `stage1_summary.json`. The insertion itself remains the existing
-centered waypoint path; force-based in-hole correction is intentionally left
-for the next implementation phase.
+centered waypoint path until the configured in-hole disturbance depth.
+
+## In-hole disturbance and lateral recovery
+
+The first recovery version keeps socket orientation fixed and only corrects
+translation in the plane normal to the insertion axis (world X/Z in this
+scene). One deterministic disturbance is injected per episode. A 48-cell
+cycle covers three insertion depths (`30%, 55%, 80%`), eight lateral
+directions and two commanded amplitudes (`3.4, 3.8 mm`). The configured cursor
+allows a later process to resume the coverage cycle.
+
+Force-controlled decisions use only
+`get_gravity_compensated_ft_wrench_world()`. This path resolves the site from
+the configured `hole_ft_force` sensor, subtracts the predicted wrench of the
+`hole_tool`, rotates the result into world coordinates and has no raw-force
+fallback. Configuration validation also rejects in-hole correction unless the
+dataset compensation mode is `gravity` and tool bodies are configured.
+
+Gravity compensation does not remove inertial wrench during motion. To avoid
+classifying the smooth disturbance ramp as contact, force detection is gated
+until at least 70% of the disturbance has been commanded. A debounced 2 N
+lateral threshold confirms contact; the bounded ramp may then build a 5 N
+recovery condition. Axial insertion pauses while a filtered, speed- and
+travel-limited lateral admittance command releases contact. A 25 N local
+limit and the existing 40 N global overload protection abort unsafe episodes.
+
+The collection trace labels the phase as
+`inactive/insert/disturbance/recovery/complete/failed`. System-injected
+disturbance commands have `expert_action_mask=0`; all expert recovery commands
+have value 1. The stage-1 trace stores the per-command mask, and stage 2 copies
+it to `scripted_replay/expert_action_mask` with replay phase events. Training
+code should filter mask-zero disturbance commands rather than treating them
+as expert actions.

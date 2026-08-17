@@ -494,6 +494,196 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
             "0 < detect <= min <= max < 40 N"
         )
 
+    if bool(scripted_config.get("in_hole_correction_enabled", False)):
+        if str(config.get("hdf5_ft_compensation_mode", "gravity")).lower() != "gravity":
+            raise MujocoConfigError(
+                "in-hole correction requires hdf5_ft_compensation_mode=gravity"
+            )
+        gravity_bodies = config.get("hdf5_ft_gravity_tool_body_names")
+        if not isinstance(gravity_bodies, (list, tuple)) or not gravity_bodies:
+            raise MujocoConfigError(
+                "in-hole correction requires hdf5_ft_gravity_tool_body_names"
+            )
+
+        depths = scripted_config.get("in_hole_disturbance_depth_fractions")
+        if not isinstance(depths, (list, tuple)) or not depths:
+            raise MujocoConfigError(
+                "scripted_controller.in_hole_disturbance_depth_fractions "
+                "must be a non-empty list"
+            )
+        parsed_depths = []
+        for index, value in enumerate(depths):
+            parsed = _require_positive(
+                value,
+                "scripted_controller.in_hole_disturbance_depth_fractions"
+                f"[{index}]",
+            )
+            if float(parsed) >= 1.0:
+                raise MujocoConfigError(
+                    "in-hole disturbance depth fractions must be in (0, 1)"
+                )
+            parsed_depths.append(float(parsed))
+        if len(set(parsed_depths)) != len(parsed_depths):
+            raise MujocoConfigError(
+                "in-hole disturbance depth fractions must not contain duplicates"
+            )
+
+        amplitudes = scripted_config.get("in_hole_disturbance_amplitudes_mm")
+        if not isinstance(amplitudes, (list, tuple)) or not amplitudes:
+            raise MujocoConfigError(
+                "scripted_controller.in_hole_disturbance_amplitudes_mm "
+                "must be a non-empty list"
+            )
+        parsed_amplitudes = [
+            float(
+                _require_positive(
+                    value,
+                    "scripted_controller.in_hole_disturbance_amplitudes_mm"
+                    f"[{index}]",
+                )
+            )
+            for index, value in enumerate(amplitudes)
+        ]
+        if len(set(parsed_amplitudes)) != len(parsed_amplitudes):
+            raise MujocoConfigError(
+                "in-hole disturbance amplitudes must not contain duplicates"
+            )
+        clearance_mm = float(
+            _require_positive(
+                scripted_config.get("in_hole_nominal_clearance_mm", 3.0),
+                "scripted_controller.in_hole_nominal_clearance_mm",
+            )
+        )
+        if min(parsed_amplitudes) <= clearance_mm:
+            raise MujocoConfigError(
+                "in-hole disturbance amplitudes must exceed nominal clearance"
+            )
+
+        direction_bins = _require_integer(
+            scripted_config.get("in_hole_disturbance_direction_bins", 8),
+            "scripted_controller.in_hole_disturbance_direction_bins",
+        )
+        if direction_bins <= 0:
+            raise MujocoConfigError(
+                "in-hole disturbance direction bins must be positive"
+            )
+        coverage_order = str(
+            scripted_config.get(
+                "in_hole_disturbance_coverage_order", "shuffled"
+            )
+        ).lower()
+        if coverage_order not in {"row_major", "shuffled"}:
+            raise MujocoConfigError(
+                "in-hole disturbance coverage order must be row_major or shuffled"
+            )
+        coverage_seed = _require_integer(
+            scripted_config.get("in_hole_disturbance_coverage_seed", 73),
+            "scripted_controller.in_hole_disturbance_coverage_seed",
+        )
+        start_cycle = _require_integer(
+            scripted_config.get("in_hole_disturbance_start_cycle", 0),
+            "scripted_controller.in_hole_disturbance_start_cycle",
+        )
+        start_index = _require_integer(
+            scripted_config.get("in_hole_disturbance_start_index", 0),
+            "scripted_controller.in_hole_disturbance_start_index",
+        )
+        coverage_size = len(depths) * direction_bins * len(amplitudes)
+        if (
+            coverage_seed < 0
+            or start_cycle < 0
+            or not 0 <= start_index < coverage_size
+        ):
+            raise MujocoConfigError(
+                "in-hole disturbance coverage seed/cursor is out of range"
+            )
+
+        for key, default in (
+            ("in_hole_control_period_s", 0.03),
+            ("in_hole_contact_detect_force_n", 2.0),
+            ("in_hole_contact_detect_dwell_s", 0.03),
+            ("in_hole_contact_release_force_n", 1.5),
+            ("in_hole_contact_release_dwell_s", 0.09),
+            ("in_hole_contact_target_force_n", 5.0),
+            ("in_hole_contact_target_dwell_s", 0.03),
+            ("in_hole_force_limit_n", 25.0),
+            ("in_hole_correction_gain_m_per_n", 0.00008),
+            ("in_hole_correction_max_step_m", 0.00025),
+            ("in_hole_correction_max_travel_m", 0.006),
+            ("in_hole_correction_timeout_s", 3.0),
+        ):
+            _require_positive(
+                scripted_config.get(key, default),
+                f"scripted_controller.{key}",
+            )
+        filter_alpha = float(
+            _require_positive(
+                scripted_config.get("in_hole_force_filter_alpha", 0.30),
+                "scripted_controller.in_hole_force_filter_alpha",
+            )
+        )
+        if filter_alpha > 1.0:
+            raise MujocoConfigError(
+                "scripted_controller.in_hole_force_filter_alpha must be <= 1"
+            )
+        detection_min_fraction = float(
+            _require_positive(
+                scripted_config.get(
+                    "in_hole_contact_detection_min_fraction", 0.70
+                ),
+                "scripted_controller.in_hole_contact_detection_min_fraction",
+            )
+        )
+        if detection_min_fraction > 1.0:
+            raise MujocoConfigError(
+                "scripted_controller.in_hole_contact_detection_min_fraction "
+                "must be <= 1"
+            )
+        release_force = float(
+            scripted_config.get("in_hole_contact_release_force_n", 1.5)
+        )
+        detect_force = float(
+            scripted_config.get("in_hole_contact_detect_force_n", 2.0)
+        )
+        target_force = float(
+            scripted_config.get("in_hole_contact_target_force_n", 5.0)
+        )
+        in_hole_limit = float(
+            scripted_config.get("in_hole_force_limit_n", 25.0)
+        )
+        if not (
+            0.0
+            < release_force
+            < detect_force
+            <= target_force
+            < in_hole_limit
+            < 40.0
+        ):
+            raise MujocoConfigError(
+                "in-hole forces must satisfy "
+                "0 < release < detect <= target < limit < 40 N"
+            )
+        correction_sign = float(
+            scripted_config.get("in_hole_force_correction_sign", -1.0)
+        )
+        if correction_sign not in {-1.0, 1.0}:
+            raise MujocoConfigError(
+                "scripted_controller.in_hole_force_correction_sign must be -1 or 1"
+            )
+        for key, default, allow_zero in (
+            ("in_hole_disturbance_ramp_steps", 18, False),
+            ("in_hole_disturbance_hold_steps", 4, True),
+            ("in_hole_return_center_steps", 10, False),
+        ):
+            value = _require_integer(
+                scripted_config.get(key, default),
+                f"scripted_controller.{key}",
+            )
+            if value < 0 or (not allow_zero and value == 0):
+                raise MujocoConfigError(
+                    f"scripted_controller.{key} has an invalid value"
+                )
+
 
 def build_arm_teleop_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     """Build the arm teleoperation config with shared initial-state values."""

@@ -212,6 +212,20 @@ class MujocoConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(MujocoConfigError, "contact forces must satisfy"):
             validate_mujoco_config(config)
 
+    def test_in_hole_correction_requires_gravity_compensation(self):
+        config = load_mujoco_config(str(MOVING_HOLE_CONFIG_PATH))
+        self.assertTrue(config["scripted_controller"]["in_hole_correction_enabled"])
+        config["hdf5_ft_compensation_mode"] = "none"
+        with self.assertRaisesRegex(MujocoConfigError, "requires.*gravity"):
+            validate_mujoco_config(config)
+
+    def test_invalid_in_hole_disturbance_range_is_rejected(self):
+        config = load_mujoco_config(str(MOVING_HOLE_CONFIG_PATH))
+        scripted = config["scripted_controller"]
+        scripted["in_hole_disturbance_amplitudes_mm"] = [2.5]
+        with self.assertRaisesRegex(MujocoConfigError, "exceed nominal clearance"):
+            validate_mujoco_config(config)
+
 
 if __name__ == "__main__":
     unittest.main()
