@@ -228,11 +228,6 @@ class ScriptedInsertionRandomizationTest(unittest.TestCase):
         controller._episode_metrics = {}
         controller._episode_deadline = None
         controller._arm_sign = [1] * 7
-        controller._in_hole_phase = "insert"
-        controller._in_hole_phase_code = 1
-        controller._expert_action_mask = 1
-        events = []
-        controller._event_callback = lambda name, extra: events.append((name, extra))
         current = np.asarray([0.0, 0.0, 0.0], dtype=np.float64)
         desired = current.copy()
 
@@ -273,9 +268,6 @@ class ScriptedInsertionRandomizationTest(unittest.TestCase):
         self.assertEqual(metrics["scripted_in_hole_contact_target_reached"], 1)
         self.assertEqual(metrics["scripted_in_hole_recovery_success"], 1)
         self.assertGreater(metrics["scripted_in_hole_correction_travel_mm"], 0.0)
-        self.assertIn("scripted_in_hole_disturbance", [row[0] for row in events])
-        self.assertIn("scripted_in_hole_recovery", [row[0] for row in events])
-        self.assertEqual(controller.get_control_annotation()["expert_action_mask"], 1)
 
 
 if __name__ == "__main__":

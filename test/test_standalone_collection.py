@@ -26,6 +26,18 @@ MOVING_HOLE_CONFIG = (
 
 
 class StandaloneCollectionTest(unittest.TestCase):
+    @staticmethod
+    def _minimal_runner(temp_dir):
+        robot_controller = SimpleNamespace(
+            arm_sign=[1] * 7,
+            hdf5_recorder=SimpleNamespace(output_dir=temp_dir),
+            task_success_auto_stop_recording=True,
+        )
+        return ScriptedInsertionRunner(
+            robot_controller=robot_controller,
+            config={"hdf5_record_dir": temp_dir},
+        )
+
     def test_standalone_overrides_disable_ros_and_operator_interfaces(self):
         options = argparse.Namespace(
             config=str(DEFAULT_CONFIG),
@@ -255,6 +267,49 @@ print('ok')
             recorder.events,
             [("scripted_replay_stopped_on_task_success", {"trace_index": 0})],
         )
+
+    def test_stage1_trace_files_contain_no_action_annotations(self):
+        import h5py
+
+        forbidden = ("expert_action", "action_loss_mask", "scripted_phase_code")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runner = self._minimal_runner(temp_dir)
+            stage2_path = Path(temp_dir) / "episode.hdf5"
+            with h5py.File(stage2_path, "w"):
+                pass
+
+            trace = {
+                "timestamps": np.asarray([[0.0, 0.0], [0.1, 0.1]]),
+                "action_command": np.zeros((2, 7)),
+                "joint_pos": np.zeros((2, 7)),
+                "ee_pose": np.zeros((2, 7)),
+                "ft_wrench": np.zeros((2, 6)),
+                "ft_wrench_raw": np.zeros((2, 6)),
+            }
+            stage1_path = runner._write_stage1_trace_file(
+                final_path=stage2_path,
+                stage1_trace=trace,
+                stage1_result=SimpleNamespace(success=True, outcome="success"),
+                replay_success=True,
+                replay_hz=30.0,
+            )
+            runner._link_stage2_to_stage1_trace(stage2_path, stage1_path)
+
+            for path in (stage1_path, stage2_path):
+                with h5py.File(path, "r") as h5_file:
+                    names = []
+                    h5_file.visit(names.append)
+                    serialized = " ".join(names)
+                    for group_name in names:
+                        obj = h5_file[group_name]
+                        serialized += " " + " ".join(map(str, obj.attrs.keys()))
+                    self.assertFalse(
+                        any(token in serialized for token in forbidden),
+                        serialized,
+                    )
+
+            summary_text = stage2_path.with_name("stage1_summary.json").read_text()
+            self.assertFalse(any(token in summary_text for token in forbidden))
 
 
 if __name__ == "__main__":

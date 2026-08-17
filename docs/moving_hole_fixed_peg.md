@@ -123,13 +123,9 @@ recovery condition. Axial insertion pauses while a filtered, speed- and
 travel-limited lateral admittance command releases contact. A 25 N local
 limit and the existing 40 N global overload protection abort unsafe episodes.
 
-The collection trace labels the phase as
-`inactive/insert/disturbance/recovery/complete/failed`. System-injected
-disturbance commands have `expert_action_mask=0`; all expert recovery commands
-have value 1. The stage-1 trace stores the per-command mask, and stage 2 copies
-it to `scripted_replay/expert_action_mask` with replay phase events. Training
-code should filter mask-zero disturbance commands rather than treating them
-as expert actions.
+The collection stores the executed trajectory without per-action phase labels,
+expert-action flags, or training-loss masks. Disturbance and recovery remain
+part of the same unannotated command sequence.
 
 ## Success and terminal hold
 

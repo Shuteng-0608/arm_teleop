@@ -21,7 +21,7 @@ from __future__ import annotations
 import math, time, mujoco
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -170,12 +170,6 @@ class ScriptedPegInsertionController:
         # 每个 episode 开始时会重新采样墙接触力阈值。
         self._wall_threshold = 0.0
         self._episode_metrics: Dict[str, Any] = {}
-        self._event_callback: Optional[
-            Callable[[str, Dict[str, Any]], None]
-        ] = None
-        self._in_hole_phase = "inactive"
-        self._in_hole_phase_code = 0
-        self._expert_action_mask = 1
         self._in_hole_disturbance_metadata: Dict[str, Any] = {}
         self._in_hole_disturbance_sample = None
         self._in_hole_disturbance_scheduler = None
@@ -270,7 +264,6 @@ class ScriptedPegInsertionController:
                 bool(self.cfg.get("in_hole_correction_enabled", False))
             ),
         }
-        self._set_in_hole_phase("inactive")
         if (
             getattr(self, "_in_hole_disturbance_scheduler", None) is not None
             and getattr(self, "_in_hole_disturbance_sample", None) is None
@@ -393,47 +386,6 @@ class ScriptedPegInsertionController:
         """Return scalar approach/contact diagnostics for trace metadata."""
         return dict(self._episode_metrics)
 
-    def set_event_callback(
-        self,
-        callback: Optional[Callable[[str, Dict[str, Any]], None]],
-    ) -> None:
-        """Set an optional live event sink used by direct HDF5 collection."""
-        self._event_callback = callback
-
-    def get_control_annotation(self) -> Dict[str, Any]:
-        """Return the current phase and whether its command is expert action."""
-        return {
-            "scripted_phase_code": int(self._in_hole_phase_code),
-            "expert_action_mask": int(self._expert_action_mask),
-        }
-
-    def _set_in_hole_phase(
-        self,
-        phase: str,
-        extra: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        phase_codes = {
-            "inactive": 0,
-            "insert": 1,
-            "disturbance": 2,
-            "recovery": 3,
-            "complete": 4,
-            "failed": 5,
-        }
-        phase = str(phase)
-        if phase not in phase_codes:
-            raise ValueError(f"unknown in-hole phase: {phase}")
-        changed = phase != getattr(self, "_in_hole_phase", "inactive")
-        self._in_hole_phase = phase
-        self._in_hole_phase_code = phase_codes[phase]
-        self._expert_action_mask = 0 if phase == "disturbance" else 1
-        callback = getattr(self, "_event_callback", None)
-        if changed and callable(callback):
-            callback(
-                f"scripted_in_hole_{phase}",
-                dict(extra or {}),
-            )
-
     def _sample_in_hole_disturbance(self) -> None:
         """Consume one deterministic in-hole disturbance coverage cell."""
         scheduler = self._in_hole_disturbance_scheduler
@@ -453,7 +405,6 @@ class ScriptedPegInsertionController:
                 "scripted_in_hole_disturbance_coverage_size": scheduler.size,
                 "scripted_in_hole_disturbance_coverage_order": scheduler.order,
                 "scripted_in_hole_disturbance_coverage_seed": scheduler.seed,
-                "scripted_disturbance_actions_are_expert": 0,
                 "scripted_force_control_source": (
                     "gravity_compensated_world_wrench"
                 ),
@@ -1041,12 +992,10 @@ class ScriptedPegInsertionController:
             # 如果 task_success 已经触发，提前结束
             if getattr(self.rc, "task_success_triggered", False):
                 logger.info(f"WAYPOINT: task success triggered at wp {i}/{len(waypoints_w)}")
-                self._set_in_hole_phase("complete")
                 time.sleep(1.0)
                 return None
 
             if i >= align_steps:
-                self._set_in_hole_phase("insert")
                 insert_progress = float(i - align_steps + 1) / float(insert_steps)
                 sample = self._in_hole_disturbance_sample
                 if (
@@ -1060,12 +1009,7 @@ class ScriptedPegInsertionController:
                         actual_depth_fraction=insert_progress,
                     )
                     if result is not None:
-                        self._set_in_hole_phase(
-                            "failed",
-                            {"outcome": result.outcome},
-                        )
                         return result
-                    self._set_in_hole_phase("insert")
 
             q_int = self._mujoco_ik_step(wp, constrain_ori=True)
             if q_int is None:
@@ -1088,10 +1032,6 @@ class ScriptedPegInsertionController:
         # 等最终稳定，检查 task_success
         time.sleep(0.5)
         if self._in_hole_disturbance_sample is not None and not disturbance_done:
-            self._set_in_hole_phase(
-                "failed",
-                {"outcome": "in_hole_disturbance_not_reached"},
-            )
             return EpisodeResult(
                 False,
                 "in_hole_disturbance_not_reached",
@@ -1099,7 +1039,6 @@ class ScriptedPegInsertionController:
                 0,
                 0.0,
             )
-        self._set_in_hole_phase("complete")
         return None
 
     def _lateral_vector(self, vector_world: np.ndarray) -> np.ndarray:
@@ -1211,15 +1150,6 @@ class ScriptedPegInsertionController:
         actual_amplitude_m = 0.0
         commanded_amplitude_m = 0.0
 
-        self._set_in_hole_phase(
-            "disturbance",
-            {
-                "depth_fraction": float(actual_depth_fraction),
-                "direction_deg": float(sample.direction_deg),
-                "amplitude_mm": float(sample.amplitude_mm),
-                "expert_action": False,
-            },
-        )
         logger.info(
             "IN_HOLE disturbance: depth=%.1f%% direction=%.0fdeg amplitude=%.2fmm",
             actual_depth_fraction * 100.0,
@@ -1340,13 +1270,6 @@ class ScriptedPegInsertionController:
                 0.0,
             )
 
-        self._set_in_hole_phase(
-            "recovery",
-            {
-                "contact_lateral_force_n": float(peak_lateral),
-                "expert_action": True,
-            },
-        )
         recovery_started = time.monotonic()
         release_accum = 0.0
         correction_travel = 0.0
