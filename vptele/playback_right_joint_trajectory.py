@@ -104,9 +104,9 @@ def call_feedback(service):
     }
 
 
-def call_movej(service, joints, args):
+def call_movej(service, joints, args, arm_id=1):
     request = MovejServiceRequest()
-    request.arm_id = 1
+    request.arm_id = arm_id
     request.target_joints = list(joints)
     request.vel = args.movej_vel
     request.acc = args.movej_acc

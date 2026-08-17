@@ -2,6 +2,7 @@ import csv
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -12,7 +13,7 @@ from core.right_teleop_playback import (
     rounded_solver_state,
     validate_online_solution,
 )
-from playback_right_joint_trajectory import make_message
+from playback_right_joint_trajectory import call_movej, make_message
 
 
 MATRIX_FIELDS = [
@@ -90,6 +91,16 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         self.assertEqual(message.right_arm.arm_id, 1)
         self.assertEqual(message.left_arm.arm_id, 0)
 
+    def test_movej_helper_supports_main_ros_arm_order(self):
+        service = mock.Mock()
+        args = SimpleNamespace(movej_vel=0.5, movej_acc=5.0, movej_jerk=10.0)
+        call_movej(service, [0.0] * 7, args, arm_id=0)
+        request = service.call.call_args[0][0]
+        self.assertEqual(request.arm_id, 0)
+        self.assertEqual(request.vel, 0.5)
+        self.assertEqual(request.acc, 5.0)
+        self.assertEqual(request.jerk, 10.0)
+
     def test_runtime_entry_uses_online_ik_not_precomputed_joints(self):
         script = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -110,17 +121,38 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         )
         self.assertIn("left_hold_joints = tuple(LEFT_HOME_JOINTS)", source)
         self.assertEqual(source.count("left_hold_joints,\n"), 3)
-        self.assertIn("verify aris_node is still running", source)
         self.assertIn('parser.add_argument("--movej-vel", type=float, default=0.5)', source)
         self.assertIn('parser.add_argument("--movej-acc", type=float, default=5.0)', source)
         self.assertIn('parser.add_argument("--movej-jerk", type=float, default=10.0)', source)
         self.assertIn(
-            "call_movej(movej_service, INITIAL_RIGHT_JOINTS, args)", source
+            "call_movej(movej_service, INITIAL_RIGHT_JOINTS, args, arm_id=1)", source
+        )
+        self.assertIn(
+            "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)", source
         )
         self.assertIn("head_z_rotation = 0.0", source)
+        self.assertNotIn("FeedbackService", source)
+        self.assertNotIn("LogService", source)
+        self.assertNotIn("call_feedback", source)
+        self.assertNotIn("set_log", source)
+        self.assertNotIn("set_teleop(teleop_service, False)", source)
         execute_source = source[
             source.index("def run_execute"):source.index("def main")
         ]
+        self.assertLess(
+            execute_source.index(
+                "call_movej(movej_service, INITIAL_RIGHT_JOINTS, args, arm_id=1)"
+            ),
+            execute_source.index(
+                "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)"
+            ),
+        )
+        self.assertLess(
+            execute_source.index(
+                "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)"
+            ),
+            execute_source.index("set_teleop(teleop_service, True)"),
+        )
         self.assertLess(
             execute_source.index("set_teleop(teleop_service, True)"),
             execute_source.index("for frame in frames:"),

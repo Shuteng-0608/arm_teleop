@@ -10,8 +10,6 @@ import rospy
 from arm_teleop.msg import DualArmMovej
 from arm_teleop.srv import ArmIK, ArmIKRequest
 from arm_teleop.srv import (
-    FeedbackService,
-    LogService,
     MovejService,
     StartDualTeleOP,
 )
@@ -28,11 +26,8 @@ from core.right_teleop_playback import (
 )
 from playback_right_joint_trajectory import (
     LEFT_HOME_JOINTS,
-    call_feedback,
     call_movej,
     make_message,
-    maximum_error,
-    set_log,
     set_teleop,
     wait_until,
     write_audit,
@@ -75,8 +70,6 @@ def parse_args():
     parser.add_argument("--movej-vel", type=float, default=0.5)
     parser.add_argument("--movej-acc", type=float, default=5.0)
     parser.add_argument("--movej-jerk", type=float, default=10.0)
-    parser.add_argument("--left-home-tolerance", type=float, default=0.15)
-    parser.add_argument("--initial-pose-tolerance", type=float, default=0.08)
     parser.add_argument("--maximum-step", type=float, default=0.03)
     parser.add_argument("--maximum-velocity", type=float, default=0.8)
     parser.add_argument("--maximum-lateness", type=float, default=0.05)
@@ -87,8 +80,6 @@ def parse_args():
         "movej_vel",
         "movej_acc",
         "movej_jerk",
-        "left_home_tolerance",
-        "initial_pose_tolerance",
         "maximum_step",
         "maximum_velocity",
         "maximum_lateness",
@@ -278,18 +269,14 @@ def run_ik_only(args, input_path, frames, source_summary, mapper):
 
 def lower_services(args):
     names = (
-        "/aris_node/feedback_srv",
         "/aris_node/movej_srv",
         "/aris_node/start_teleop_srv",
-        "/aris_node/log_srv",
     )
     for name in names:
         rospy.wait_for_service(name, timeout=args.service_timeout)
     return (
-        rospy.ServiceProxy(names[0], FeedbackService),
-        rospy.ServiceProxy(names[1], MovejService),
-        rospy.ServiceProxy(names[2], StartDualTeleOP),
-        rospy.ServiceProxy(names[3], LogService),
+        rospy.ServiceProxy(names[0], MovejService),
+        rospy.ServiceProxy(names[1], StartDualTeleOP),
     )
 
 
@@ -297,43 +284,22 @@ def run_execute(args, input_path, frames, source_summary, mapper):
     rospy.init_node("right_teleop_online_playback", anonymous=True)
     solver = OnlineRedundancySolver(wait_for_ik_service(args), args)
     output_path, output_file, writer = open_output(args)
+    publisher = rospy.Publisher(
+        "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=100
+    )
     try:
-        feedback_service, movej_service, teleop_service, log_service = lower_services(
-            args
-        )
-        try:
-            before = call_feedback(feedback_service)
-        except rospy.ServiceException as error:
-            raise RuntimeError(
-                "lower feedback service failed; verify aris_node is still running: {}".format(
-                    error
-                )
-            ) from error
+        movej_service, teleop_service = lower_services(args)
     except Exception:
         output_file.close()
         raise
-    left_home_error = maximum_error(before["left"], LEFT_HOME_JOINTS)
-    if left_home_error > args.left_home_tolerance:
-        output_file.close()
-        raise RuntimeError(
-            "left arm is {:.6f} rad away from the stop-service home pose; "
-            "refusing right-only playback".format(left_home_error)
-        )
     head_z_rotation = 0.0
     left_hold_joints = tuple(LEFT_HOME_JOINTS)
-    publisher = rospy.Publisher(
-        "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=20
-    )
     audit = {
         "source_trajectory": source_summary.__dict__,
         "calculation_output": output_path,
         "started_at": datetime.now().isoformat(),
-        "before_movej": before,
+        "right_initial_joints": list(INITIAL_RIGHT_JOINTS),
         "left_hold_joints": left_hold_joints,
-        "left_home_max_error_rad": left_home_error,
-        "initial_pose_from_start_max_delta_rad": maximum_error(
-            before["right"], INITIAL_RIGHT_JOINTS
-        ),
         "settings": {
             "ik_method": "redundancy_selector",
             "movej_vel": args.movej_vel,
@@ -343,31 +309,11 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         },
     }
     teleop_started = False
-    log_started = False
     completed = 0
     try:
-        # Match main_ros initialization before changing only the right-arm IK method.
-        call_movej(movej_service, INITIAL_RIGHT_JOINTS, args)
-        after_movej = call_feedback(feedback_service)
-        audit["after_movej"] = after_movej
-        initial_pose_error = maximum_error(
-            after_movej["right"], INITIAL_RIGHT_JOINTS
-        )
-        audit["initial_pose_max_error_rad"] = initial_pose_error
-        if initial_pose_error > args.initial_pose_tolerance:
-            raise RuntimeError(
-                "right arm failed initial-pose verification: {:.6f} rad > {:.6f} rad".format(
-                    initial_pose_error, args.initial_pose_tolerance
-                )
-            )
-        connection_deadline = time.monotonic() + args.service_timeout
-        while publisher.get_num_connections() < 1:
-            if time.monotonic() >= connection_deadline:
-                raise RuntimeError("lower controller did not subscribe to joint commands")
-            time.sleep(0.05)
-
-        set_log(log_service, "start_log")
-        log_started = True
+        # Preserve main_ros initialization order; only the right-arm IK method differs.
+        call_movej(movej_service, INITIAL_RIGHT_JOINTS, args, arm_id=1)
+        call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)
         set_teleop(teleop_service, True)
         teleop_started = True
         playback_start = time.monotonic()
@@ -386,10 +332,6 @@ def run_execute(args, input_path, frames, source_summary, mapper):
                     "frame {} is {:.6f} s late; refusing delayed command".format(
                         frame.index, lateness
                     )
-                )
-            if completed == 0:
-                audit["first_command_from_initial_max_delta_rad"] = maximum_error(
-                    INITIAL_RIGHT_JOINTS, result["joints"]
                 )
             publisher.publish(
                 make_message(
@@ -428,20 +370,9 @@ def run_execute(args, input_path, frames, source_summary, mapper):
             )
             sequence += 1
             time.sleep(1.0 / 30.0)
-        audit["before_stop"] = call_feedback(feedback_service)
     finally:
         output_file.close()
-        if log_started:
-            try:
-                set_log(log_service, "end_log")
-                time.sleep(0.1)
-            except Exception as error:
-                rospy.logerr("Failed to stop lower-controller logging: %s", error)
-        if teleop_started:
-            try:
-                set_teleop(teleop_service, False)
-            except Exception as error:
-                rospy.logerr("Failed to stop lower-controller teleop: %s", error)
+        audit["teleop_started"] = teleop_started
         audit["completed_frames"] = completed
         audit["finished_at"] = datetime.now().isoformat()
         audit_path = write_audit(
