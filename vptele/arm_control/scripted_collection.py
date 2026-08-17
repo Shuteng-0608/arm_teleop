@@ -13,7 +13,7 @@ ScriptedPegInsertionController 中。
   3. 启用遥操作指令接收
   4. 等待复位过渡期
   5. 初始化 MuJoCo Jacobian IK 所需的模型缓存
-  6. 随机采样初始 XY 误差
+  6. 按配置覆盖调度采样初始 XY 误差
   7. 启动 HDF5 记录
   8. 调用 controller.run_episode() 执行插入
   9. 停止 HDF5 记录
@@ -366,7 +366,7 @@ class ScriptedInsertionRunner:
         time.sleep(reset_duration + 0.1)
 
         # ==================================================================
-        # 5. 随机采样初始 XY 误差
+        # 5. 按覆盖调度采样初始 XY 误差
         #
         #    误差参数会在 episode_metadata 中记录，用于后续数据分析
         #    区分不同误差量级对插入成功率/力反馈的影响。
@@ -459,6 +459,11 @@ class ScriptedInsertionRunner:
                 decision_reasons=[f"controller_error:{exc}"],
             )
             return self._finalize_automatic_failure(outcome)
+
+        approach_metrics = getattr(
+            self.controller, "get_episode_metrics", lambda: {}
+        )()
+        recorder.add_event("scripted_approach_metrics", approach_metrics)
 
         # ==================================================================
         # 9. 停止 HDF5 记录
@@ -566,6 +571,9 @@ class ScriptedInsertionRunner:
             error_info=error_info,
             trace_hz=stage1_hz,
         )
+        approach_metrics = getattr(
+            self.controller, "get_episode_metrics", lambda: {}
+        )()
 
         if not bool(stage1_result.success):
             self.rc.accept_teleop_commands = False
@@ -606,6 +614,7 @@ class ScriptedInsertionRunner:
             "replay_action_source": "stage1_trace.hdf5:/stage1_trace/action_command",
             "stage1_ft_convention": "ft_wrench=world-rotated sensor force; ft_wrench_raw=raw sensor frame",
             **error_info,
+            **approach_metrics,
         }
 
         episode_path = recorder.start_episode(
@@ -884,6 +893,12 @@ class ScriptedInsertionRunner:
             meta.attrs["replay_success"] = int(bool(replay_success))
             meta.attrs["replay_action_source"] = "stage1_trace/action_command"
             meta.attrs["paired_stage2_file"] = stage2_path.name
+            metrics = getattr(
+                self.controller, "get_episode_metrics", lambda: {}
+            )()
+            for key, value in metrics.items():
+                if isinstance(value, (bool, int, float, str, np.number)):
+                    meta.attrs[key] = value
 
         self._write_stage1_summary_json(
             summary_path=stage2_path.with_name("stage1_summary.json"),
@@ -950,6 +965,9 @@ class ScriptedInsertionRunner:
                 "ft_wrench_raw": shape_of("ft_wrench_raw"),
             },
             "force_norm": force_stats,
+            "approach_metrics": getattr(
+                self.controller, "get_episode_metrics", lambda: {}
+            )(),
             "notes": {
                 "stage1_is_training_observation": False,
                 "stage2_episode_hdf5_is_training_data": True,
@@ -1151,6 +1169,11 @@ class ScriptedInsertionRunner:
     ) -> None:
         if self._batch_manifest_path is None:
             return
+        scripted_context = {}
+        for method_name in ("get_last_error_info", "get_episode_metrics"):
+            method = getattr(self.controller, method_name, None)
+            if callable(method):
+                scripted_context.update(method())
         row = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "attempt": int(attempt),
@@ -1165,6 +1188,7 @@ class ScriptedInsertionRunner:
                 else None
             ),
             "message": outcome.message,
+            "scripted_context": scripted_context,
         }
         try:
             with self._batch_manifest_path.open("a", encoding="utf-8") as stream:

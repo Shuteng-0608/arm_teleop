@@ -51,6 +51,16 @@ class MujocoConfigTest(unittest.TestCase):
         self.assertEqual(config["target_body_name"], "fixed_peg_fixture")
         self.assertEqual(config["task_success_distance"], 0.001)
         self.assertFalse(config["scripted_controller"]["enabled"])
+        scripted = config["scripted_controller"]
+        self.assertEqual(
+            scripted["error_coverage_mode"], "stratified_radius_angle"
+        )
+        self.assertEqual(scripted["rim_contact_radii_mm"], [4.0, 6.0, 8.0, 10.0])
+        self.assertEqual(scripted["rim_contact_angle_bins"], 24)
+        self.assertLess(
+            scripted["wall_contact_detect_force_n"],
+            scripted["wall_contact_force_min"],
+        )
 
     def test_operator_and_dataset_camera_roles_are_separated(self):
         self.assertEqual(self.config["visionpro_video_port"], 9999)
@@ -184,6 +194,22 @@ class MujocoConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(
             MujocoConfigError, "visionpro_video_port must be between"
         ):
+            validate_mujoco_config(config)
+
+    def test_invalid_contact_coverage_is_rejected(self):
+        config = deepcopy(self.config)
+        scripted = config["scripted_controller"]
+        scripted["error_coverage_mode"] = "stratified_radius_angle"
+        scripted["rim_contact_radii_mm"] = [4.0, 4.0]
+        scripted["rim_contact_angle_bins"] = 8
+        with self.assertRaisesRegex(MujocoConfigError, "must not contain duplicates"):
+            validate_mujoco_config(config)
+
+        scripted["rim_contact_radii_mm"] = [4.0, 8.0]
+        scripted["wall_contact_detect_force_n"] = 20.0
+        scripted["wall_contact_force_min"] = 8.0
+        scripted["wall_contact_force_max"] = 12.0
+        with self.assertRaisesRegex(MujocoConfigError, "contact forces must satisfy"):
             validate_mujoco_config(config)
 
 

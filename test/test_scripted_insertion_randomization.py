@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -13,6 +13,40 @@ from vptele.arm_control.scripted_insertion import (
 
 
 class ScriptedInsertionRandomizationTest(unittest.TestCase):
+    def test_stratified_error_sampling_uses_configured_radius_angle_cells(self):
+        rc = Mock()
+        rc.arm_sign = [1] * 7
+        controller = ScriptedPegInsertionController(
+            robot_controller=rc,
+            ik_service_proxy=None,
+            config={
+                "initial_robot_pose": [0, 0, 0, 0, 0, 0],
+                "error_coverage_mode": "stratified_radius_angle",
+                "rim_contact_radii_mm": [4.0, 8.0],
+                "rim_contact_angle_bins": 4,
+                "error_coverage_order": "row_major",
+                "rim_contact_angle_jitter_deg": 0.0,
+            },
+        )
+
+        samples = []
+        for _ in range(8):
+            controller._sample_error()
+            samples.append(controller.get_last_error_info())
+
+        self.assertEqual(
+            [sample["scripted_error_xy_mm"] for sample in samples],
+            [4.0] * 4 + [8.0] * 4,
+        )
+        self.assertEqual(
+            [sample["scripted_error_angle_deg"] for sample in samples[:4]],
+            [0.0, 90.0, 180.0, 270.0],
+        )
+        self.assertEqual(
+            len({sample["scripted_error_cell_label"] for sample in samples}),
+            8,
+        )
+
     def test_role_mapping_uses_moving_hole_and_fixed_peg_sites(self):
         rc = Mock()
         rc.arm_sign = [1] * 7
@@ -65,6 +99,76 @@ class ScriptedInsertionRandomizationTest(unittest.TestCase):
         self.assertIs(result, expected)
         self.assertEqual(controller._wall_threshold, 23.5)
         controller._sample_wall_threshold.assert_not_called()
+
+    def test_approach_uses_feedback_speed_and_bounded_contact_detection(self):
+        controller = ScriptedPegInsertionController.__new__(
+            ScriptedPegInsertionController
+        )
+        controller.cfg = {
+            "approach_standoff_m": 0.03,
+            "approach_control_period_s": 0.03,
+            "approach_force_poll_period_s": 0.005,
+            "approach_free_speed_m_s": 0.05,
+            "approach_far_speed_m_s": 0.025,
+            "approach_near_speed_m_s": 0.008,
+            "approach_probe_speed_m_s": 0.002,
+            "approach_far_distance_m": 0.01,
+            "approach_near_distance_m": 0.003,
+            "approach_arrival_tolerance_m": 0.0005,
+            "wall_contact_detect_force_n": 3.0,
+            "wall_contact_detect_dwell_s": 0.005,
+            "wall_contact_target_dwell_s": 0.005,
+            "wall_contact_max_push_m": 0.0015,
+            "contact_offset_tolerance_mm": 1.0,
+        }
+        controller._insert_axis = np.asarray([0.0, -1.0, 0.0])
+        controller._err_w = np.asarray([0.004, 0.0, 0.0])
+        controller._wall_threshold = 8.0
+        controller._episode_metrics = {}
+        controller._episode_deadline = None
+        controller._arm_sign = [1] * 7
+        controller.FORCE_LIMIT = 40.0
+        current = np.asarray([0.0, 0.05, 0.0], dtype=float)
+        desired = current.copy()
+
+        class FakeRC:
+            sim_timestep = 0.001
+
+            def set_arm_positions(self, _joints):
+                nonlocal current
+                current = desired.copy()
+
+        controller.rc = FakeRC()
+        controller._hole_entrance = Mock(
+            return_value=np.asarray([0.0, 0.0, 0.0])
+        )
+        controller._peg_w = Mock(side_effect=lambda: current.copy())
+        controller._overload = Mock(return_value=False)
+        controller._episode_timed_out = Mock(return_value=False)
+
+        def solve(target, constrain_ori):
+            nonlocal desired
+            self.assertTrue(constrain_ori)
+            desired = np.asarray(target, dtype=float).copy()
+            return [0.0] * 7
+
+        controller._mujoco_ik_step = Mock(side_effect=solve)
+        controller._ft_world = Mock(
+            side_effect=lambda: np.asarray(
+                [10.0 if current[1] <= 0.0005 else 0.0, 0, 0, 0, 0, 0],
+                dtype=float,
+            )
+        )
+
+        with patch("vptele.arm_control.scripted_insertion.time.sleep"):
+            result = controller._approach()
+
+        self.assertIsNone(result)
+        metrics = controller.get_episode_metrics()
+        self.assertEqual(metrics["scripted_contact_detected"], 1)
+        self.assertEqual(metrics["scripted_contact_target_reached"], 1)
+        self.assertAlmostEqual(metrics["scripted_contact_target_offset_mm"], 4.0)
+        self.assertLess(controller._mujoco_ik_step.call_count, 150)
 
 
 if __name__ == "__main__":

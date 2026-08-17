@@ -70,3 +70,32 @@ Add `--show-ui` for the passive MuJoCo viewer and camera windows. Without that
 flag the batch remains headless. `main_scripted.py` enables the scripted
 controller only in memory; the checked-in interactive profile remains safely
 disabled and no ROS or Vision Pro interface is initialized.
+
+## Scripted rim-contact coverage and approach control
+
+The active rim-contact phase uses measured `hole_goal_site` feedback rather
+than advancing an open-loop Cartesian cursor. Free space, far approach, near
+approach and the final probe have separate velocity limits. Contact is first
+debounced at a low force and then allowed a bounded additional command travel
+to build the sampled 8-12 N target; the 40 N overload guard remains separate.
+
+Initial rim offsets are no longer fixed at 10 mm. One deterministic cycle
+contains four radii (`4, 6, 8, 10 mm`) and 24 angular sectors, for 96 cells.
+The configured seed reproducibly shuffles the cells and adds at most 5 degrees
+of angular jitter. `error_coverage_start_cycle` and
+`error_coverage_start_index` provide explicit resume control across separate
+process launches.
+
+Each two-stage episode records both planned coverage fields and measured
+contact diagnostics, including:
+
+- coverage cycle/index and radius/angle cell;
+- target and actual contact offset;
+- first-contact and complete-approach durations;
+- contact peak force and bounded push depth;
+- whether the sampled contact-force target was reached.
+
+These values are present in the stage-2 episode context, the stage-1 HDF5
+metadata and `stage1_summary.json`. The insertion itself remains the existing
+centered waypoint path; force-based in-hole correction is intentionally left
+for the next implementation phase.

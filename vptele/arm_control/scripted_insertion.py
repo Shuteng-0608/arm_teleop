@@ -28,8 +28,12 @@ from scipy.spatial.transform import Rotation as R
 
 try:
     from vptele.utils.logger import get_logger
+    from vptele.utils.error_coverage_scheduler import (
+        RimContactCoverageScheduler,
+    )
 except ModuleNotFoundError:  # Catkin's legacy package_dir exposes utils directly.
     from utils.logger import get_logger
+    from utils.error_coverage_scheduler import RimContactCoverageScheduler
 
 logger = get_logger()
 
@@ -93,6 +97,14 @@ class ScriptedPegInsertionController:
         self.target_body_name = self.cfg.get(
             "target_body_name", self.cfg.get("hole_body_name", "wall_task")
         )
+        self._insert_axis = np.asarray(
+            self.cfg.get("insertion_axis_world", self.INSERT_AXIS_WORLD),
+            dtype=np.float64,
+        ).reshape(3)
+        axis_norm = float(np.linalg.norm(self._insert_axis))
+        if axis_norm <= 1e-9:
+            raise ValueError("insertion_axis_world must be non-zero")
+        self._insert_axis /= axis_norm
 
         # ==================================================================
         # IK 参考位姿：来自配置文件 initial_robot_pose
@@ -117,6 +129,35 @@ class ScriptedPegInsertionController:
         self._err_xy = 0.0       # 偏移量 (mm)
         self._err_deg = 0.0      # 偏移方向 (°)
         self._err_w = np.zeros(3)  # 世界坐标偏移向量 [dx, 0, dz]
+        self._error_sample_metadata: Dict[str, Any] = {}
+        self._error_scheduler = None
+        coverage_mode = str(
+            self.cfg.get("error_coverage_mode", "random_fixed_radius")
+        ).lower()
+        if coverage_mode == "stratified_radius_angle":
+            radii = self.cfg.get(
+                "rim_contact_radii_mm",
+                self.cfg.get(
+                    "error_magnitudes_mm",
+                    [self.cfg.get("scripted_error_radius_mm", 10.0)],
+                ),
+            )
+            self._error_scheduler = RimContactCoverageScheduler(
+                radii_mm=radii,
+                angle_bins=int(self.cfg.get("rim_contact_angle_bins", 24)),
+                order=self.cfg.get("error_coverage_order", "shuffled"),
+                seed=int(self.cfg.get("error_coverage_seed", 42)),
+                angle_jitter_deg=float(
+                    self.cfg.get("rim_contact_angle_jitter_deg", 0.0)
+                ),
+                start_cycle=int(self.cfg.get("error_coverage_start_cycle", 0)),
+                start_index=int(self.cfg.get("error_coverage_start_index", 0)),
+            )
+        elif coverage_mode != "random_fixed_radius":
+            raise ValueError(
+                "error_coverage_mode must be random_fixed_radius or "
+                "stratified_radius_angle"
+            )
 
         # 参考世界位置：标定后 peg 在 IK 参考位姿处的位置
         self._ref_w: Optional[np.ndarray] = None
@@ -124,6 +165,7 @@ class ScriptedPegInsertionController:
 
         # 每个 episode 开始时会重新采样墙接触力阈值。
         self._wall_threshold = 0.0
+        self._episode_metrics: Dict[str, Any] = {}
 
         # ==================================================================
         # 标定缓存文件路径
@@ -177,6 +219,12 @@ class ScriptedPegInsertionController:
           EpisodeResult: success=True 表示插入成功
         """
         t0 = time.time()
+        self._episode_metrics = {
+            "scripted_approach_started_wall_time": float(t0),
+            "scripted_contact_detected": 0,
+            "scripted_contact_peak_force_n": 0.0,
+            "scripted_contact_push_depth_mm": 0.0,
+        }
         timeout_s = max(1.0, float(self.cfg.get("episode_timeout_s", 180.0)))
         self._episode_deadline = time.monotonic() + timeout_s
         if wall_threshold_n is None:
@@ -281,11 +329,17 @@ class ScriptedPegInsertionController:
 
     def get_last_error_info(self):
         """获取最近一次采样的 XY 误差信息 (用于写入 episode_metadata)"""
-        return {
+        result = {
             "scripted_error_xy_mm": self._err_xy,
             "scripted_error_angle_deg": self._err_deg,
             "scripted_wall_threshold_n": self._wall_threshold,
         }
+        result.update(self._error_sample_metadata)
+        return result
+
+    def get_episode_metrics(self) -> Dict[str, Any]:
+        """Return scalar approach/contact diagnostics for trace metadata."""
+        return dict(self._episode_metrics)
 
     def _sample_wall_threshold(self):
         """每条 episode 重新采样墙接触力阈值。"""
@@ -301,14 +355,32 @@ class ScriptedPegInsertionController:
 
     def _sample_error(self):
         """
-        随机生成 APPROACH 目标的 XZ 偏移。
+        Sample the XZ rim-contact offset for one episode.
 
-        方法：在 XZ 平面独立均匀采样，保证四象限全覆盖。
-        最小偏移 5mm (大于孔半径 ~4mm)，确保 peg 一定撞墙而非直接滑入孔。
-        范围：[-7mm, +7mm] × [-7mm, +7mm]。
+        The stratified mode consumes one deterministic radius/angle cell per
+        attempt.  The legacy mode keeps the old fixed-radius/random-angle
+        behavior for profiles that have not opted into coverage scheduling.
         """
-        m = float(self.cfg.get("scripted_error_radius_mm", 10.0))
-        deg = float(self.rng.uniform(0, 360))
+        if self._error_scheduler is not None:
+            sample = self._error_scheduler.take()
+            sample_metadata = sample.to_dict()
+            sample_metadata.update(
+                {
+                    "scripted_error_coverage_size": self._error_scheduler.size,
+                    "scripted_error_coverage_order": self._error_scheduler.order,
+                    "scripted_error_coverage_seed": self._error_scheduler.seed,
+                }
+            )
+            m = float(sample.radius_mm)
+            deg = float(sample.angle_deg)
+            self._error_sample_metadata = sample_metadata
+        else:
+            m = float(self.cfg.get("scripted_error_radius_mm", 10.0))
+            deg = float(self.rng.uniform(0, 360))
+            self._error_sample_metadata = {
+                "scripted_error_coverage_mode": "random_fixed_radius",
+                "scripted_error_radius_mm": m,
+            }
         x_mm = m * math.cos(math.radians(deg))
         z_mm = m * math.sin(math.radians(deg))
         self._err_xy = m
@@ -497,117 +569,268 @@ class ScriptedPegInsertionController:
 
     def _approach(self) -> Optional[EpisodeResult]:
         """
-        阶段 1: 从参考位姿逐步走向孔口 + 随机偏移位置。
+        Move to the offset rim target using measured site feedback.
 
-        每步：用 MuJoCo Jacobian IK 算关节角 → set_arm_positions → 高频检查力
-        力超过 _wall_threshold 后停止，进入后续回撤/waypoint 阶段。
-
-        自适应步长：
-          距离 > 80mm:  3mm/步  (快速接近)
-          40-80mm:      1mm/步
-          20-40mm:      0.3mm/步
-          < 20mm:       0.1mm/步 (慢速精细)
+        Free-space motion and near-contact probing use separate configured
+        speeds.  A low debounced force detects contact; after detection a
+        bounded additional push may build the requested contact force.  This
+        avoids spending tens of seconds crawling through the final 20 mm and
+        prevents an unbounded force-seeking command.
         """
         hole_e = self._hole_entrance()  # 孔口世界位置 (墙面处)
         contact_w = hole_e + self._err_w  # 孔口平面上的偏差接触目标
         standoff_m = float(self.cfg.get("approach_standoff_m", 0.030))
-        pre_w = contact_w.copy()
-        pre_w[1] += standoff_m
+        pre_w = contact_w - self._insert_axis * standoff_m
 
-        cur_w = self._ref_w.copy()       # 当前位置 = 参考位姿的世界位置
-        d_total = float(np.linalg.norm(pre_w - cur_w) + np.linalg.norm(contact_w - pre_w))
-        orig_start_w = self._ref_w.copy()
-        orig_vec = contact_w - orig_start_w
-        orig_len = float(np.linalg.norm(orig_vec))
-        orig_dir = orig_vec / max(orig_len, 1e-9)
+        control_period = max(
+            0.005, float(self.cfg.get("approach_control_period_s", 0.03))
+        )
+        force_poll_period = max(
+            0.001, float(self.cfg.get("approach_force_poll_period_s", 0.005))
+        )
+        free_speed = float(self.cfg.get("approach_free_speed_m_s", 0.050))
+        far_speed = float(self.cfg.get("approach_far_speed_m_s", 0.025))
+        near_speed = float(self.cfg.get("approach_near_speed_m_s", 0.008))
+        probe_speed = float(self.cfg.get("approach_probe_speed_m_s", 0.002))
+        far_distance = float(self.cfg.get("approach_far_distance_m", 0.010))
+        near_distance = float(self.cfg.get("approach_near_distance_m", 0.003))
+        arrival_tolerance = float(
+            self.cfg.get("approach_arrival_tolerance_m", 0.0005)
+        )
+        probe_activation_distance = float(
+            self.cfg.get("approach_probe_activation_distance_m", 0.002)
+        )
+        detect_force = float(
+            self.cfg.get("wall_contact_detect_force_n", 3.0)
+        )
+        detect_dwell = max(
+            force_poll_period,
+            float(self.cfg.get("wall_contact_detect_dwell_s", 0.015)),
+        )
+        target_dwell = max(
+            force_poll_period,
+            float(self.cfg.get("wall_contact_target_dwell_s", 0.005)),
+        )
+        max_push_m = max(
+            0.0, float(self.cfg.get("wall_contact_max_push_m", 0.002))
+        )
+        contact_settle_s = max(
+            control_period,
+            float(self.cfg.get("wall_contact_settle_s", 0.30)),
+        )
+
+        if not (
+            free_speed > 0.0
+            and far_speed > 0.0
+            and near_speed > 0.0
+            and probe_speed > 0.0
+        ):
+            raise ValueError("all approach speeds must be positive")
+        if not 0.0 < near_distance < far_distance:
+            raise ValueError(
+                "approach distances must satisfy 0 < near < far"
+            )
+        if not 0.0 < detect_force <= self._wall_threshold < self.FORCE_LIMIT:
+            raise ValueError(
+                "contact thresholds must satisfy 0 < detect <= target < overload"
+            )
+
+        d_total = float(
+            np.linalg.norm(pre_w - self._peg_w())
+            + np.linalg.norm(contact_w - pre_w)
+        )
         target_offset_mm = float(np.linalg.norm(self._err_w[[0, 2]]) * 1000.0)
         logger.info(f"APPROACH: two-segment {d_total*1000:.0f}mm, "
                     f"pre={[round(float(v),4) for v in pre_w]} → "
                     f"contact={[round(float(v),4) for v in contact_w]}  "
                     f"offset_target={target_offset_mm:.2f}mm  "
-                    f"wall_thresh={self._wall_threshold:.1f}N")
+                    f"detect={detect_force:.1f}N target={self._wall_threshold:.1f}N")
+
+        approach_start = time.monotonic()
+        peak_force = 0.0
+        detect_accum = 0.0
+        target_accum = 0.0
+        contact_detected = False
+        contact_push_m = 0.0
+        probe_active = False
+        probe_hold_elapsed = 0.0
+        probe_command_w = None
+        probe_command_travel = 0.0
+        probe_max_travel = 0.0
+
+        def finish_contact(target_reached: bool):
+            pw = self._peg_w()
+            offset_xz_mm = math.sqrt(
+                (float(pw[0]) - float(hole_e[0])) ** 2
+                + (float(pw[2]) - float(hole_e[2])) ** 2
+            ) * 1000.0
+            duration = time.monotonic() - approach_start
+            self._episode_metrics.update(
+                {
+                    "scripted_approach_duration_s": float(duration),
+                    "scripted_contact_detected": 1,
+                    "scripted_contact_target_reached": int(target_reached),
+                    "scripted_contact_actual_offset_mm": float(offset_xz_mm),
+                    "scripted_contact_target_offset_mm": float(target_offset_mm),
+                    "scripted_contact_offset_error_mm": float(
+                        offset_xz_mm - target_offset_mm
+                    ),
+                    "scripted_contact_peak_force_n": float(peak_force),
+                    "scripted_contact_push_depth_mm": float(contact_push_m * 1000.0),
+                }
+            )
+            tol_mm = float(self.cfg.get("contact_offset_tolerance_mm", 1.0))
+            if abs(offset_xz_mm - target_offset_mm) > tol_mm:
+                logger.warning(
+                    "APPROACH contact offset outside tolerance: "
+                    f"actual={offset_xz_mm:.2f}mm target={target_offset_mm:.2f}mm "
+                    f"tol={tol_mm:.2f}mm"
+                )
+            logger.info(
+                "APPROACH contact complete: "
+                f"duration={duration:.2f}s peak={peak_force:.1f}N "
+                f"target_reached={target_reached} push={contact_push_m*1000:.2f}mm "
+                f"offset={offset_xz_mm:.2f}/{target_offset_mm:.2f}mm"
+            )
+            return "contact"
 
         def move_segment(target_w: np.ndarray, detect_wall: bool, label: str):
-            nonlocal cur_w
+            nonlocal peak_force, detect_accum, target_accum
+            nonlocal contact_detected, contact_push_m
+            nonlocal probe_active, probe_hold_elapsed
+            nonlocal probe_command_w, probe_command_travel, probe_max_travel
             while True:
                 if self._episode_timed_out():
                     return EpisodeResult(False, "timeout", Phase.APPROACH, 0, 0.0)
-                # ---- 过载检查 ----
                 if self._overload():
                     return EpisodeResult(False, "overload", Phase.APPROACH, 0, 0.0)
 
-                # ---- 剩余距离 ----
-                dr = float(np.linalg.norm(target_w - cur_w))
-                if dr < 0.001:
+                actual_w = self._peg_w()
+                delta = target_w - actual_w
+                dr = float(np.linalg.norm(delta))
+                if not detect_wall and dr <= arrival_tolerance:
                     return None
 
-                # ---- 原 APPROACH 等效速度调度 ----
-                # 两段式改变了当前 segment 的 target，直接用 dr 会让
-                # contact 段一开始就落入慢速档。这里用当前点在原始
-                # 单段 ref_w→contact_w 路径上的投影剩余距离来选择速度档，
-                # 让速度表现更接近未改路径之前的 approach。
-                progress = float(np.dot(cur_w - orig_start_w, orig_dir))
-                progress = max(0.0, min(progress, orig_len))
-                schedule_dr = max(orig_len - progress, 0.0)
+                if not detect_wall:
+                    speed = free_speed
+                    desired_w = actual_w + delta / max(dr, 1e-9) * min(
+                        free_speed * control_period, dr
+                    )
+                else:
+                    axial_gap = max(
+                        0.0, float(np.dot(contact_w - actual_w, self._insert_axis))
+                    )
+                    if contact_detected or axial_gap <= probe_activation_distance:
+                        if not probe_active:
+                            probe_active = True
+                            probe_command_w = actual_w.copy()
+                            probe_max_travel = axial_gap + max_push_m
+                        speed = probe_speed
+                        advance_step = min(
+                            probe_speed * control_period,
+                            max(0.0, probe_max_travel - probe_command_travel),
+                        )
+                        if advance_step > 1e-12:
+                            probe_command_travel += advance_step
+                            probe_command_w = (
+                                probe_command_w
+                                + self._insert_axis * advance_step
+                            )
+                            contact_push_m = max(
+                                0.0,
+                                float(
+                                    np.dot(
+                                        probe_command_w - contact_w,
+                                        self._insert_axis,
+                                    )
+                                ),
+                            )
+                            probe_hold_elapsed = 0.0
+                        else:
+                            probe_hold_elapsed += control_period
+                        desired_w = probe_command_w.copy()
+                        if probe_hold_elapsed >= contact_settle_s:
+                            if contact_detected:
+                                return finish_contact(target_reached=False)
+                            self._episode_metrics.update(
+                                {
+                                    "scripted_approach_duration_s": float(
+                                        time.monotonic() - approach_start
+                                    ),
+                                    "scripted_contact_detected": 0,
+                                    "scripted_contact_peak_force_n": float(peak_force),
+                                    "scripted_contact_push_depth_mm": float(
+                                        contact_push_m * 1000.0
+                                    ),
+                                }
+                            )
+                            return EpisodeResult(
+                                False,
+                                "contact_not_detected",
+                                Phase.APPROACH,
+                                0,
+                                0.0,
+                            )
+                    else:
+                        if axial_gap > far_distance:
+                            speed = far_speed
+                        elif axial_gap > near_distance:
+                            speed = near_speed
+                        else:
+                            speed = probe_speed
+                        desired_w = actual_w + delta / max(dr, 1e-9) * min(
+                            speed * control_period, dr
+                        )
 
-                if schedule_dr > 0.080:      # > 80mm
-                    step_m, wait_s = 0.003, 0.04
-                elif schedule_dr > 0.040:    # 40-80mm
-                    step_m, wait_s = 0.001, 0.08
-                elif schedule_dr > 0.020:    # 20-40mm
-                    step_m, wait_s = 0.0003, 0.12
-                else:               # < 20mm
-                    step_m, wait_s = 0.0001, 0.15
-
-                # ---- 沿当前 segment 方向走一步 ----
-                cur_w = cur_w + (target_w - cur_w) / dr * step_m
-                q_int = self._mujoco_ik_step(cur_w, constrain_ori=True)
+                q_int = self._mujoco_ik_step(desired_w, constrain_ori=True)
                 if q_int is None:
                     return EpisodeResult(False, "ik", Phase.APPROACH, 0, 0.0)
                 j = [float(q_int[i]) * float(self._arm_sign[i]) for i in range(7)]
                 self.rc.set_arm_positions(j)
 
-                # ---- 高频力检查 (每 10ms 一次)，沿用原节奏 ----
-                for _ in range(max(int(wait_s / 0.01), 1)):
-                    time.sleep(0.01)
+                poll_count = max(int(math.ceil(control_period / force_poll_period)), 1)
+                for _ in range(poll_count):
+                    time.sleep(force_poll_period)
                     ft = self._ft_world()
                     if ft is None:
                         continue
 
                     fn = float(np.linalg.norm(ft[:3]))
+                    peak_force = max(peak_force, fn)
                     if fn > self.FORCE_LIMIT:
                         logger.error(f"OVERLOAD {fn:.0f}N")
                         return EpisodeResult(False, "overload", Phase.APPROACH, 0, 0.0)
 
-                    if detect_wall and fn > self._wall_threshold:
-                        # 触墙 → 停止 APPROACH，进入后续阶段
-                        pw = self._peg_w()
-                        offset_xz_mm = math.sqrt(
-                            (float(pw[0]) - float(hole_e[0])) ** 2
-                            + (float(pw[2]) - float(hole_e[2])) ** 2
-                        ) * 1000.0
-                        tol_mm = float(self.cfg.get("contact_offset_tolerance_mm", 1.0))
-                        offset_msg = (
-                            f"offset_xz={offset_xz_mm:.2f}mm "
-                            f"target={target_offset_mm:.2f}mm"
-                        )
-                        if abs(offset_xz_mm - target_offset_mm) > tol_mm:
-                            logger.warning(
-                                f"APPROACH contact offset outside tolerance: {offset_msg}, "
-                                f"tol={tol_mm:.2f}mm"
-                            )
+                    if not detect_wall:
+                        continue
+                    if fn >= detect_force:
+                        detect_accum += force_poll_period
+                    else:
+                        detect_accum = 0.0
+                    if not contact_detected and detect_accum >= detect_dwell:
+                        contact_detected = True
+                        self._episode_metrics[
+                            "scripted_contact_detect_time_s"
+                        ] = float(time.monotonic() - approach_start)
                         logger.info(
-                            f"APPROACH: wall |F|={fn:.1f}N at "
-                            f"{[round(float(v),4) for v in pw]} ({offset_msg})")
-                        return "contact"
+                            f"APPROACH contact detected: |F|={fn:.1f}N "
+                            f"after {self._episode_metrics['scripted_contact_detect_time_s']:.2f}s"
+                        )
 
-                # ---- 进度日志 ----
-                progress_key = (label, int(dr * 100))
+                    if contact_detected and fn >= self._wall_threshold:
+                        target_accum += force_poll_period
+                    else:
+                        target_accum = 0.0
+                    if contact_detected and target_accum >= target_dwell:
+                        return finish_contact(target_reached=True)
+
+                progress_key = (label, int(dr * 50))
                 if progress_key != getattr(self, "_ld", None):
                     self._ld = progress_key
                     logger.info(
                         f"APPROACH {label}: d={dr*1000:.0f}mm "
-                        f"sched={schedule_dr*1000:.0f}mm"
+                        f"speed={speed*1000:.1f}mm/s peak={peak_force:.1f}N "
+                        f"probe={probe_active}"
                     )
 
         r = move_segment(pre_w, detect_wall=False, label="pre")
@@ -619,6 +842,7 @@ class ScriptedPegInsertionController:
             return r
         if r == "contact":
             return None
+        return EpisodeResult(False, "contact_not_detected", Phase.APPROACH, 0, 0.0)
 
     # ==================================================================
     # Waypoint 对准 + 插入 (已知孔位置，直进直出)

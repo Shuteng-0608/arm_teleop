@@ -388,6 +388,112 @@ def validate_mujoco_config(config: Mapping[str, Any]) -> None:
             "scripted_controller.reject_action must be quarantine or delete"
         )
 
+    coverage_mode = str(
+        scripted_config.get("error_coverage_mode", "random_fixed_radius")
+    ).lower()
+    if coverage_mode not in {"random_fixed_radius", "stratified_radius_angle"}:
+        raise MujocoConfigError(
+            "scripted_controller.error_coverage_mode must be "
+            "random_fixed_radius or stratified_radius_angle"
+        )
+    if coverage_mode == "stratified_radius_angle":
+        radii = scripted_config.get("rim_contact_radii_mm")
+        if not isinstance(radii, (list, tuple)) or not radii:
+            raise MujocoConfigError(
+                "scripted_controller.rim_contact_radii_mm must be a non-empty list"
+            )
+        for index, value in enumerate(radii):
+            _require_positive(
+                value,
+                f"scripted_controller.rim_contact_radii_mm[{index}]",
+            )
+        if len(set(float(value) for value in radii)) != len(radii):
+            raise MujocoConfigError(
+                "scripted_controller.rim_contact_radii_mm must not contain duplicates"
+            )
+        angle_bins = _require_integer(
+            scripted_config.get("rim_contact_angle_bins", 24),
+            "scripted_controller.rim_contact_angle_bins",
+        )
+        if angle_bins <= 0:
+            raise MujocoConfigError(
+                "scripted_controller.rim_contact_angle_bins must be positive"
+            )
+        angle_jitter = _require_positive(
+            scripted_config.get("rim_contact_angle_jitter_deg", 0.0),
+            "scripted_controller.rim_contact_angle_jitter_deg",
+            allow_zero=True,
+        )
+        if float(angle_jitter) > 180.0 / angle_bins:
+            raise MujocoConfigError(
+                "scripted_controller.rim_contact_angle_jitter_deg must not "
+                "exceed half an angle bin"
+            )
+        coverage_order = str(
+            scripted_config.get("error_coverage_order", "shuffled")
+        ).lower()
+        if coverage_order not in {"row_major", "shuffled"}:
+            raise MujocoConfigError(
+                "scripted_controller.error_coverage_order must be "
+                "row_major or shuffled"
+            )
+        start_cycle = _require_integer(
+            scripted_config.get("error_coverage_start_cycle", 0),
+            "scripted_controller.error_coverage_start_cycle",
+        )
+        start_index = _require_integer(
+            scripted_config.get("error_coverage_start_index", 0),
+            "scripted_controller.error_coverage_start_index",
+        )
+        coverage_size = len(radii) * angle_bins
+        coverage_seed = _require_integer(
+            scripted_config.get("error_coverage_seed", 42),
+            "scripted_controller.error_coverage_seed",
+        )
+        if coverage_seed < 0:
+            raise MujocoConfigError(
+                "scripted_controller.error_coverage_seed must be non-negative"
+            )
+        if start_cycle < 0 or not 0 <= start_index < coverage_size:
+            raise MujocoConfigError(
+                "scripted_controller error coverage start cursor is out of range"
+            )
+
+    for key, default in (
+        ("approach_control_period_s", 0.03),
+        ("approach_force_poll_period_s", 0.005),
+        ("approach_free_speed_m_s", 0.050),
+        ("approach_far_speed_m_s", 0.025),
+        ("approach_near_speed_m_s", 0.008),
+        ("approach_probe_speed_m_s", 0.002),
+        ("approach_far_distance_m", 0.010),
+        ("approach_near_distance_m", 0.003),
+        ("approach_arrival_tolerance_m", 0.0005),
+        ("approach_probe_activation_distance_m", 0.002),
+        ("wall_contact_detect_force_n", 3.0),
+        ("wall_contact_detect_dwell_s", 0.015),
+        ("wall_contact_target_dwell_s", 0.005),
+        ("wall_contact_max_push_m", 0.002),
+        ("wall_contact_settle_s", 0.30),
+    ):
+        _require_positive(
+            scripted_config.get(key, default), f"scripted_controller.{key}"
+        )
+    near_distance = float(scripted_config.get("approach_near_distance_m", 0.003))
+    far_distance = float(scripted_config.get("approach_far_distance_m", 0.010))
+    if not near_distance < far_distance:
+        raise MujocoConfigError(
+            "scripted_controller approach distances must satisfy near < far"
+        )
+    detect_force = float(scripted_config.get("wall_contact_detect_force_n", 3.0))
+    contact_min = float(scripted_config.get("wall_contact_force_min", 15.0))
+    contact_max = float(scripted_config.get("wall_contact_force_max", 28.0))
+    if not 0.0 < detect_force <= contact_min <= contact_max < 40.0:
+        raise MujocoConfigError(
+            "scripted_controller contact forces must satisfy "
+            "0 < detect <= min <= max < 40 N"
+        )
+
 
 def build_arm_teleop_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     """Build the arm teleoperation config with shared initial-state values."""

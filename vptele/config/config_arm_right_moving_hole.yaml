@@ -450,10 +450,29 @@ scripted_controller:
   post_retract_force_release_n: 6.0
   post_retract_force_release_timeout_s: 1.0
 
-  # Two-segment approach geometry. Speed/force-check timing still uses the
-  # original APPROACH adaptive step_m/wait_s logic.
+  # Two-segment approach geometry and measured-site closed-loop speed profile.
   approach_standoff_m: 0.030
   contact_offset_tolerance_mm: 1.0
+  approach_control_period_s: 0.030
+  approach_force_poll_period_s: 0.005
+  approach_free_speed_m_s: 0.050
+  approach_far_speed_m_s: 0.025
+  approach_near_speed_m_s: 0.008
+  approach_probe_speed_m_s: 0.002
+  approach_far_distance_m: 0.010
+  approach_near_distance_m: 0.003
+  approach_arrival_tolerance_m: 0.0005
+  approach_probe_activation_distance_m: 0.002
+
+  # Detect a stable first contact at low force, then allow at most 1.5 mm of
+  # additional commanded travel while building a bounded 8-12 N contact.
+  wall_contact_detect_force_n: 3.0
+  wall_contact_detect_dwell_s: 0.015
+  wall_contact_force_min: 8.0
+  wall_contact_force_max: 12.0
+  wall_contact_target_dwell_s: 0.005
+  wall_contact_max_push_m: 0.0015
+  wall_contact_settle_s: 0.30
 
   # Dense waypoint execution for the scripted align/insert segment.
   # Larger values are slower but reduce target jumps after contact.
@@ -496,10 +515,20 @@ scripted_controller:
   # Control step rate [Hz].
   control_rate_hz: 100
 
-  # Initial XY error injection magnitudes to sample from [mm].
-  # One value is picked uniformly per episode; direction is 0-360 deg uniform.
-  scripted_error_radius_mm: 10.0
-  error_magnitudes_mm: [0.5, 1.5, 3.0, 5.0, 7.0]
+  # Deterministic rim-contact coverage. Each cycle visits all 4 radii x 24
+  # angular sectors exactly once; shuffled order and jitter stay reproducible.
+  # The nominal radial clearance is about 3 mm, so this active-collision
+  # profile deliberately starts at 4 mm. Near-clearance/no-contact cases will
+  # be a separate scenario rather than waiting forever for a collision.
+  error_coverage_mode: "stratified_radius_angle"
+  rim_contact_radii_mm: [4.0, 6.0, 8.0, 10.0]
+  rim_contact_angle_bins: 24
+  rim_contact_angle_jitter_deg: 5.0
+  error_coverage_order: "shuffled"       # shuffled | row_major
+  error_coverage_seed: 42
+  error_coverage_start_cycle: 0
+  error_coverage_start_index: 0
+  scripted_error_radius_mm: 10.0          # legacy fallback only
 
   # Generic role mapping for socket-over-peg control.
   moving_site_name: "hole_goal_site"
