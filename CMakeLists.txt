@@ -297,6 +297,7 @@ catkin_install_python(PROGRAMS
   vptele/main_ros.py
   vptele/offline_compare_right_ik.py
   vptele/playback_right_joint_trajectory.py
+  vptele/playback_right_teleop.py
   vptele/main_mujoco.py
   scripts/movej_agent.py
   test/record_play.py
