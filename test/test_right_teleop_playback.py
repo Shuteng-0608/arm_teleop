@@ -86,6 +86,12 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         self.assertIn("service.call(request)", source)
         self.assertNotIn("load_redundancy_trajectory", source)
         self.assertNotIn("redundancy_q1", source)
+        self.assertIn('mode.add_argument("--preflight"', source)
+        self.assertNotIn("--confirm-motion", source)
+        self.assertIn(
+            "else:\n        run_execute(args, input_path, frames, source_summary, mapper)",
+            source,
+        )
 
 
 if __name__ == "__main__":

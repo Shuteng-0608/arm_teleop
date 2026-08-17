@@ -28,7 +28,6 @@ from core.right_teleop_playback import (
     validate_online_solution,
 )
 from playback_right_joint_trajectory import (
-    CONFIRMATION,
     LEFT_HOME_JOINTS,
     call_feedback,
     call_movej,
@@ -60,12 +59,13 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Replay a recorded right-hand trajectory through the online "
-            "redundancy IK service, then optionally publish each new solution."
+            "redundancy IK service and publish each new solution. "
+            "Running without mode flags executes robot motion."
         )
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--ik-only", action="store_true")
-    mode.add_argument("--execute", action="store_true")
+    mode.add_argument("--preflight", action="store_true")
     parser.add_argument("--input", default=default_input_path())
     parser.add_argument("--output", default=None)
     parser.add_argument("--audit-output", default=None)
@@ -82,7 +82,6 @@ def parse_args():
     parser.add_argument("--maximum-velocity", type=float, default=0.8)
     parser.add_argument("--maximum-lateness", type=float, default=0.05)
     parser.add_argument("--hold-seconds", type=float, default=1.0)
-    parser.add_argument("--confirm-motion", default="")
     args = parser.parse_args()
     positive = (
         "service_timeout",
@@ -100,10 +99,6 @@ def parse_args():
             parser.error("--{} must be positive".format(name.replace("_", "-")))
     if args.hold_seconds < 0.0:
         parser.error("--hold-seconds must be non-negative")
-    if args.execute and args.confirm_motion != CONFIRMATION:
-        parser.error(
-            "--execute requires --confirm-motion {}".format(CONFIRMATION)
-        )
     return args
 
 
@@ -475,12 +470,12 @@ def main():
             source_summary.file_sha256,
         )
     )
-    if args.ik_only:
-        run_ik_only(args, input_path, frames, source_summary, mapper)
-    elif args.execute:
-        run_execute(args, input_path, frames, source_summary, mapper)
-    else:
+    if args.preflight:
         print("Preflight only: no ROS service was called and no command was sent.")
+    elif args.ik_only:
+        run_ik_only(args, input_path, frames, source_summary, mapper)
+    else:
+        run_execute(args, input_path, frames, source_summary, mapper)
 
 
 if __name__ == "__main__":
