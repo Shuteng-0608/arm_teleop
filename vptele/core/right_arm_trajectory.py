@@ -1,6 +1,7 @@
 import csv
 import hashlib
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -34,7 +35,10 @@ _HAND_TO_ARM_AXES = np.array(
 class RightWristFrame:
     index: int
     timestamp: float
-    transform: np.ndarray
+    transform: Optional[np.ndarray]
+    target_pose: Optional[np.ndarray] = None
+    initial_joints: Optional[tuple] = None
+    initial_arm_angle: Optional[float] = None
 
 
 def _validated_transform(transform):
@@ -48,54 +52,138 @@ def _validated_transform(transform):
     return matrix
 
 
-def load_right_wrist_frames(csv_path):
+def _validated_target_pose(target_pose):
+    target = np.asarray(target_pose, dtype=float)
+    if target.shape != (7,) or not np.all(np.isfinite(target)):
+        raise ValueError("target pose must contain seven finite values")
+    quaternion_norm = np.linalg.norm(target[3:])
+    if quaternion_norm <= 1.0e-12:
+        raise ValueError("target pose quaternion must be non-zero")
+    target[3:] /= quaternion_norm
+    return target
+
+
+def _load_raw_wrist_frames(reader):
     frames = []
     previous_timestamp = None
+    for index, row in enumerate(reader):
+        timestamp = float(row["timestamp"])
+        if not np.isfinite(timestamp):
+            raise ValueError("frame {} has a non-finite timestamp".format(index))
+        if previous_timestamp is not None and timestamp <= previous_timestamp:
+            raise ValueError(
+                "trajectory timestamps must be strictly increasing at frame {}".format(
+                    index
+                )
+            )
+
+        transform = np.empty((4, 4), dtype=float)
+        for matrix_row in range(4):
+            for matrix_column in range(4):
+                transform[matrix_row, matrix_column] = float(
+                    row[
+                        "right_raw_matrix_{}{}".format(
+                            matrix_row, matrix_column
+                        )
+                    ]
+                )
+        frames.append(
+            RightWristFrame(
+                index=index,
+                timestamp=timestamp,
+                transform=_validated_transform(transform).copy(),
+            )
+        )
+        previous_timestamp = timestamp
+    return frames
+
+
+def _load_target_pose_frames(reader):
+    frames = []
+    previous_timestamp = None
+    initial_joints = None
+    initial_arm_angle = None
+    initial_joint_fields = ["initial_q{}".format(index) for index in range(1, 8)]
+    for index, row in enumerate(reader):
+        frame_index = int(row["frame_index"])
+        if frame_index != index:
+            raise ValueError("frame_index is not contiguous at row {}".format(index))
+        timestamp = float(row["timestamp_s"])
+        if not np.isfinite(timestamp):
+            raise ValueError("frame {} has a non-finite timestamp".format(index))
+        if previous_timestamp is not None and timestamp <= previous_timestamp:
+            raise ValueError(
+                "trajectory timestamps must be strictly increasing at frame {}".format(
+                    index
+                )
+            )
+        target = _validated_target_pose(
+            [
+                row["target_x"],
+                row["target_y"],
+                row["target_z"],
+                row["target_qw"],
+                row["target_qx"],
+                row["target_qy"],
+                row["target_qz"],
+            ]
+        )
+
+        if index == 0 and all(field in row for field in initial_joint_fields):
+            initial_joints = tuple(float(row[field]) for field in initial_joint_fields)
+            if not all(np.isfinite(initial_joints)):
+                raise ValueError("initial joints must be finite")
+            if "initial_arm_angle" in row:
+                initial_arm_angle = float(row["initial_arm_angle"])
+                if not np.isfinite(initial_arm_angle):
+                    raise ValueError("initial arm angle must be finite")
+
+        frames.append(
+            RightWristFrame(
+                index=frame_index,
+                timestamp=timestamp,
+                transform=None,
+                target_pose=target,
+                initial_joints=initial_joints if index == 0 else None,
+                initial_arm_angle=initial_arm_angle if index == 0 else None,
+            )
+        )
+        previous_timestamp = timestamp
+    return frames
+
+
+def load_right_wrist_frames(csv_path):
     with open(csv_path, "r", encoding="utf-8", newline="") as input_file:
         reader = csv.DictReader(input_file)
-        required = {"timestamp"}
-        required.update(
+        fields = set(reader.fieldnames or [])
+        raw_fields = {"timestamp"}
+        raw_fields.update(
             "right_raw_matrix_{}{}".format(row, column)
             for row in range(4)
             for column in range(4)
         )
-        missing = required.difference(reader.fieldnames or [])
-        if missing:
+        target_fields = {
+            "frame_index",
+            "timestamp_s",
+            "target_x",
+            "target_y",
+            "target_z",
+            "target_qw",
+            "target_qx",
+            "target_qy",
+            "target_qz",
+        }
+        if raw_fields.issubset(fields):
+            frames = _load_raw_wrist_frames(reader)
+        elif target_fields.issubset(fields):
+            frames = _load_target_pose_frames(reader)
+        else:
+            missing = sorted((raw_fields | target_fields) - fields)
             raise ValueError(
-                "trajectory CSV is missing columns: {}".format(
-                    ", ".join(sorted(missing))
+                "trajectory CSV is missing required columns for raw or target format: {}".format(
+                    ", ".join(missing)
                 )
             )
-
-        for index, row in enumerate(reader):
-            timestamp = float(row["timestamp"])
-            if not np.isfinite(timestamp):
-                raise ValueError("frame {} has a non-finite timestamp".format(index))
-            if previous_timestamp is not None and timestamp <= previous_timestamp:
-                raise ValueError(
-                    "trajectory timestamps must be strictly increasing at frame {}".format(
-                        index
-                    )
-                )
-
-            transform = np.empty((4, 4), dtype=float)
-            for matrix_row in range(4):
-                for matrix_column in range(4):
-                    transform[matrix_row, matrix_column] = float(
-                        row[
-                            "right_raw_matrix_{}{}".format(
-                                matrix_row, matrix_column
-                            )
-                        ]
-                    )
-            frames.append(
-                RightWristFrame(
-                    index=index,
-                    timestamp=timestamp,
-                    transform=_validated_transform(transform).copy(),
-                )
-            )
-            previous_timestamp = timestamp
 
     if not frames:
         raise ValueError("trajectory CSV contains no data frames")

@@ -44,6 +44,8 @@ end_effector: "gripper"
 # 机械臂遥控参数
 arm_config:
   leftright: "right" # 指定使用人的哪只手的位姿来操控
+  # Switch to minimum_sufficient_continuity_refined for the wrist-improving profile.
+  right_ik_method: "A1_minimum_jv"
   # move: false
   
   scaling_factor: 1.0

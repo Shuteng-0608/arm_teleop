@@ -13,6 +13,7 @@ arm_model: "RM_65"
 end_effector: "mh6_topic_bridge"
 
 arm_config:
+  right_ik_method: "A1_minimum_jv"
   scaling_factor: 1.0
   smoothing_factor: 0.5
   update_frequency: 0.01

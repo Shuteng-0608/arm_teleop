@@ -5,7 +5,11 @@
 // #include "tools.h"
 #include "arm_kinematics/arm_kinematics.h"
 #include "arm_kinematics/redundancy/redundancy_configuration_selector.h"
+#include "arm_kinematics/redundancy/redundancy_selector_config.h"
 #include <ros/package.h>
+#include <cmath>
+#include <stdexcept>
+#include <string>
 using namespace arm_kinematics;
 
 #ifndef ARM_KINEMATICS_SELECTOR_CONFIG_PATH
@@ -14,6 +18,115 @@ using namespace arm_kinematics;
 #endif
 
 namespace {
+
+using arm_kinematics::redundancy::RedundancySelectorSettings;
+using arm_kinematics::redundancy::SelectorInput;
+using arm_kinematics::redundancy::SelectorRuntimeMode;
+using arm_kinematics::redundancy::SrsBranch;
+using arm_kinematics::redundancy::TemporalWristState;
+
+const char* kA1Method = "A1_minimum_jv";
+const char* kRefinedMethod = "minimum_sufficient_continuity_refined";
+
+RedundancySelectorSettings selectorSettingsForMethod(
+    const std::string& selector_config_path,
+    const std::string& method) {
+    RedundancySelectorSettings settings =
+        arm_kinematics::redundancy::loadRedundancySelectorSettings(
+            selector_config_path);
+    settings.runtime_mode = SelectorRuntimeMode::kExecution;
+
+    if (method == kA1Method) {
+        settings.enable_wrist_objective = false;
+        settings.enable_guard = false;
+        settings.minimum_sufficient_budget.enabled = false;
+        settings.minimum_sufficient_budget.continuity_enabled = false;
+        settings.minimum_sufficient_budget.offset_refinement_enabled = false;
+        settings.minimum_sufficient_budget.stateful.enabled = false;
+        settings.minimum_sufficient_budget.offset_aware.enabled = false;
+        settings.continuity_first_wrist.enabled = false;
+        settings.temporal_wrist_policy.enabled = false;
+        return settings;
+    }
+
+    if (method == kRefinedMethod) {
+        settings.enable_wrist_objective = true;
+        settings.enable_guard = true;
+        settings.minimum_wrist_gap_improvement = 0.0005;
+
+        auto& sufficient = settings.minimum_sufficient_budget;
+        sufficient.enabled = true;
+        sufficient.continuity_enabled = true;
+        sufficient.redundant_step_cap = 0.15;
+        sufficient.entry_redundant_step_cap = 0.075;
+        sufficient.sufficient_jv_tie_tolerance = 0.005;
+        sufficient.reversal_deadband_rad_s = 0.01;
+        sufficient.offset_refinement_enabled = true;
+        sufficient.offset_refinement_phi_tolerance_rad = 1.0e-4;
+        sufficient.offset_refinement_gain_tolerance = 1.0e-5;
+        sufficient.offset_refinement_maximum_iterations = 8;
+        sufficient.stateful.enabled = false;
+        sufficient.offset_aware.enabled = false;
+
+        settings.continuity_first_wrist.enabled = false;
+        auto& temporal = settings.temporal_wrist_policy;
+        temporal.enabled = true;
+        temporal.enter_gain = 0.0005;
+        temporal.enter_consecutive_cycles = 3;
+        temporal.exit_consecutive_cycles = 1;
+        temporal.cooldown_cycles = 3;
+        temporal.near_opt_gap_tolerance = 0.00025;
+        temporal.maintain_gain_floor = 1.0e-9;
+        temporal.redundancy_bias_deadband_rad = 0.0002;
+        temporal.lock_branch_while_improving = true;
+        temporal.lock_bias_direction_while_improving = true;
+        return settings;
+    }
+
+    throw std::invalid_argument(
+        "Invalid redundancy selector method: " + method);
+}
+
+SrsBranch inferBranch(const Vector7d& joints) {
+    const std::size_t branch_index =
+        (std::cos(joints[1]) >= 0.0 ? 0U : 2U) +
+        (std::cos(joints[5]) >= 0.0 ? 0U : 1U);
+    return arm_kinematics::redundancy::branchFromIndex(branch_index);
+}
+
+Vector7d wrappedDifference(const Vector7d& current, const Vector7d& previous) {
+    Vector7d difference = Vector7d::Zero();
+    for (int joint = 0; joint < difference.size(); ++joint) {
+        difference[joint] = std::atan2(
+            std::sin(current[joint] - previous[joint]),
+            std::cos(current[joint] - previous[joint]));
+    }
+    return difference;
+}
+
+struct SelectorHistory {
+    bool valid = false;
+    Matrix4d accepted_target_pose = Matrix4d::Identity();
+    Vector7d previous_joints = Vector7d::Zero();
+    bool previous_standard_joints_valid = false;
+    Vector7d previous_standard_joints = Vector7d::Zero();
+    bool previous_baseline_standard_joints_valid = false;
+    Vector7d previous_baseline_standard_joints = Vector7d::Zero();
+    bool previous_standard_redundancy_displacement_valid = false;
+    Vector7d previous_standard_redundancy_displacement = Vector7d::Zero();
+    bool previous_baseline_joints_valid = false;
+    Vector7d previous_baseline_joints = Vector7d::Zero();
+    bool previous_redundancy_displacement_valid = false;
+    Vector7d previous_redundancy_displacement = Vector7d::Zero();
+    bool previous_redundancy_velocity_valid = false;
+    Vector7d previous_redundancy_velocity = Vector7d::Zero();
+    double previous_arm_angle = 0.0;
+    SrsBranch previous_branch = SrsBranch::kCos2PositiveCos6Positive;
+    bool previous_guard_active = false;
+    bool previous_command_velocity_valid = false;
+    Vector7d previous_command_velocity = Vector7d::Zero();
+    TemporalWristState temporal_wrist_state;
+};
 
 const char* selectionStatusName(
     arm_kinematics::redundancy::SelectionStatus status) {
@@ -42,7 +155,11 @@ private:
     ros::ServiceServer service_;
     CombinedSolver solver_;
     arm_kinematics::redundancy::RedundancyConfigurationSelector
-        redundancy_selector_;
+        redundancy_selector_a1_;
+    arm_kinematics::redundancy::RedundancyConfigurationSelector
+        redundancy_selector_refined_;
+    SelectorHistory selector_history_a1_;
+    SelectorHistory selector_history_refined_;
 
 public:
     ArmKinematicsServer(
@@ -50,7 +167,12 @@ public:
         const std::string& config_path,
         const std::string& selector_config_path)
         : solver_(config_path),
-          redundancy_selector_(config_path, selector_config_path) {
+          redundancy_selector_a1_(
+              config_path,
+              selectorSettingsForMethod(selector_config_path, kA1Method)),
+          redundancy_selector_refined_(
+              config_path,
+              selectorSettingsForMethod(selector_config_path, kRefinedMethod)) {
         try {      
             ROS_INFO("[right_arm_teleop] Inverse Kinematics solvers initialized successfully");
         } catch (const std::exception& e) {
@@ -60,6 +182,143 @@ public:
 
         // 注册服务
         service_ = nh.advertiseService("/arm_teleop/right_arm_ik_srv", &ArmKinematicsServer::handleRequest, this);
+    }
+
+    void resetSelectorHistory(
+        SelectorHistory& history,
+        const Matrix4d& target_pose,
+        const double* initial_joints,
+        double arm_angle) {
+        history = SelectorHistory();
+        history.valid = true;
+        history.accepted_target_pose = target_pose;
+        for (int joint = 0; joint < history.previous_joints.size(); ++joint) {
+            history.previous_joints[joint] = initial_joints[joint];
+        }
+        history.previous_arm_angle = arm_angle;
+        history.previous_branch = inferBranch(history.previous_joints);
+    }
+
+    void prepareSelectorHistory(
+        SelectorHistory& history,
+        const Matrix4d& target_pose,
+        const double* initial_joints,
+        double arm_angle) {
+        bool reset = !history.valid;
+        if (!reset) {
+            for (int joint = 0; joint < history.previous_joints.size(); ++joint) {
+                if (std::abs(initial_joints[joint] -
+                             history.previous_joints[joint]) > 0.01) {
+                    reset = true;
+                    break;
+                }
+            }
+        }
+        if (reset) {
+            resetSelectorHistory(history, target_pose, initial_joints, arm_angle);
+        }
+    }
+
+    SelectorInput makeSelectorInput(
+        const SelectorHistory& history,
+        const Matrix4d& target_pose) const {
+        SelectorInput input;
+        input.target_pose = target_pose;
+        input.accepted_target_pose = history.accepted_target_pose;
+        input.previous_joints = history.previous_joints;
+        input.previous_standard_joints_valid =
+            history.previous_standard_joints_valid;
+        input.previous_standard_joints = history.previous_standard_joints;
+        input.previous_baseline_standard_joints_valid =
+            history.previous_baseline_standard_joints_valid;
+        input.previous_baseline_standard_joints =
+            history.previous_baseline_standard_joints;
+        input.previous_standard_redundancy_displacement_valid =
+            history.previous_standard_redundancy_displacement_valid;
+        input.previous_standard_redundancy_displacement =
+            history.previous_standard_redundancy_displacement;
+        input.previous_baseline_joints_valid =
+            history.previous_baseline_joints_valid;
+        input.previous_baseline_joints = history.previous_baseline_joints;
+        input.previous_redundancy_displacement_valid =
+            history.previous_redundancy_displacement_valid;
+        input.previous_redundancy_displacement =
+            history.previous_redundancy_displacement;
+        input.previous_redundancy_velocity_valid =
+            history.previous_redundancy_velocity_valid;
+        input.previous_redundancy_velocity = history.previous_redundancy_velocity;
+        input.previous_arm_angle = history.previous_arm_angle;
+        input.previous_branch = history.previous_branch;
+        input.previous_guard_active = history.previous_guard_active;
+        input.history_valid = history.valid;
+        input.source_period_s = 1.0 / 30.0;
+        input.previous_command_velocity_valid =
+            history.previous_command_velocity_valid;
+        input.previous_command_velocity = history.previous_command_velocity;
+        input.temporal_wrist_state = history.temporal_wrist_state;
+        return input;
+    }
+
+    void acceptSelectorResult(
+        SelectorHistory& history,
+        const Matrix4d& target_pose,
+        const arm_kinematics::redundancy::SelectorResult& result) {
+        // Temporal policy state is acknowledged independently of command
+        // history; the selector may advance or reset it on a HOLD result.
+        if (result.updates_temporal_state_if_acknowledged) {
+            history.temporal_wrist_state = result.next_temporal_wrist_state;
+        }
+        if (!result.has_executable_solution ||
+            !result.updates_history_if_accepted) {
+            return;
+        }
+
+        const Vector7d previous_joints = history.previous_joints;
+        const Vector7d previous_redundancy =
+            history.previous_redundancy_displacement;
+        const bool previous_redundancy_valid =
+            history.previous_redundancy_displacement_valid;
+        history.previous_joints = result.executable_joints;
+        history.previous_standard_joints = result.selected_standard_joints;
+        history.previous_standard_joints_valid = true;
+        history.previous_arm_angle = result.selected_arm_angle;
+        history.previous_branch = result.standard_branch;
+        history.previous_guard_active = result.guard_active;
+        history.accepted_target_pose = target_pose;
+
+        if (result.diagnostics.final_baseline_joints_valid) {
+            history.previous_baseline_joints =
+                result.diagnostics.baseline_joints;
+            history.previous_baseline_joints_valid = true;
+            history.previous_redundancy_displacement =
+                wrappedDifference(
+                    result.executable_joints,
+                    result.diagnostics.baseline_joints);
+            history.previous_redundancy_displacement_valid = true;
+            if (previous_redundancy_valid) {
+                history.previous_redundancy_velocity =
+                    (history.previous_redundancy_displacement -
+                     previous_redundancy) / (1.0 / 30.0);
+                history.previous_redundancy_velocity_valid = true;
+            } else {
+                history.previous_redundancy_velocity.setZero();
+                history.previous_redundancy_velocity_valid = false;
+            }
+        }
+        if (result.diagnostics.final_baseline_standard_joints_valid) {
+            history.previous_baseline_standard_joints =
+                result.diagnostics.baseline_standard_joints;
+            history.previous_baseline_standard_joints_valid = true;
+            history.previous_standard_redundancy_displacement =
+                wrappedDifference(
+                    result.selected_standard_joints,
+                    result.diagnostics.baseline_standard_joints);
+            history.previous_standard_redundancy_displacement_valid =
+                true;
+        }
+        history.previous_command_velocity =
+            result.diagnostics.command_velocity_rad_s;
+        history.previous_command_velocity_valid = true;
     }
 
     /**
@@ -84,6 +343,9 @@ public:
     }
 
     bool handleRequest(arm_teleop::ArmIK::Request& req, arm_teleop::ArmIK::Response& res) {
+        res.success = false;
+        res.search_cnt = -1;
+        res.new_arm_angle = req.current_arm_angle;
         // 转换初始关节角
         // ROS_INFO("Received IK request using method: %s", req.method.c_str());
         // ROS_INFO("Current arm angle: %f", req.current_arm_angle);
@@ -126,19 +388,25 @@ public:
         //             Tee(i,0), Tee(i,1), Tee(i,2), Tee(i,3));
         // }
 
-        if (req.method == "redundancy_selector") {
-            arm_kinematics::redundancy::SelectorInput selector_input;
-            selector_input.target_pose = Tee;
-            for (int joint = 0; joint < 7; ++joint) {
-                selector_input.previous_joints[joint] = init_joints_array[joint];
-            }
-            selector_input.previous_arm_angle = req.current_arm_angle;
-
-            const auto selector_result = redundancy_selector_.select(selector_input);
+        const bool legacy_selector_alias = req.method == "redundancy_selector";
+        const std::string selector_method = legacy_selector_alias
+            ? kA1Method : req.method;
+        if (selector_method == kA1Method || selector_method == kRefinedMethod) {
+            SelectorHistory& selector_history = selector_method == kA1Method
+                ? selector_history_a1_ : selector_history_refined_;
+            prepareSelectorHistory(
+                selector_history, Tee, init_joints_array, req.current_arm_angle);
+            const SelectorInput selector_input = makeSelectorInput(
+                selector_history, Tee);
+            const auto selector_result = selector_method == kA1Method
+                ? redundancy_selector_a1_.select(selector_input)
+                : redundancy_selector_refined_.select(selector_input);
+            acceptSelectorResult(selector_history, Tee, selector_result);
             res.success = selector_result.has_executable_solution;
-            res.message = std::string("redundancy_selector:") +
+            res.message = std::string(legacy_selector_alias
+                                          ? "redundancy_selector:"
+                                          : selector_method + ":") +
                 selectionStatusName(selector_result.status);
-            res.search_cnt = -1;
             if (res.success) {
                 for (int joint = 0; joint < 7; ++joint) {
                     res.solution[joint] =
@@ -187,7 +455,10 @@ public:
                                                     IKSolveMode::kOptimal,
                                                     IKMethodType::kStandard);
             } else {
-                throw std::invalid_argument("Invalid method. Valid options: std, ofst, comb, feasible");
+                throw std::invalid_argument(
+                    "Invalid method. Valid options: A1_minimum_jv, "
+                    "minimum_sufficient_continuity_refined, feasible_ref, "
+                    "feasible_std, optimal_ref, optimal_std");
             }
         } catch (const std::exception& e) {
             res.success = false;

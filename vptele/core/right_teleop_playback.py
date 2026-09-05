@@ -27,8 +27,8 @@ class JointTransition:
 
 def load_teleop_trajectory(
     path,
-    expected_frame_count=769,
-    expected_file_sha256=EXPECTED_SOURCE_SHA256,
+    expected_frame_count=None,
+    expected_file_sha256=None,
 ):
     actual_hash = file_sha256(path)
     if expected_file_sha256 and actual_hash != expected_file_sha256:
@@ -38,7 +38,7 @@ def load_teleop_trajectory(
             )
         )
     frames = load_right_wrist_frames(path)
-    if len(frames) != expected_frame_count:
+    if expected_frame_count is not None and len(frames) != expected_frame_count:
         raise ValueError(
             "expected {} source frames, got {}".format(
                 expected_frame_count, len(frames)

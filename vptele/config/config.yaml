@@ -43,6 +43,8 @@ end_effector: "hand"
 
 # 机械臂遥控参数
 arm_config:
+  # Right-arm selector profile: A1_minimum_jv or minimum_sufficient_continuity_refined
+  right_ik_method: "A1_minimum_jv"
   scaling_factor: 1.0
   smoothing_factor: 0.5
   update_frequency: 0.01

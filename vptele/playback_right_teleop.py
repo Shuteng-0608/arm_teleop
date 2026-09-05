@@ -39,7 +39,30 @@ def package_root():
 
 
 def default_input_path():
-    return os.path.join(package_root(), "data_log", "circle_engineering.csv")
+    configured = os.environ.get("ARM_TELEOP_TRAJECTORY_CSV")
+    if configured:
+        return os.path.abspath(configured)
+
+    relative_r50 = os.path.join(
+        package_root(),
+        "..",
+        "Arm_kinematics_cal_cpp",
+        "examples",
+        "redundancy_selector",
+        "r50_trigger_demo",
+        "R50_trigger_demo.csv",
+    )
+    candidates = (
+        os.path.join(package_root(), "data_log", "R50_trigger_demo.csv"),
+        relative_r50,
+        "/home/pangu/pangu/src/Arm_kinematics_cal_cpp/examples/"
+        "redundancy_selector/r50_trigger_demo/R50_trigger_demo.csv",
+    )
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    # Keep the error at the CSV loader, where the missing path is actionable.
+    return candidates[0]
 
 
 def timestamped_output(suffix):
@@ -61,6 +84,12 @@ def parse_args():
     mode.add_argument("--ik-only", action="store_true")
     mode.add_argument("--preflight", action="store_true")
     parser.add_argument("--input", default=default_input_path())
+    parser.add_argument(
+        "--ik-method",
+        choices=("A1_minimum_jv", "minimum_sufficient_continuity_refined"),
+        default="A1_minimum_jv",
+        help="Right-arm selector profile requested from the IK service.",
+    )
     parser.add_argument("--output", default=None)
     parser.add_argument("--audit-output", default=None)
     parser.add_argument(
@@ -119,9 +148,11 @@ def output_fields():
     return fields
 
 
-def make_ik_request(target, previous_joints, previous_arm_angle):
+def make_ik_request(
+    target, previous_joints, previous_arm_angle, method="A1_minimum_jv"
+):
     request = ArmIKRequest()
-    request.method = "redundancy_selector"
+    request.method = method
     request.init_joints = list(previous_joints)
     request.current_arm_angle = float(previous_arm_angle)
     request.offset_list = []
@@ -137,18 +168,31 @@ def make_ik_request(target, previous_joints, previous_arm_angle):
 
 
 class OnlineRedundancySolver:
-    def __init__(self, service, args):
+    def __init__(self, service, args, initial_joints=None, initial_arm_angle=None):
         self.service = service
+        self.ik_method = args.ik_method
         self.maximum_step = args.maximum_step
         self.maximum_velocity = args.maximum_velocity
-        self.previous_request_joints = rounded_solver_state(INITIAL_RIGHT_JOINTS)
+        self.initial_joints = tuple(
+            float(value)
+            for value in (initial_joints if initial_joints is not None else INITIAL_RIGHT_JOINTS)
+        )
+        self.initial_arm_angle = float(
+            initial_arm_angle
+            if initial_arm_angle is not None
+            else INITIAL_RIGHT_ARM_ANGLE
+        )
+        self.previous_request_joints = rounded_solver_state(self.initial_joints)
         self.previous_output_joints = None
-        self.previous_arm_angle = INITIAL_RIGHT_ARM_ANGLE
+        self.previous_arm_angle = self.initial_arm_angle
         self.previous_source_timestamp = None
 
     def solve(self, frame, target):
         request = make_ik_request(
-            target, self.previous_request_joints, self.previous_arm_angle
+            target,
+            self.previous_request_joints,
+            self.previous_arm_angle,
+            self.ik_method,
         )
         started = time.monotonic()
         response = self.service.call(request)
@@ -158,7 +202,12 @@ class OnlineRedundancySolver:
             raise RuntimeError(
                 "online IK failed at frame {}: {}".format(frame.index, status)
             )
-        if status != "redundancy_selector:selected":
+        accepted_statuses = {
+            "{}:selected".format(self.ik_method),
+            "{}:fallback_baseline".format(self.ik_method),
+            "{}:hold_previous".format(self.ik_method),
+        }
+        if status not in accepted_statuses:
             raise RuntimeError(
                 "online IK returned non-selected status at frame {}: {}".format(
                     frame.index, status
@@ -183,6 +232,7 @@ class OnlineRedundancySolver:
             "joints": joints,
             "arm_angle": arm_angle,
             "status": status,
+            "method": self.ik_method,
             "latency_us": latency_us,
             "maximum_step": transition.maximum_step,
             "maximum_velocity": transition.maximum_velocity,
@@ -242,14 +292,27 @@ def wait_for_ik_service(args):
     return rospy.ServiceProxy(args.right_ik_service, ArmIK, persistent=True)
 
 
+def target_for_frame(frame, mapper):
+    if frame.target_pose is not None:
+        return frame.target_pose
+    if mapper is None or frame.transform is None:
+        raise ValueError("trajectory frame has neither a target pose nor a wrist transform")
+    return mapper.ik_target(frame.transform)
+
+
 def run_ik_only(args, input_path, frames, source_summary, mapper):
     rospy.init_node("right_teleop_online_ik_check", anonymous=True)
-    solver = OnlineRedundancySolver(wait_for_ik_service(args), args)
+    solver = OnlineRedundancySolver(
+        wait_for_ik_service(args),
+        args,
+        frames[0].initial_joints,
+        frames[0].initial_arm_angle,
+    )
     output_path, output_file, writer = open_output(args)
     maximum_latency = 0.0
     try:
         for frame in frames:
-            target = mapper.ik_target(frame.transform)
+            target = target_for_frame(frame, mapper)
             result = solver.solve(frame, target)
             maximum_latency = max(maximum_latency, result["latency_us"])
             writer.writerow(
@@ -282,7 +345,12 @@ def lower_services(args):
 
 def run_execute(args, input_path, frames, source_summary, mapper):
     rospy.init_node("right_teleop_online_playback", anonymous=True)
-    solver = OnlineRedundancySolver(wait_for_ik_service(args), args)
+    solver = OnlineRedundancySolver(
+        wait_for_ik_service(args),
+        args,
+        frames[0].initial_joints,
+        frames[0].initial_arm_angle,
+    )
     output_path, output_file, writer = open_output(args)
     publisher = rospy.Publisher(
         "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=100
@@ -298,10 +366,10 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         "source_trajectory": source_summary.__dict__,
         "calculation_output": output_path,
         "started_at": datetime.now().isoformat(),
-        "right_initial_joints": list(INITIAL_RIGHT_JOINTS),
+        "right_initial_joints": list(solver.initial_joints),
         "left_hold_joints": left_hold_joints,
         "settings": {
-            "ik_method": "redundancy_selector",
+            "ik_method": solver.ik_method,
             "movej_vel": args.movej_vel,
             "movej_acc": args.movej_acc,
             "movej_jerk": args.movej_jerk,
@@ -312,7 +380,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
     completed = 0
     try:
         # Preserve main_ros initialization order; only the right-arm IK method differs.
-        call_movej(movej_service, INITIAL_RIGHT_JOINTS, args, arm_id=1)
+        call_movej(movej_service, solver.initial_joints, args, arm_id=1)
         call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)
         set_teleop(teleop_service, True)
         teleop_started = True
@@ -323,7 +391,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
             deadline = playback_start + frame.timestamp - source_start
             wait_until(deadline)
             solver_started = time.monotonic()
-            target = mapper.ik_target(frame.transform)
+            target = target_for_frame(frame, mapper)
             result = solver.solve(frame, target)
             publish_at = time.monotonic()
             lateness = publish_at - deadline
@@ -385,8 +453,13 @@ def main():
     args = parse_args()
     input_path = os.path.abspath(args.input)
     frames, source_summary = load_teleop_trajectory(input_path)
-    mapper = RightArmTrajectoryMapper(frames[0].transform)
-    print("Validated raw teleoperation trajectory: {}".format(input_path))
+    mapper = (
+        RightArmTrajectoryMapper(frames[0].transform)
+        if frames[0].transform is not None
+        else None
+    )
+    trajectory_kind = "target pose" if frames[0].target_pose is not None else "raw wrist"
+    print("Validated {} teleoperation trajectory: {}".format(trajectory_kind, input_path))
     print(
         "frames={}, duration={:.3f}s, dt=[{:.6f}, {:.6f}]s, sha256={}".format(
             source_summary.frame_count,

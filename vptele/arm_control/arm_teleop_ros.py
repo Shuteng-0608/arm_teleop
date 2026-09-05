@@ -26,6 +26,18 @@ from arm_angle.srv import PredictArmAngle, PredictArmAngleRequest
 
 logger = get_logger()
 
+RIGHT_SELECTOR_METHODS = (
+    "A1_minimum_jv",
+    "minimum_sufficient_continuity_refined",
+    "redundancy_selector",
+)
+RIGHT_IK_METHODS = RIGHT_SELECTOR_METHODS + (
+    "feasible_ref",
+    "feasible_std",
+    "optimal_ref",
+    "optimal_std",
+)
+
 class ArmTeleopROS:
     def __init__(self, vp_streamer, robot_controller, config=None):
         """
@@ -72,6 +84,15 @@ class ArmTeleopROS:
         # ================== [RIGHT ARM INIT] ==================
         # rospy.wait_for_service('/arm_teleop/right_arm_ik_srv')
         self.right_ik_service = rospy.ServiceProxy('/arm_teleop/right_arm_ik_srv', ArmIK)
+        self.right_ik_method = self.config.get(
+            "right_ik_method", "A1_minimum_jv"
+        )
+        if self.right_ik_method not in RIGHT_IK_METHODS:
+            raise ValueError(
+                "unsupported right_ik_method: {} (expected one of {})".format(
+                    self.right_ik_method, ", ".join(RIGHT_IK_METHODS)
+                )
+            )
         self.initial_right_robot_pose = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
         
         # self.initial_right_robot_pose_aa = [0.3011, -0.3580, 0.2282, 3.1923149, -0.036102, -0.0007987]  # XYZ + 欧拉角 (弧度)
@@ -904,14 +925,11 @@ class ArmTeleopROS:
                     # TODO: call 逆解服务
                     start_time = time.time()
                     ik_request = ArmIKRequest()
-                    # ======================== [feasible method] ========================
+                    # ======================== [IK method] ========================
                     if arm_side == 'right':
-                        ik_request.method = 'feasible_ref'  # 使用组合方法
-                        # ik_request.current_arm_angle = aa_result.arm_angle_rad * -1
-                        # 【修改】加锁读取臂角
+                        ik_request.method = self.right_ik_method
                         with self.data_lock:
-                            # ik_request.current_arm_angle = self.current_arm_angle_right
-                            ik_request.current_arm_angle = -1 + 0.5
+                            ik_request.current_arm_angle = self.current_arm_angle_right
                         logger.info(f"{arm_side}使用的臂角大小为{self.current_arm_angle_right}")
                     elif arm_side == 'left':
                         ik_request.method = 'feasible_ref'  # 使用组合方法
@@ -928,21 +946,36 @@ class ArmTeleopROS:
                     # rospy.loginfo(f"arm_side: {arm_side}  -  arm_angle: {aa_result}")
 
 
-                    # 3. 直接在当前进程暴力破解 IK！
-                    offset_list1 = [0, -0.1, -0.2, -0.3, -0.4, -0.5]
-                    # ⚠️ 注意这里：也必须改为围绕修正后的 `ik_phi` 进行搜索，而不是原来的 `predicted_arm_angle_rad`
-                    if arm_side == "right":
-                        # 【修改】加锁读取臂角
-                        with self.data_lock:
-                            offset_list2 = [i + self.current_arm_angle_right for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
+                    # Legacy IK still receives its explicit offset search list.
+                    # Selector methods own candidate generation in the library.
+                    if arm_side == "right" and self.right_ik_method in RIGHT_SELECTOR_METHODS:
+                        search_list = []
+                        ik_request.offset_refer = 0.0
                     else:
-                        # 【修改】加锁读取臂角
+                        offset_list1 = [0, -0.1, -0.2, -0.3, -0.4, -0.5]
                         with self.data_lock:
-                            offset_list2 = [i + self.current_arm_angle_left for i in [0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2]]
-                    search_list = offset_list1 + offset_list2
-                    
+                            offset_base = (
+                                self.current_arm_angle_right
+                                if arm_side == "right"
+                                else self.current_arm_angle_left
+                            )
+                        offset_list2 = [
+                            offset_base + value
+                            for value in [
+                                0,
+                                0.05,
+                                -0.05,
+                                0.1,
+                                -0.1,
+                                0.15,
+                                -0.15,
+                                0.2,
+                                -0.2,
+                            ]
+                        ]
+                        search_list = offset_list1 + offset_list2
+                        ik_request.offset_refer = 0.45
                     ik_request.offset_list = search_list
-                    ik_request.offset_refer = 0.45
 
                     rospy.loginfo(f"[{arm_side}] 请求逆解服务，目标位姿: {[round(x, 4) for x in smooth_target_in_quat]}")
                     ik_request.target_pose.position.x = smooth_target_in_quat[0]
@@ -1199,13 +1232,19 @@ class ArmTeleopROS:
         self.control_thread_right.daemon = True
         self.control_thread_right.start()
 
-        logger.info("启动 [RIGHT ARM] 机械臂臂角预测线程...")
-        self.aa_thread_right = Thread(
-            target=self.aa_loop, 
-            kwargs={'arm_side': "right"},
-            name="RightArmAAThread")
-        self.aa_thread_right.daemon = True
-        self.aa_thread_right.start()
+        if self.right_ik_method not in RIGHT_SELECTOR_METHODS:
+            logger.info("启动 [RIGHT ARM] 机械臂臂角预测线程...")
+            self.aa_thread_right = Thread(
+                target=self.aa_loop,
+                kwargs={'arm_side': "right"},
+                name="RightArmAAThread")
+            self.aa_thread_right.daemon = True
+            self.aa_thread_right.start()
+        else:
+            logger.info(
+                "右臂使用 %s，臂角由 IK 选择器历史维护；跳过预测线程",
+                self.right_ik_method,
+            )
 
         
 

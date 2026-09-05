@@ -1,4 +1,4 @@
-string method          # 逆解方法选项："std", "ofst", "comb"
+string method          # 逆解方法：A1_minimum_jv、minimum_sufficient_continuity_refined 或旧 feasible/optimal 方法
 float64[7] init_joints # 初始关节角度
 geometry_msgs/Pose target_pose # 目标位姿
 float64 current_arm_angle # 手臂角度

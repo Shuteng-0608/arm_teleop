@@ -109,7 +109,8 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         )
         with open(script, "r", encoding="utf-8") as input_file:
             source = input_file.read()
-        self.assertIn('request.method = "redundancy_selector"', source)
+        self.assertIn("request.method = method", source)
+        self.assertIn('default="A1_minimum_jv"', source)
         self.assertIn("service.call(request)", source)
         self.assertNotIn("load_redundancy_trajectory", source)
         self.assertNotIn("redundancy_q1", source)
@@ -125,7 +126,7 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         self.assertIn('parser.add_argument("--movej-acc", type=float, default=5.0)', source)
         self.assertIn('parser.add_argument("--movej-jerk", type=float, default=10.0)', source)
         self.assertIn(
-            "call_movej(movej_service, INITIAL_RIGHT_JOINTS, args, arm_id=1)", source
+            "call_movej(movej_service, solver.initial_joints, args, arm_id=1)", source
         )
         self.assertIn(
             "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)", source
@@ -141,7 +142,7 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         ]
         self.assertLess(
             execute_source.index(
-                "call_movej(movej_service, INITIAL_RIGHT_JOINTS, args, arm_id=1)"
+                "call_movej(movej_service, solver.initial_joints, args, arm_id=1)"
             ),
             execute_source.index(
                 "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)"
