@@ -481,7 +481,8 @@ public:
             res.message = std::string(legacy_selector_alias
                                           ? "redundancy_selector:"
                                           : selector_method + ":") +
-                selectionStatusName(selector_result.status);
+                selectionStatusName(selector_result.status) + ":" +
+                selectorHoldReasonName(selector_result.hold_reason);
             if (res.success) {
                 for (int joint = 0; joint < 7; ++joint) {
                     res.solution[joint] =

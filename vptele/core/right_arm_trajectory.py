@@ -21,6 +21,23 @@ INITIAL_RIGHT_JOINTS = np.array(
 )
 INITIAL_RIGHT_ARM_ANGLE = -0.7
 
+# Initial executable state paired with R30_upper_xz_balanced.csv.  The raw
+# wrist CSV cannot carry selector history, so playback must supply the offset
+# solution recorded in R30_upper_xz_balanced_geometry.json.
+R30_BALANCED_INITIAL_RIGHT_JOINTS = np.array(
+    [
+        0.03459367785539464,
+        -0.37452142070662103,
+        -0.25548010497623225,
+        1.3935800398380644,
+        -0.20436973192875413,
+        -0.9644557296754508,
+        -0.36195428893710607,
+    ],
+    dtype=float,
+)
+R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE = -0.6544984694978736
+
 _RIGHT_HAND_REFERENCE_ROTATION = np.array(
     [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
     dtype=float,

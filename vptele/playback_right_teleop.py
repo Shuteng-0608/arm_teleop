@@ -16,8 +16,8 @@ from arm_teleop.srv import (
 )
 
 from core.right_arm_trajectory import (
-    INITIAL_RIGHT_ARM_ANGLE,
-    INITIAL_RIGHT_JOINTS,
+    R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE,
+    R30_BALANCED_INITIAL_RIGHT_JOINTS,
     RightArmTrajectoryMapper,
 )
 from core.right_teleop_playback import (
@@ -181,12 +181,16 @@ class OnlineRedundancySolver:
         self.maximum_velocity = args.maximum_velocity
         self.initial_joints = tuple(
             float(value)
-            for value in (initial_joints if initial_joints is not None else INITIAL_RIGHT_JOINTS)
+            for value in (
+                initial_joints
+                if initial_joints is not None
+                else R30_BALANCED_INITIAL_RIGHT_JOINTS
+            )
         )
         self.initial_arm_angle = float(
             initial_arm_angle
             if initial_arm_angle is not None
-            else INITIAL_RIGHT_ARM_ANGLE
+            else R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE
         )
         self.previous_request_joints = rounded_solver_state(self.initial_joints)
         self.previous_output_joints = None
