@@ -10,6 +10,7 @@ import rospy
 from arm_teleop.msg import DualArmMovej
 from arm_teleop.srv import ArmIK, ArmIKRequest
 from arm_teleop.srv import (
+    FeedbackService,
     MovejService,
     StartDualTeleOP,
 )
@@ -25,7 +26,7 @@ from core.right_teleop_playback import (
     validate_online_solution,
 )
 from playback_right_joint_trajectory import (
-    LEFT_HOME_JOINTS,
+    call_feedback,
     call_movej,
     make_message,
     set_teleop,
@@ -43,20 +44,25 @@ def default_input_path():
     if configured:
         return os.path.abspath(configured)
 
-    relative_r50 = os.path.join(
+    default_trajectory = (
+        "/home/pangu/arm_lib/Arm_kinematics_cal_cpp/examples/"
+        "redundancy_selector/r50_trigger_demo/R30_upper_xz_balanced.csv"
+    )
+    relative_trajectory = os.path.join(
         package_root(),
         "..",
         "Arm_kinematics_cal_cpp",
         "examples",
         "redundancy_selector",
         "r50_trigger_demo",
-        "R50_trigger_demo.csv",
+        "R30_upper_xz_balanced.csv",
     )
     candidates = (
-        os.path.join(package_root(), "data_log", "R50_trigger_demo.csv"),
-        relative_r50,
+        default_trajectory,
+        os.path.join(package_root(), "data_log", "R30_upper_xz_balanced.csv"),
+        relative_trajectory,
         "/home/pangu/pangu/src/Arm_kinematics_cal_cpp/examples/"
-        "redundancy_selector/r50_trigger_demo/R50_trigger_demo.csv",
+        "redundancy_selector/r50_trigger_demo/R30_upper_xz_balanced.csv",
     )
     for candidate in candidates:
         if os.path.isfile(candidate):
@@ -196,18 +202,20 @@ class OnlineRedundancySolver:
         )
         started = time.monotonic()
         response = self.service.call(request)
+        print("Called IK service for frame {}: {}".format(frame.index, response.message))
         latency_us = (time.monotonic() - started) * 1.0e6
         status = str(response.message)
         if not response.success:
             raise RuntimeError(
                 "online IK failed at frame {}: {}".format(frame.index, status)
             )
-        accepted_statuses = {
-            "{}:selected".format(self.ik_method),
-            "{}:fallback_baseline".format(self.ik_method),
-            "{}:hold_previous".format(self.ik_method),
-        }
-        if status not in accepted_statuses:
+        status_fields = status.split(":")
+        accepted_results = {"selected", "fallback_baseline", "hold_previous"}
+        if (
+            len(status_fields) < 2
+            or status_fields[0] != self.ik_method
+            or status_fields[1] not in accepted_results
+        ):
             raise RuntimeError(
                 "online IK returned non-selected status at frame {}: {}".format(
                     frame.index, status
@@ -332,14 +340,16 @@ def run_ik_only(args, input_path, frames, source_summary, mapper):
 
 def lower_services(args):
     names = (
+        "/aris_node/feedback_srv",
         "/aris_node/movej_srv",
         "/aris_node/start_teleop_srv",
     )
     for name in names:
         rospy.wait_for_service(name, timeout=args.service_timeout)
     return (
-        rospy.ServiceProxy(names[0], MovejService),
-        rospy.ServiceProxy(names[1], StartDualTeleOP),
+        rospy.ServiceProxy(names[0], FeedbackService),
+        rospy.ServiceProxy(names[1], MovejService),
+        rospy.ServiceProxy(names[2], StartDualTeleOP),
     )
 
 
@@ -351,23 +361,28 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         frames[0].initial_joints,
         frames[0].initial_arm_angle,
     )
-    output_path, output_file, writer = open_output(args)
     publisher = rospy.Publisher(
         "/arm_teleop/dual_arm_movej", DualArmMovej, queue_size=100
     )
     try:
-        movej_service, teleop_service = lower_services(args)
-    except Exception:
-        output_file.close()
-        raise
-    head_z_rotation = 0.0
-    left_hold_joints = tuple(LEFT_HOME_JOINTS)
+        feedback_service, movej_service, teleop_service = lower_services(args)
+        before = call_feedback(feedback_service)
+    except Exception as error:
+        raise RuntimeError(
+            "lower-controller preflight failed before any motion command; "
+            "cannot read /aris_node/feedback_srv: {}".format(error)
+        )
+
+    output_path, output_file, writer = open_output(args)
+    left_hold_joints = tuple(before["left"])
+    head_z_rotation = before["others"][4] / 0.8
     audit = {
         "source_trajectory": source_summary.__dict__,
         "calculation_output": output_path,
         "started_at": datetime.now().isoformat(),
         "right_initial_joints": list(solver.initial_joints),
         "left_hold_joints": left_hold_joints,
+        "before_movej": before,
         "settings": {
             "ik_method": solver.ik_method,
             "movej_vel": args.movej_vel,
@@ -379,9 +394,9 @@ def run_execute(args, input_path, frames, source_summary, mapper):
     teleop_started = False
     completed = 0
     try:
-        # Preserve main_ros initialization order; only the right-arm IK method differs.
+        # Move only the right arm. The left-arm fields in the fixed-size dual-arm
+        # message retain the measured pose from before playback.
         call_movej(movej_service, solver.initial_joints, args, arm_id=1)
-        call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)
         set_teleop(teleop_service, True)
         teleop_started = True
         playback_start = time.monotonic()
@@ -440,7 +455,13 @@ def run_execute(args, input_path, frames, source_summary, mapper):
             time.sleep(1.0 / 30.0)
     finally:
         output_file.close()
+        if teleop_started:
+            try:
+                set_teleop(teleop_service, False)
+            except Exception as error:
+                rospy.logerr("Failed to stop lower-controller teleop: %s", error)
         audit["teleop_started"] = teleop_started
+        audit["teleop_stop_requested"] = teleop_started
         audit["completed_frames"] = completed
         audit["finished_at"] = datetime.now().isoformat()
         audit_path = write_audit(
@@ -474,6 +495,7 @@ def main():
     elif args.ik_only:
         run_ik_only(args, input_path, frames, source_summary, mapper)
     else:
+        print("Starting online right-arm teleoperation playback...")
         run_execute(args, input_path, frames, source_summary, mapper)
 
 

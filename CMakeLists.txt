@@ -221,18 +221,18 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(ik_service_right_node src/ik_service.cpp)
-add_executable(ik_service_left_node src/ik_service_left.cpp)
+# add_executable(ik_service_left_node src/ik_service_left.cpp)
 
 add_dependencies(
   ik_service_right_node
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
 )
-add_dependencies(
-  ik_service_left_node
-  ${${PROJECT_NAME}_EXPORTED_TARGETS}
-  ${catkin_EXPORTED_TARGETS}
-)
+# add_dependencies(
+#   ik_service_left_node
+#   ${${PROJECT_NAME}_EXPORTED_TARGETS}
+#   ${catkin_EXPORTED_TARGETS}
+# )
 
 if(NOT ArmKinematics_CONFIG_DIR)
   message(FATAL_ERROR "ArmKinematics runtime configuration directory is missing")
@@ -266,18 +266,18 @@ target_link_libraries(ik_service_right_node
 
 )
 include_directories(/usr/include)
-target_link_libraries(ik_service_left_node
-  ${catkin_LIBRARIES}
-  # yaml-cpp
-  yaml-cpp
-  # ${YAML_CPP_LIBRARIES}
-  # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
+# target_link_libraries(ik_service_left_node
+#   ${catkin_LIBRARIES}
+#   # yaml-cpp
+#   yaml-cpp
+#   # ${YAML_CPP_LIBRARIES}
+#   # $ENV{CONDA_PREFIX}/lib/libyaml-cpp.a
   
-  # arm_kinematics_core
-  /usr/local/lib/libarm_kinematics.so
-  /usr/lib/libceres.so
+#   # arm_kinematics_core
+#   /usr/local/lib/libarm_kinematics.so
+#   /usr/lib/libceres.so
 
-)
+# )
 
 
 #############

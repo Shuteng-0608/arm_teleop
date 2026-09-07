@@ -112,6 +112,8 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         self.assertIn("request.method = method", source)
         self.assertIn('default="A1_minimum_jv"', source)
         self.assertIn("service.call(request)", source)
+        self.assertIn('status_fields = status.split(":")', source)
+        self.assertIn('"hold_previous"', source)
         self.assertNotIn("load_redundancy_trajectory", source)
         self.assertNotIn("redundancy_q1", source)
         self.assertIn('mode.add_argument("--preflight"', source)
@@ -120,7 +122,7 @@ class RightTeleopPlaybackTest(unittest.TestCase):
             "else:\n        run_execute(args, input_path, frames, source_summary, mapper)",
             source,
         )
-        self.assertIn("left_hold_joints = tuple(LEFT_HOME_JOINTS)", source)
+        self.assertIn('left_hold_joints = tuple(before["left"])', source)
         self.assertEqual(source.count("left_hold_joints,\n"), 3)
         self.assertIn('parser.add_argument("--movej-vel", type=float, default=0.5)', source)
         self.assertIn('parser.add_argument("--movej-acc", type=float, default=5.0)', source)
@@ -128,29 +130,25 @@ class RightTeleopPlaybackTest(unittest.TestCase):
         self.assertIn(
             "call_movej(movej_service, solver.initial_joints, args, arm_id=1)", source
         )
-        self.assertIn(
-            "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)", source
-        )
-        self.assertIn("head_z_rotation = 0.0", source)
-        self.assertNotIn("FeedbackService", source)
+        self.assertNotIn("LEFT_HOME_JOINTS", source)
+        self.assertNotIn("arm_id=0", source)
+        self.assertIn('head_z_rotation = before["others"][4] / 0.8', source)
+        self.assertIn("FeedbackService", source)
         self.assertNotIn("LogService", source)
-        self.assertNotIn("call_feedback", source)
+        self.assertIn("call_feedback", source)
         self.assertNotIn("set_log", source)
-        self.assertNotIn("set_teleop(teleop_service, False)", source)
+        self.assertIn("set_teleop(teleop_service, False)", source)
         execute_source = source[
             source.index("def run_execute"):source.index("def main")
         ]
+        self.assertIn("lower-controller preflight failed before any motion command", execute_source)
         self.assertLess(
-            execute_source.index(
-                "call_movej(movej_service, solver.initial_joints, args, arm_id=1)"
-            ),
-            execute_source.index(
-                "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)"
-            ),
+            execute_source.index("before = call_feedback(feedback_service)"),
+            execute_source.index("output_path, output_file, writer = open_output(args)"),
         )
         self.assertLess(
             execute_source.index(
-                "call_movej(movej_service, LEFT_HOME_JOINTS, args, arm_id=0)"
+                "call_movej(movej_service, solver.initial_joints, args, arm_id=1)"
             ),
             execute_source.index("set_teleop(teleop_service, True)"),
         )

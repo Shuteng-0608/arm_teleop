@@ -46,7 +46,7 @@ joint_limits:
   - {min: 0.0, max: 2.26}
   - {min: -3.14159265359, max: 3.14159265359} # -PI 到 PI
   - {min: -1.22, max: 1.22}
-  - {min: -0.5235987756, max: 0.5235987756} # -PI/6 到 PI/6
+  - {min: -0.523, max: 0.523} # Adopted selector execution range
 
 # joint_limits:
 #   - {min: -3.1, max: 3.1} # -PI/2 到 PI/2

@@ -146,6 +146,38 @@ const char* selectionStatusName(
     return "unknown";
 }
 
+const char* selectorHoldReasonName(
+    arm_kinematics::redundancy::SelectorHoldReason reason) {
+    using arm_kinematics::redundancy::SelectorHoldReason;
+    switch (reason) {
+        case SelectorHoldReason::kNone:
+            return "none";
+        case SelectorHoldReason::kInvalidHistory:
+            return "invalid_history";
+        case SelectorHoldReason::kInvalidTimestamp:
+            return "invalid_timestamp";
+        case SelectorHoldReason::kInvalidTarget:
+            return "invalid_target";
+        case SelectorHoldReason::kEmptyPhi1:
+            return "empty_phi1";
+        case SelectorHoldReason::kMotionBudgetExceeded:
+            return "motion_budget_exceeded";
+        case SelectorHoldReason::kMotionDomainFailure:
+            return "motion_domain_failure";
+        case SelectorHoldReason::kWristDomainFailure:
+            return "wrist_domain_failure";
+        case SelectorHoldReason::kOffsetValidationFailure:
+            return "offset_validation_failure";
+        case SelectorHoldReason::kActuatorRoundTripFailure:
+            return "actuator_round_trip_failure";
+        case SelectorHoldReason::kDeadlineExceeded:
+            return "deadline_exceeded";
+        case SelectorHoldReason::kContinuitySafeFallbackUnavailable:
+            return "continuity_safe_fallback_unavailable";
+    }
+    return "unknown";
+}
+
 }  // namespace
 
 class ArmKinematicsServer {
@@ -154,6 +186,7 @@ private:
     
     ros::ServiceServer service_;
     CombinedSolver solver_;
+    StandardSolver standard_solver_;
     arm_kinematics::redundancy::RedundancyConfigurationSelector
         redundancy_selector_a1_;
     arm_kinematics::redundancy::RedundancyConfigurationSelector
@@ -167,6 +200,7 @@ public:
         const std::string& config_path,
         const std::string& selector_config_path)
         : solver_(config_path),
+          standard_solver_(config_path),
           redundancy_selector_a1_(
               config_path,
               selectorSettingsForMethod(selector_config_path, kA1Method)),
@@ -195,6 +229,42 @@ public:
         for (int joint = 0; joint < history.previous_joints.size(); ++joint) {
             history.previous_joints[joint] = initial_joints[joint];
         }
+
+        // The selector requires a standard-solution and baseline history even
+        // when the first target is static.  Mirror the initialization used by
+        // replay_redundancy_attribution_trajectories; otherwise the first
+        // static HOLD never gets a chance to make the missing history valid.
+        double standard_seed[7];
+        for (int joint = 0; joint < 7; ++joint) {
+            standard_seed[joint] = initial_joints[joint];
+        }
+        const auto standard_initialization = standard_solver_.computeIKVecRef(
+            target_pose,
+            standard_seed,
+            arm_angle,
+            std::nullopt);
+        if (!standard_initialization.is_valid) {
+            throw std::runtime_error(
+                "Failed to initialize redundancy selector standard history");
+        }
+        history.previous_standard_joints = jointAnglesToVector(
+            standard_initialization.final_solution);
+        history.previous_standard_joints_valid = true;
+        history.previous_baseline_standard_joints =
+            history.previous_standard_joints;
+        history.previous_baseline_standard_joints_valid = true;
+        history.previous_standard_redundancy_displacement.setZero();
+        history.previous_standard_redundancy_displacement_valid = true;
+        history.previous_baseline_joints = history.previous_joints;
+        history.previous_baseline_joints_valid = true;
+        history.previous_redundancy_displacement.setZero();
+        history.previous_redundancy_displacement_valid = true;
+        history.previous_redundancy_velocity.setZero();
+        history.previous_redundancy_velocity_valid = false;
+        history.previous_command_velocity.setZero();
+        history.previous_command_velocity_valid = true;
+        history.temporal_wrist_state =
+            arm_kinematics::redundancy::resetTemporalWristState();
         history.previous_arm_angle = arm_angle;
         history.previous_branch = inferBranch(history.previous_joints);
     }
@@ -403,6 +473,11 @@ public:
                 : redundancy_selector_refined_.select(selector_input);
             acceptSelectorResult(selector_history, Tee, selector_result);
             res.success = selector_result.has_executable_solution;
+            ROS_DEBUG(
+                "[right_arm_teleop] selector=%s status=%s hold_reason=%s",
+                selector_method.c_str(),
+                selectionStatusName(selector_result.status),
+                selectorHoldReasonName(selector_result.hold_reason));
             res.message = std::string(legacy_selector_alias
                                           ? "redundancy_selector:"
                                           : selector_method + ":") +
