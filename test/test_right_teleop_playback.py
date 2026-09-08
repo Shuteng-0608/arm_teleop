@@ -123,7 +123,7 @@ class RightTeleopPlaybackTest(unittest.TestCase):
             source,
         )
         self.assertIn('left_hold_joints = tuple(before["left"])', source)
-        self.assertEqual(source.count("left_hold_joints,\n"), 3)
+        self.assertEqual(source.count("left_hold_joints,\n"), 4)
         self.assertIn('parser.add_argument("--movej-vel", type=float, default=0.5)', source)
         self.assertIn('parser.add_argument("--movej-acc", type=float, default=5.0)', source)
         self.assertIn('parser.add_argument("--movej-jerk", type=float, default=10.0)', source)
@@ -150,14 +150,18 @@ class RightTeleopPlaybackTest(unittest.TestCase):
             execute_source.index(
                 "call_movej(movej_service, solver.initial_joints, args, arm_id=1)"
             ),
+            execute_source.index("first_result = solver.solve(first_frame, first_target)"),
+        )
+        self.assertLess(
+            execute_source.index("first_result = solver.solve(first_frame, first_target)"),
             execute_source.index("set_teleop(teleop_service, True)"),
         )
         self.assertLess(
             execute_source.index("set_teleop(teleop_service, True)"),
-            execute_source.index("for frame in frames:"),
+            execute_source.index("for frame in frames[1:]:"),
         )
         self.assertLess(
-            execute_source.index("for frame in frames:"),
+            execute_source.index("for frame in frames[1:]:"),
             execute_source.index("result = solver.solve(frame, target)"),
         )
 

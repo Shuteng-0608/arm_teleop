@@ -401,12 +401,44 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         # Move only the right arm. The left-arm fields in the fixed-size dual-arm
         # message retain the measured pose from before playback.
         call_movej(movej_service, solver.initial_joints, args, arm_id=1)
+
+        # Resolve the startup frame before the playback clock begins.  The first
+        # call may include one-time service/solver initialization and must not be
+        # rejected as a late 30 Hz trajectory frame.
+        first_frame = frames[0]
+        first_target = target_for_frame(first_frame, mapper)
+        first_result = solver.solve(first_frame, first_target)
+
         set_teleop(teleop_service, True)
         teleop_started = True
         playback_start = time.monotonic()
-        source_start = frames[0].timestamp
+        source_start = first_frame.timestamp
 
-        for frame in frames:
+        publisher.publish(
+            make_message(
+                first_frame.index,
+                first_result["joints"],
+                left_hold_joints,
+                head_z_rotation,
+            )
+        )
+        first_publish_at = time.monotonic()
+        first_publish_lateness = first_publish_at - playback_start
+        writer.writerow(
+            result_row(
+                input_path,
+                source_summary,
+                first_frame,
+                first_target,
+                first_result,
+                0.0,
+                first_publish_at - playback_start,
+                first_publish_lateness,
+            )
+        )
+        completed = 1
+
+        for frame in frames[1:]:
             deadline = playback_start + frame.timestamp - source_start
             wait_until(deadline)
             solver_started = time.monotonic()
