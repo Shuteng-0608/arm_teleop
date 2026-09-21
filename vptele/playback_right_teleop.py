@@ -46,7 +46,7 @@ def default_input_path():
 
     default_trajectory = (
         "/home/pangu/arm_lib/Arm_kinematics_cal_cpp/examples/"
-        "redundancy_selector/r50_trigger_demo/R30_upper_xz_balanced.csv"
+        "redundancy_selector/r50_trigger_demo/R30_upper_xz_22205.csv"
     )
     relative_trajectory = os.path.join(
         package_root(),
@@ -55,14 +55,14 @@ def default_input_path():
         "examples",
         "redundancy_selector",
         "r50_trigger_demo",
-        "R30_upper_xz_balanced.csv",
+        "R30_upper_xz_22205.csv",
     )
     candidates = (
         default_trajectory,
-        os.path.join(package_root(), "data_log", "R30_upper_xz_balanced.csv"),
+        os.path.join(package_root(), "data_log", "R30_upper_xz_22205.csv"),
         relative_trajectory,
         "/home/pangu/pangu/src/Arm_kinematics_cal_cpp/examples/"
-        "redundancy_selector/r50_trigger_demo/R30_upper_xz_balanced.csv",
+        "redundancy_selector/r50_trigger_demo/R30_upper_xz_22205.csv",
     )
     for candidate in candidates:
         if os.path.isfile(candidate):
