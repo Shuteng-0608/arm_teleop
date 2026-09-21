@@ -510,6 +510,13 @@ def main():
     args = parse_args()
     input_path = os.path.abspath(args.input)
     frames, source_summary = load_teleop_trajectory(input_path)
+    # Validate the initialization against the shared IK limits BEFORE any ROS
+    # call/MoveJ. The legacy 22205 default is not admissible under q2 <= 0.
+    validate_online_solution(
+        frames[0].initial_joints
+        if frames[0].initial_joints is not None
+        else R30_BALANCED_INITIAL_RIGHT_JOINTS
+    )
     mapper = (
         RightArmTrajectoryMapper(frames[0].transform)
         if frames[0].transform is not None

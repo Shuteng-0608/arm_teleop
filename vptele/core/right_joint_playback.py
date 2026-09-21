@@ -2,17 +2,22 @@ import csv
 import hashlib
 import math
 from dataclasses import dataclass
+from pathlib import Path
+import yaml
 
 
-JOINT_LIMITS = (
-    (-3.1, 3.1),
-    (-3.1, 3.1),
-    (-3.1, 3.1),
-    (0.0, 2.26),
-    (-3.1, 3.1),
-    (-1.22, 1.22),
-    (-0.7853981633974483, 0.7853981633974483),
-)
+def load_joint_limits():
+    # Same package YAML as ik_service_right_node's default configuration.
+    path = Path(__file__).resolve().parents[2] / "config/kinematics_params.yaml"
+    with path.open(encoding="utf-8") as stream:
+        values = yaml.safe_load(stream)["joint_limits"]
+    limits = tuple((float(row["min"]), float(row["max"])) for row in values)
+    if len(limits) != 7 or any(not math.isfinite(lo + hi) or lo >= hi for lo, hi in limits):
+        raise ValueError("kinematics config must define seven finite joint limits")
+    return limits
+
+
+JOINT_LIMITS = load_joint_limits()
 EXPECTED_SOURCE_SHA256 = (
     "84f41a2dba293eaa2fbd0c9286ecab18b754bb321dd67dfa7b1bf60ffe4ce10b"
 )
