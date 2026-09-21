@@ -19,6 +19,7 @@ from core.right_arm_trajectory import (
     R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE,
     R30_BALANCED_INITIAL_RIGHT_JOINTS,
     RightArmTrajectoryMapper,
+    default_right_trajectory_path,
 )
 from core.right_teleop_playback import (
     load_teleop_trajectory,
@@ -40,35 +41,7 @@ def package_root():
 
 
 def default_input_path():
-    configured = os.environ.get("ARM_TELEOP_TRAJECTORY_CSV")
-    if configured:
-        return os.path.abspath(configured)
-
-    default_trajectory = (
-        "/home/pangu/arm_lib/Arm_kinematics_cal_cpp/examples/"
-        "redundancy_selector/r50_trigger_demo/R30_upper_xz_22205.csv"
-    )
-    relative_trajectory = os.path.join(
-        package_root(),
-        "..",
-        "Arm_kinematics_cal_cpp",
-        "examples",
-        "redundancy_selector",
-        "r50_trigger_demo",
-        "R30_upper_xz_22205.csv",
-    )
-    candidates = (
-        default_trajectory,
-        os.path.join(package_root(), "data_log", "R30_upper_xz_22205.csv"),
-        relative_trajectory,
-        "/home/pangu/pangu/src/Arm_kinematics_cal_cpp/examples/"
-        "redundancy_selector/r50_trigger_demo/R30_upper_xz_22205.csv",
-    )
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-    # Keep the error at the CSV loader, where the missing path is actionable.
-    return candidates[0]
+    return default_right_trajectory_path()
 
 
 def timestamped_output(suffix):
@@ -511,7 +484,7 @@ def main():
     input_path = os.path.abspath(args.input)
     frames, source_summary = load_teleop_trajectory(input_path)
     # Validate the initialization against the shared IK limits BEFORE any ROS
-    # call/MoveJ. The legacy 22205 default is not admissible under q2 <= 0.
+    # call/MoveJ. The bundled 7790 seed satisfies the unified q2 <= 0 policy.
     validate_online_solution(
         frames[0].initial_joints
         if frames[0].initial_joints is not None

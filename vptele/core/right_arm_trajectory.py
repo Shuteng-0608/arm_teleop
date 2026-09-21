@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -21,22 +22,32 @@ INITIAL_RIGHT_JOINTS = np.array(
 )
 INITIAL_RIGHT_ARM_ANGLE = -0.7
 
-# Initial executable state paired with candidate 22205 in R30_upper_xz_22205.csv.
+# Initial executable state paired with R30_pose_7790_engineering.csv.
 # Raw CSV has no IK history. Use Offset joints and the Standard selector arm
-# angle recorded in R30_upper_xz_22205_geometry.json; units are radians.
+# angle (NOT Offset FK arm angle); units are radians. See experiments/r30_pose_7790.
 R30_BALANCED_INITIAL_RIGHT_JOINTS = np.array(
     [
-        0.04655617821291043,
-        0.06699311968130774,
-        0.42473215492166627,
-        1.4533704244075891,
-        -0.7389712867175264,
-        -0.9277928319910016,
-        0.11098452044740072,
+        0.0591851471685264,
+        -0.4778074189685440,
+        -0.2609128124230255,
+        1.4799132169734923,
+        -0.8665106234837223,
+        -0.8948895987437119,
+        0.1714909921362970,
     ],
     dtype=float,
 )
-R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE = 0.1308996938995747
+R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE = -0.7853981633974482
+
+
+def default_right_trajectory_path():
+    """Use the versioned experiment input; preserve explicit environment override."""
+    configured = os.environ.get("ARM_TELEOP_TRAJECTORY_CSV")
+    if configured:
+        return os.path.abspath(configured)
+    package = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(package, "experiments", "r30_pose_7790", "R30_pose_7790_engineering.csv")
+
 
 _RIGHT_HAND_REFERENCE_ROTATION = np.array(
     [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],

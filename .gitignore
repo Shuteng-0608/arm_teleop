@@ -176,3 +176,6 @@ downloads/
 generated/
 output/
 results/
+
+# Versioned deployment input, not a runtime log.
+!/experiments/r30_pose_7790/R30_pose_7790_engineering.csv

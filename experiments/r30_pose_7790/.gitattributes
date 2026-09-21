@@ -1,0 +1,2 @@
+# Preserve the original generator's CRLF bytes and verified SHA256 on checkout.
+R30_pose_7790_engineering.csv -text whitespace=cr-at-eol

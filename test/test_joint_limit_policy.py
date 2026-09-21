@@ -17,8 +17,15 @@ class JointLimitPolicyTest(unittest.TestCase):
         ))
 
     def test_22205_is_rejected(self):
+        legacy_22205 = [0.04655617821291043, 0.06699311968130774,
+                        0.42473215492166627, 1.4533704244075891,
+                        -0.7389712867175264, -0.9277928319910016,
+                        0.11098452044740072]
         with self.assertRaisesRegex(ValueError, "q2=.*outside"):
-            validate_online_solution(R30_BALANCED_INITIAL_RIGHT_JOINTS)
+            validate_online_solution(legacy_22205)
+
+    def test_7790_initialization_is_accepted(self):
+        validate_online_solution(R30_BALANCED_INITIAL_RIGHT_JOINTS)
 
     def test_boundaries_are_accepted(self):
         for side in (0, 1):
