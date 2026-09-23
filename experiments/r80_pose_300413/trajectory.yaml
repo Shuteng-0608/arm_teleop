@@ -1,0 +1,52 @@
+api_version: trajectory_csv/v2
+engineering_profile: vision_pro_right_hand_30hz_15s_v1
+name: r80_pose_300413_clearance_candidate
+trajectory:
+  sample_rate_hz: 30
+  coordinate_frame: vision_pro_delta
+  interpolation:
+    type: printer_lookahead
+    target_linear_speed_m_s: 0.03
+    max_linear_accel_m_s2: 0.25
+    square_corner_speed_m_s: 0.05
+    max_angular_speed_deg_s: 30.0
+    max_angular_accel_deg_s2: 90.0
+left_hand:
+  mode: hold_initial
+right_hand:
+  mode: waypoints
+  orientation:
+    mode: fixed_initial
+  waypoints:
+  - name: initial_center
+    position_delta_m:
+    - 0.0
+    - 0.0
+    - 0.0
+    hold_s: 15.0
+  - name: circle_start
+    position_delta_m:
+    - 0.08
+    - 0.0
+    - 0.0
+    stop: true
+  - name: circle_complete
+    circle:
+      center_delta_m:
+      - 0.0
+      - 0.0
+      - 0.0
+      normal:
+      - 0.0
+      - 1.0
+      - 0.0
+      turns: 1.0
+      direction: clockwise
+    stop: true
+  - name: final_center
+    position_delta_m:
+    - 0.0
+    - 0.0
+    - 0.0
+    hold_s: 2.0
+    stop: true

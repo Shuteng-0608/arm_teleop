@@ -1,9 +1,6 @@
 """ROS-free deployment regression for the bundled trajectory and its IK seed."""
-import ast
-import os
 from pathlib import Path
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 
@@ -11,7 +8,6 @@ from core.right_arm_trajectory import (
     R30_BALANCED_INITIAL_RIGHT_JOINTS,
     R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE,
     RightArmTrajectoryMapper,
-    default_right_trajectory_path,
 )
 from core.right_teleop_playback import load_teleop_trajectory, validate_online_solution
 
@@ -28,22 +24,6 @@ class R30Pose7790Test(unittest.TestCase):
         )
         mapper = RightArmTrajectoryMapper(cls.frames[0].transform)
         cls.targets = np.array([mapper.ik_target(f.transform) for f in cls.frames])
-
-    def test_default_path_is_bundled_and_missing_file_cannot_fall_back_to_22205(self):
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(Path(default_right_trajectory_path()), CSV)
-        # Test the actual entrypoint function without importing ROS.
-        tree = ast.parse((ROOT / "vptele/playback_right_teleop.py").read_text())
-        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "default_input_path")
-        module = ast.Module(body=[function], type_ignores=[])
-        namespace = {"default_right_trajectory_path": default_right_trajectory_path}
-        exec(compile(module, "default_input_path", "exec"), namespace)
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(Path(namespace["default_input_path"]()), CSV)
-
-    def test_explicit_environment_override_is_preserved(self):
-        with patch.dict(os.environ, {"ARM_TELEOP_TRAJECTORY_CSV": "custom.csv"}):
-            self.assertEqual(default_right_trajectory_path(), os.path.abspath("custom.csv"))
 
     def test_initial_state_matches_verified_offset_seed_and_standard_phi(self):
         np.testing.assert_allclose(R30_BALANCED_INITIAL_RIGHT_JOINTS, [

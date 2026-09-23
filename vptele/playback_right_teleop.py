@@ -16,8 +16,8 @@ from arm_teleop.srv import (
 )
 
 from core.right_arm_trajectory import (
-    R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE,
-    R30_BALANCED_INITIAL_RIGHT_JOINTS,
+    R80_CLEARANCE_INITIAL_RIGHT_ARM_ANGLE,
+    R80_CLEARANCE_INITIAL_RIGHT_JOINTS,
     RightArmTrajectoryMapper,
     default_right_trajectory_path,
 )
@@ -157,13 +157,13 @@ class OnlineRedundancySolver:
             for value in (
                 initial_joints
                 if initial_joints is not None
-                else R30_BALANCED_INITIAL_RIGHT_JOINTS
+                else R80_CLEARANCE_INITIAL_RIGHT_JOINTS
             )
         )
         self.initial_arm_angle = float(
             initial_arm_angle
             if initial_arm_angle is not None
-            else R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE
+            else R80_CLEARANCE_INITIAL_RIGHT_ARM_ANGLE
         )
         self.previous_request_joints = rounded_solver_state(self.initial_joints)
         self.previous_output_joints = None
@@ -484,11 +484,11 @@ def main():
     input_path = os.path.abspath(args.input)
     frames, source_summary = load_teleop_trajectory(input_path)
     # Validate the initialization against the shared IK limits BEFORE any ROS
-    # call/MoveJ. The bundled 7790 seed satisfies the unified q2 <= 0 policy.
+    # call/MoveJ. The bundled 300413 seed satisfies the unified q2 <= 0 policy.
     validate_online_solution(
         frames[0].initial_joints
         if frames[0].initial_joints is not None
-        else R30_BALANCED_INITIAL_RIGHT_JOINTS
+        else R80_CLEARANCE_INITIAL_RIGHT_JOINTS
     )
     mapper = (
         RightArmTrajectoryMapper(frames[0].transform)

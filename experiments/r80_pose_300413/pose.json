@@ -1,0 +1,52 @@
+{
+  "candidate_id": 300413,
+  "label": "balanced_fixed_center",
+  "source_stage": "fine",
+  "initial_joints_rad": [
+    0.0373064520992315,
+    -0.4888033056593821,
+    -0.3525297378433601,
+    1.4714625102873358,
+    -0.0006633785666672,
+    -0.6438443410081743,
+    0.136847590797419
+  ],
+  "initial_standard_seed_rad": [
+    0.0304568296654734,
+    -0.4910168594167288,
+    -0.3493252268841702,
+    1.5057311148202928,
+    -0.0006609359617936,
+    -0.6160122614192548,
+    0.1368475907974189
+  ],
+  "initial_standard_arm_angle_rad": -0.8290313946973062,
+  "initial_branch": 0,
+  "center_m": [
+    0.3010999999999999,
+    -0.3579999999999999,
+    0.2281999999999999
+  ],
+  "target_quaternion_wxyz": [
+    -0.4991724728650116,
+    0.7872850642650459,
+    -0.0477387377233636,
+    -0.3587897474003286
+  ],
+  "orientation_change_deg": 52.0042024181371,
+  "radius_mm": 80,
+  "frames": 1186,
+  "duration_s": 39.5,
+  "initial_hold_s": 15,
+  "motion_s": 22.5,
+  "final_hold_s": 2,
+  "physical_safety_validated": false,
+  "requires_initial_joint_and_arm_angle_update": true,
+  "engineering_csv": "R80_pose_300413_engineering.csv",
+  "csv_sha256": "40c71bce5f56c634bbc52c1e553b60dcd919a865e980d5cc288277d5c0e79e96",
+  "generator": "/Users/chen/Desktop/trajectory_generator/scripts/generate_engineering_csv.py",
+  "generator_sha256": "361aa17b67fcdc5b01031495fecaa9dc906465dbd93edddefdf91e2b1a59aaaf",
+  "non_rotation_columns_unchanged": true,
+  "upper_mapper_roundtrip_passed": true,
+  "full_replay_passed": true
+}

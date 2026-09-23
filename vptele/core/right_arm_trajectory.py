@@ -22,7 +22,7 @@ INITIAL_RIGHT_JOINTS = np.array(
 )
 INITIAL_RIGHT_ARM_ANGLE = -0.7
 
-# Initial executable state paired with R30_pose_7790_engineering.csv.
+# Historical executable state paired with R30_pose_7790_engineering.csv.
 # Raw CSV has no IK history. Use Offset joints and the Standard selector arm
 # angle (NOT Offset FK arm angle); units are radians. See experiments/r30_pose_7790.
 R30_BALANCED_INITIAL_RIGHT_JOINTS = np.array(
@@ -40,13 +40,32 @@ R30_BALANCED_INITIAL_RIGHT_JOINTS = np.array(
 R30_BALANCED_INITIAL_RIGHT_ARM_ANGLE = -0.7853981633974482
 
 
+# Current playback experiment: R80 / pose 300413. Offset execution joints and
+# Standard selector arm angle, in radians. Keep the historical R30 seed above
+# unchanged; raw engineering CSVs do not carry their own IK initialization.
+# Provenance and full initialization: experiments/r80_pose_300413/pose.json.
+R80_CLEARANCE_INITIAL_RIGHT_JOINTS = np.array(
+    [
+        0.0373064520992315,
+        -0.4888033056593821,
+        -0.3525297378433601,
+        1.4714625102873358,
+        -0.0006633785666672,
+        -0.6438443410081743,
+        0.1368475907974190,
+    ],
+    dtype=float,
+)
+R80_CLEARANCE_INITIAL_RIGHT_ARM_ANGLE = -0.8290313946973062
+
+
 def default_right_trajectory_path():
     """Use the versioned experiment input; preserve explicit environment override."""
     configured = os.environ.get("ARM_TELEOP_TRAJECTORY_CSV")
     if configured:
         return os.path.abspath(configured)
     package = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(package, "experiments", "r30_pose_7790", "R30_pose_7790_engineering.csv")
+    return os.path.join(package, "experiments", "r80_pose_300413", "R80_pose_300413_engineering.csv")
 
 
 _RIGHT_HAND_REFERENCE_ROTATION = np.array(
