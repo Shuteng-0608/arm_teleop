@@ -8,6 +8,7 @@
 #include "arm_kinematics/redundancy/redundancy_selector_config.h"
 #include <ros/package.h>
 #include <cmath>
+#include <chrono>
 #include <stdexcept>
 #include <string>
 using namespace arm_kinematics;
@@ -468,9 +469,23 @@ public:
                 selector_history, Tee, init_joints_array, req.current_arm_angle);
             const SelectorInput selector_input = makeSelectorInput(
                 selector_history, Tee);
+            const auto selector_started = std::chrono::steady_clock::now();
             const auto selector_result = selector_method == kA1Method
                 ? redundancy_selector_a1_.select(selector_input)
                 : redundancy_selector_refined_.select(selector_input);
+            res.selector_call_us = std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - selector_started).count();
+            const auto& timing = selector_result.diagnostics;
+            res.timing_valid = true;
+            res.target_is_moving = timing.target_is_moving;
+            res.timing_runtime_mode = "execution";
+            res.selector_elapsed_us = timing.elapsed_microseconds;
+            res.context_build_us = timing.context_build_microseconds;
+            res.phi1_us = timing.phi1_microseconds;
+            res.phi2_us = timing.phi2_microseconds;
+            res.motion_selection_us = timing.motion_selection_microseconds;
+            res.offset_execution_us = timing.offset_execution_microseconds;
+            res.actuator_conversion_us = timing.actuator_conversion_microseconds;
             acceptSelectorResult(selector_history, Tee, selector_result);
             res.success = selector_result.has_executable_solution;
             ROS_DEBUG(

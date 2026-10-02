@@ -10,3 +10,16 @@ float64 new_arm_angle # 新的手臂角度
 bool success           # 是否求解成功
 string message         # 详细结果信息
 int32 search_cnt
+# Per-call selector diagnostics (microseconds). Unsupported/legacy methods leave
+# timing_valid=false. Stage zeros mean unrecorded/not reached, not a free solve.
+bool timing_valid
+bool target_is_moving
+string timing_runtime_mode
+float64 selector_call_us
+float64 selector_elapsed_us
+float64 context_build_us
+float64 phi1_us
+float64 phi2_us
+float64 motion_selection_us
+float64 offset_execution_us
+float64 actuator_conversion_us

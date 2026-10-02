@@ -26,6 +26,7 @@ from core.right_teleop_playback import (
     rounded_solver_state,
     validate_online_solution,
 )
+from core.ik_timing import SERVER_TIMES, TimingRecorder, capture
 from playback_right_joint_trajectory import (
     call_feedback,
     call_movej,
@@ -124,6 +125,7 @@ def output_fields():
         "publish_lateness_s",
     ]
     fields.extend("q{}".format(index) for index in range(1, 8))
+    fields.extend(("timing_valid", "target_is_moving", "timing_runtime_mode") + SERVER_TIMES)
     return fields
 
 
@@ -169,6 +171,8 @@ class OnlineRedundancySolver:
         self.previous_output_joints = None
         self.previous_arm_angle = self.initial_arm_angle
         self.previous_source_timestamp = None
+        self.timing_recorder = None
+        self.call_count = 0
 
     def solve(self, frame, target):
         request = make_ik_request(
@@ -178,9 +182,23 @@ class OnlineRedundancySolver:
             self.ik_method,
         )
         started = time.monotonic()
-        response = self.service.call(request)
-        print("Called IK service for frame {}: {}".format(frame.index, response.message))
+        try:
+            response = self.service.call(request)
+        except Exception as error:
+            latency_us = (time.monotonic() - started) * 1.0e6
+            timing = capture(frame, self.ik_method, latency_us, error=error,
+                             startup=self.call_count == 0)
+            self.call_count += 1
+            if self.timing_recorder is not None:
+                self.timing_recorder.record(timing)
+            raise
         latency_us = (time.monotonic() - started) * 1.0e6
+        timing = capture(frame, self.ik_method, latency_us, response=response,
+                         startup=self.call_count == 0)
+        self.call_count += 1
+        if self.timing_recorder is not None:
+            self.timing_recorder.record(timing)
+        print("Called IK service for frame {}: {}".format(frame.index, response.message))
         status = str(response.message)
         if not response.success:
             raise RuntimeError(
@@ -219,6 +237,7 @@ class OnlineRedundancySolver:
             "status": status,
             "method": self.ik_method,
             "latency_us": latency_us,
+            "timing": timing,
             "maximum_step": transition.maximum_step,
             "maximum_velocity": transition.maximum_velocity,
         }
@@ -258,6 +277,8 @@ def result_row(
     }
     for index, value in enumerate(result["joints"], start=1):
         row["q{}".format(index)] = value
+    for name in ("timing_valid", "target_is_moving", "timing_runtime_mode") + SERVER_TIMES:
+        row[name] = result.get("timing", {}).get(name, "")
     return row
 
 
@@ -277,6 +298,24 @@ def wait_for_ik_service(args):
     return rospy.ServiceProxy(args.right_ik_service, ArmIK, persistent=True)
 
 
+def attach_timing(solver, output_path, output_file):
+    try:
+        solver.timing_recorder = TimingRecorder(output_path)
+    except Exception:
+        output_file.close()
+        raise
+
+
+def finish_timing(solver):
+    try:
+        solver.timing_recorder.close()
+        rospy.loginfo("Per-call IK timing: %s; summary: %s",
+                      solver.timing_recorder.path, solver.timing_recorder.summary_path)
+    except Exception as error:
+        # Never mask the original motion/service error or interrupt stop handling.
+        rospy.logerr("Failed to save IK timing: %s", error)
+
+
 def target_for_frame(frame, mapper):
     if frame.target_pose is not None:
         return frame.target_pose
@@ -294,6 +333,7 @@ def run_ik_only(args, input_path, frames, source_summary, mapper):
         frames[0].initial_arm_angle,
     )
     output_path, output_file, writer = open_output(args)
+    attach_timing(solver, output_path, output_file)
     maximum_latency = 0.0
     try:
         for frame in frames:
@@ -307,6 +347,7 @@ def run_ik_only(args, input_path, frames, source_summary, mapper):
                 output_file.flush()
     finally:
         output_file.close()
+        finish_timing(solver)
     rospy.loginfo(
         "Online IK-only check solved %d frames; max latency %.3f us; output %s",
         len(frames),
@@ -351,11 +392,15 @@ def run_execute(args, input_path, frames, source_summary, mapper):
         )
 
     output_path, output_file, writer = open_output(args)
+    attach_timing(solver, output_path, output_file)
     left_hold_joints = tuple(before["left"])
     head_z_rotation = before["others"][4] / 0.8
     audit = {
         "source_trajectory": source_summary.__dict__,
         "calculation_output": output_path,
+        "timing_output": solver.timing_recorder.path,
+        "timing_summary": solver.timing_recorder.summary_path,
+        "timing_summary_csv": solver.timing_recorder.summary_csv_path,
         "started_at": datetime.now().isoformat(),
         "right_initial_joints": list(solver.initial_joints),
         "left_hold_joints": left_hold_joints,
@@ -469,6 +514,7 @@ def run_execute(args, input_path, frames, source_summary, mapper):
                 set_teleop(teleop_service, False)
             except Exception as error:
                 rospy.logerr("Failed to stop lower-controller teleop: %s", error)
+        finish_timing(solver)
         audit["teleop_started"] = teleop_started
         audit["teleop_stop_requested"] = teleop_started
         audit["completed_frames"] = completed
