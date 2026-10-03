@@ -179,6 +179,37 @@ const char* selectorHoldReasonName(
     return "unknown";
 }
 
+const char* paperSelectorModeName(arm_kinematics::redundancy::SelectorMode mode) {
+    using arm_kinematics::redundancy::SelectorMode;
+    switch (mode) {
+        case SelectorMode::kInitializing: return "initializing";
+        case SelectorMode::kStaticHold: return "static_hold";
+        case SelectorMode::kNormal: return "normal";
+        case SelectorMode::kSaturated: return "saturated";
+        case SelectorMode::kGuardActive: return "guard";
+        case SelectorMode::kHold: return "hold";
+    }
+    return "unknown";
+}
+
+const char* wristSkipReasonName(arm_kinematics::redundancy::NoSufficientCandidateReason reason) {
+    using arm_kinematics::redundancy::NoSufficientCandidateReason;
+    switch (reason) {
+        case NoSufficientCandidateReason::kNone: return "none";
+        case NoSufficientCandidateReason::kCooldown: return "cooldown";
+        case NoSufficientCandidateReason::kBaselineSaturated: return "baseline_saturated";
+        case NoSufficientCandidateReason::kRequiredGapBelowZero: return "required_gap_below_zero";
+        case NoSufficientCandidateReason::kImprovementDomainEmpty: return "improvement_domain_empty";
+        case NoSufficientCandidateReason::kMotionDomainFailure: return "motion_domain_failure";
+        case NoSufficientCandidateReason::kOffsetValidationFailure: return "offset_validation_failure";
+        case NoSufficientCandidateReason::kActualGainInsufficient: return "actual_gain_insufficient";
+        case NoSufficientCandidateReason::kContinuityRejected: return "continuity_rejected";
+        case NoSufficientCandidateReason::kTemporalRejected: return "temporal_rejected";
+        case NoSufficientCandidateReason::kGuardActive: return "guard";
+    }
+    return "unknown";
+}
+
 }  // namespace
 
 class ArmKinematicsServer {
@@ -486,6 +517,22 @@ public:
             res.motion_selection_us = timing.motion_selection_microseconds;
             res.offset_execution_us = timing.offset_execution_microseconds;
             res.actuator_conversion_us = timing.actuator_conversion_microseconds;
+            res.timing_schema_version = 2;
+            res.paper_timing_valid = timing.paper_timing_valid;
+            res.stage1_baseline_us = timing.paper_stage_microseconds[0];
+            res.stage2_gate_us = timing.paper_stage_microseconds[1];
+            res.stage3_motion_domain_us = timing.paper_stage_microseconds[2];
+            res.stage4_wrist_candidates_us = timing.paper_stage_microseconds[3];
+            res.stage5_temporal_selection_us = timing.paper_stage_microseconds[4];
+            res.stage1_executed = timing.paper_stage_executed[0];
+            res.stage2_executed = timing.paper_stage_executed[1];
+            res.stage3_executed = timing.paper_stage_executed[2];
+            res.stage4_executed = timing.paper_stage_executed[3];
+            res.stage5_executed = timing.paper_stage_executed[4];
+            res.selector_other_us = timing.paper_other_microseconds;
+            res.selector_mode = paperSelectorModeName(selector_result.mode);
+            res.wrist_skip_reason = wristSkipReasonName(
+                timing.no_sufficient_candidate_reason);
             acceptSelectorResult(selector_history, Tee, selector_result);
             res.success = selector_result.has_executable_solution;
             ROS_DEBUG(

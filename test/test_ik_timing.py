@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from core.ik_timing import SERVER_TIMES, STAGES, TimingRecorder, capture, summarize
+from core.ik_timing import (SERVER_TIMES, STAGES, PAPER_STAGES, PAPER_TIMES,
+                           PAPER_FLAGS, RESPONSE_FIELDS, TIMES, TimingRecorder, capture, summarize)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,7 +26,7 @@ class TimingTests(unittest.TestCase):
     def test_fields_match_service_and_cpp_mapping(self):
         srv = (ROOT/'srv/ArmIK.srv').read_text().split('---')[1]
         cpp = (ROOT/'src/ik_service.cpp').read_text()
-        for field in SERVER_TIMES:
+        for field in SERVER_TIMES + PAPER_TIMES:
             self.assertIn('float64 '+field, srv)
             self.assertIn('res.'+field+' =', cpp)
 
@@ -68,7 +69,7 @@ class TimingTests(unittest.TestCase):
             with open(recorder.summary_path) as f:
                 self.assertEqual(json.load(f)['groups']['all_calls']['calls'], 1)
             with open(recorder.summary_csv_path) as f:
-                self.assertEqual(len(list(csv.DictReader(f))), 7*(len(SERVER_TIMES)+1))
+                self.assertEqual(len(list(csv.DictReader(f))), 7*len(TIMES))
             with self.assertRaises(FileExistsError):
                 TimingRecorder(path)
 
@@ -79,7 +80,7 @@ class TimingTests(unittest.TestCase):
         nodes = [x for x in tree.body if isinstance(x, (ast.ClassDef,ast.FunctionDef))
                  and x.name in ('OnlineRedundancySolver','result_row','output_fields')]
         namespace = dict(time=SimpleNamespace(monotonic=mock.Mock(side_effect=[2.,2.001])),
-                         capture=capture, SERVER_TIMES=SERVER_TIMES,
+                         capture=capture, RESPONSE_FIELDS=RESPONSE_FIELDS,
                          rounded_solver_state=lambda q: tuple(q),
                          make_ik_request=lambda *a: a,
                          validate_online_solution=lambda *a: (tuple(a[0]),SimpleNamespace(maximum_step=0.,maximum_velocity=0.)))
@@ -113,6 +114,50 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(set(row),set(ns['output_fields']()))
         self.assertEqual(row['phi1_us'],10.)
         self.assertEqual(row['timing_runtime_mode'],'execution')
+
+    def paper_response(self, skipped=False, **overrides):
+        values = dict(zip(PAPER_STAGES, [10., 1., 0. if skipped else 2.,
+                                         0. if skipped else 3., 1.]))
+        values.update(zip(PAPER_FLAGS, [True, True, not skipped, not skipped, True]))
+        values.update(timing_schema_version=2, paper_timing_valid=True,
+                      selector_other_us=4., selector_mode='normal', wrist_skip_reason='none')
+        values['selector_elapsed_us'] = sum(values[key] for key in PAPER_TIMES)
+        values.update(overrides)
+        return response(**values)
+
+    def test_paper_executed_statistics_and_sum(self):
+        frame = SimpleNamespace(index=1, timestamp=.1)
+        # An executed search counts even when the result is fallback_baseline.
+        rows = [capture(frame, 'P', 50, self.paper_response()),
+                capture(frame, 'P', 50, self.paper_response(skipped=True)),
+                capture(frame, 'P', 50, response())]
+        self.assertTrue(rows[0]['paper_timing_valid'])
+        self.assertFalse(rows[2]['paper_timing_valid'])
+        s = summarize(rows)['groups']['moving_non_hold']
+        m = s['metrics_us']['stage4_wrist_candidates_us']
+        self.assertEqual((m['count'], m['skipped_count'], m['missing_count']), (1, 1, 1))
+        self.assertEqual(m['mean'], 3.)
+        self.assertEqual(m['mean_all_calls'], 1.5)
+        self.assertEqual(m['execution_rate'], .5)
+        self.assertAlmostEqual(sum(s['paper_time_fractions'].values()), 1.)
+
+    def test_bad_paper_data_preserves_total_timing(self):
+        for changes in ({'selector_other_us': 100.}, {'stage3_executed': False},
+                        {'stage1_baseline_us': float('nan')}, {'stage1_executed': None},
+                        {'stage4_wrist_candidates_us': -1.}):
+            row = capture(SimpleNamespace(index=1,timestamp=.1), 'P', 50,
+                          self.paper_response(**changes))
+            self.assertTrue(row['timing_valid'])
+            self.assertFalse(row['paper_timing_valid'])
+            self.assertTrue(row['paper_timing_error'])
+
+    def test_true_zero_duration_is_not_a_skipped_stage(self):
+        res = self.paper_response(stage4_wrist_candidates_us=0., selector_elapsed_us=18.)
+        row = capture(SimpleNamespace(index=1,timestamp=.1), 'P', 50, res)
+        m = summarize([row])['groups']['all_calls']['metrics_us']['stage4_wrist_candidates_us']
+        self.assertEqual(m['count'], 1)
+        self.assertEqual(m['mean'], 0.)
+        self.assertEqual(m['execution_rate'], 1.)
 
 
 if __name__ == '__main__':

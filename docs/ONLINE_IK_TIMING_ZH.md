@@ -1,10 +1,80 @@
 # 右臂在线回放：逐帧求解耗时记录
 
-2026-10-02。适用分支 `for_cjp`，A1 与 `minimum_sufficient_continuity_refined` 两种回放方法。
+更新：2026-10-03，计时 schema 2。适用分支 `for_cjp`，A1 与 `minimum_sufficient_continuity_refined`。
 
-修改前已通过 HTTPS `git fetch origin` 核对：本地与远端均为
-`c7b80f0867cbf24e6f7330266758ff4c86e6a698`，工作区干净、领先/落后均为 0。
-本次只在 Mac 修改上位机仓库；未连接设备、未推送。没有更改轨迹、初值、求解策略、运动预算、下位机或运动学仓库。
+修改前通过 HTTPS `git fetch origin` 确认上位机仓库本地与远端均为
+`95f17b080ee398d013e4e85732a4f4c248043fee`，工作区干净。
+本次在 Mac 修改上位机日志及运动学库内部计时；未连接设备，未修改下位机。
+运动学库已有的其他本地修改保留，不代表设备已经安装这些改动。
+
+## 五阶段计时（新版）
+
+旧六个模块字段保留，但不能用于五阶段占比。新增互斥计时，单位 µs：
+
+| 阶段 | 新字段 | 范围 |
+| --- | --- | --- |
+| 1 最小运动基准解 | `stage1_baseline_us` | 目标上下文、JointDomain、各分支 MinMotion、基准 Offset IK、SelectBaseline 及基准可执行性检查 |
+| 2 调控条件判断 | `stage2_gate_us` | 基准缺口、进入/维持阈值、饱和/冷却等判断及候选域参数准备 |
+| 3 运动允许域 | `stage3_motion_domain_us` | Phi_q 与分支、方向锁 |
+| 4 腕部改善候选 | `stage4_wrist_candidates_us` | WristDomain、域内 MinMotion、候选 Offset IK/复核与细化、PrepareCandidates |
+| 5 时序选择 | `stage5_temporal_selection_us` | 已准备候选的最终排序、TemporalSelect、基准回退、状态与输出关节赋值 |
+
+每帧还记录：
+
+- `stage1_executed` 至 `stage5_executed`：是否进入阶段，不等于是否最终采用候选。
+- `selector_other_us`：入口检查、最终执行器转换、通用结果整理等五阶段外开销。
+- `timing_schema_version=2`、`paper_timing_valid`：新计时版本与适用标记。
+- `selector_mode`、`wrist_skip_reason`：正常/静止/Guard/HOLD，以及饱和、冷却、改善域空、实际收益不足等原因。`none` 不代表必然采用了改善候选。
+- `paper_timing_error`：非法数值、执行标记矛盾或加总不闭合时填写；总耗时仍保留，错误阶段值不参与统计。
+
+逐帧检查：`selector_elapsed_us = 五阶段之和 + selector_other_us`。
+IK 已包含在阶段 1、4 中，不能再重复相加。`selector_call_us` 是更外层调用计时，
+`ik_latency_us` 还包含 ROS 往返；三个总量不能相加。旧阶段字段也不能与新五阶段混加。
+
+### 提前返回与 A1
+
+冻结策略因饱和、冷却等返回基准时，1、2、5 有计时，3、4 未执行且为零。
+执行搜索后未采用候选，搜索耗时仍计入。基准失败时只记录已执行阶段。
+静止帧在五阶段之前返回，五个执行标记均为 false，实际工作归入 other。
+
+A1 的现有实现仍会认证基准运动域、准备基准候选；这部分累加到阶段 1，
+不能把它标为腕部调控触发。A1 阶段 3、4 不执行。这是按功能累计，
+不要求阶段 1 在源码中只是一块连续代码。
+
+五阶段适用于 A1 与正常 minimum-sufficient 路径。Guard、continuity-first、
+stateful、offset-aware 或额外归因扫描的 `paper_timing_valid=false`，不混入五阶段统计；
+其总耗时仍记录，求解行为不变。
+
+### 新统计口径
+
+各新阶段 `mean/p50/p95/p99/max` 使用**实际执行帧**，包括时钟分辨率导致的真零。
+`executed_count/skipped_count/execution_rate` 给出执行次数、未执行次数及比例，
+分母为组内新计时有效的调用数。缺失或无效数据不算“未执行”。
+`mean_all_calls` 为将有效但未执行帧计零后的摊销均值。
+不能把阶段 3、4 的条件均值与其他阶段均值直接相加当作整帧均值。
+JSON 的 `paper_time_fractions` 使用同一有效帧集合的累计时间分配，包含 other，合计为 1。
+优先比较运动帧；首帧、静止帧和异常 HOLD 单独展示。
+
+### 部署必须配套更新运动学库
+
+仅改本仓库无法补齐计时：计时边界在运动学库 `select()` 内。
+必须先更新包含 `SelectorDiagnostics::paper_stage_microseconds` 等字段的运动学库
+（本地开发分支 `feature/redundancy-selector`），重新编译安装，再编译本仓库。
+配套运动学提交为 `3905f14`（五阶段计时）；本次发布未包含另行保留的本地浮点容差及 no-HOLD 诊断修改。
+头文件结构有变化，不能混用新头文件与旧二进制，也不能只换动态库保留旧客户端。
+在上位机正确的运动学仓库执行，`build` 替换为该机器既有的构建目录：
+
+```bash
+cmake --build build -j4
+sudo cmake --install build
+```
+
+沿用原 CMake 配置、安装前缀和权限；不是切换下位机 interaction 库。
+再按下一节编译上位机、重启所有 ArmIK 服务端及客户端。正常回放命令不变。
+本次未更改 CSV、初值或算法参数。默认仍为
+`experiments/r80_pose_300413/R80_pose_300413_engineering.csv`，SHA256：
+`40c71bce5f56c634bbc52c1e553b60dcd919a865e980d5cc288277d5c0e79e96`。
+若使用环境变量或 `--input` 覆盖路径，以 audit 为准。
 
 ## 使用方式
 
@@ -57,7 +127,7 @@ rosrun arm_teleop playback_right_teleop.py --ik-method minimum_sufficient_contin
 
 为减少回放中的磁盘操作，计时行暂存在内存，在正常退出或 Python 异常的 finally 中保存、统计；实机模式先尝试停止 tele，再写计时统计。强制杀进程、断电可能丢失尚未保存的计时；现阶段不是崩溃安全日志。
 
-## 记录什么
+## 总耗时与兼容保留的旧模块字段
 
 所有单位为微秒（us），使用单调时钟，不改变每帧求解次数。
 
@@ -73,17 +143,18 @@ rosrun arm_teleop playback_right_teleop.py --ik-method minimum_sufficient_contin
 | `offset_execution_us` | 库内 Offset 执行解相关阶段 |
 | `actuator_conversion_us` | 库内最终执行器转换相关阶段 |
 
-模块粒度与现有 Mac 数值回放导出的阶段计时一致，直接透传已有 diagnostics。
-不同策略走不同分支，这些字段不是每个函数互斥、无遗漏的 CPU 计时；不能直接求和画成占比总和 100%。
-例如腕部择优、偏置细化或时间策略可能包含在现有阶段范围内，本次没有虚构它们的独立耗时。
-阶段为零只能表示未记录或未到达该阶段，不能证明该模块执行只用了零时间。
+上述旧模块字段直接透传历史 diagnostics，仅保留兼容用途。
+不同策略走不同分支，这些旧字段不是互斥、无遗漏的阶段计时，不能相加画占比。
+旧字段为零仍可能表示漏记或未到达，不用于推断触发频率。
+论文五阶段改用本页开头列出的新字段和执行标记。
 
 上位机仍使用 `execution` 模式；不为了计时打开额外数值复核。与 Mac 的 `numerical_validation` 模式比较时，应注明两者检查工作量不同。设备安装的库必须包含上述 diagnostics 字段；本次没有远程核实已安装版本。
 
 ## 统计口径
 
 每个模块输出 `count / missing_count / zero_count / mean / p50 / p95 / p99 / max`。
-P50/P95/P99 使用排序样本的线性插值。阶段列的零值不参与均值和分位数；缺失或不合法服务端计时留空，不伪装成零。
+P50/P95/P99 使用排序样本的线性插值。只有旧阶段列排除零；新五阶段根据执行标记统计，
+真零仍保留。缺失或不合法计时留空，不伪装成零。
 
 - `all_calls`：全部调用，包含首帧。
 - `startup_calls`：第一次调用，单列观察启动影响。
@@ -104,4 +175,12 @@ PYTHONPATH=vptele python3 -m unittest discover -s test -p 'test_ik_timing.py' -v
 ```
 
 本地纯 Python 测试覆盖字段对应、异常/缺失数据、HOLD/静止/首帧分组、分位数、文件防覆盖，以及实际回放客户端类的成功、拒绝、通信异常路径（ROS I/O 替身，不是 ROS 通信测试）。
-Mac 未完成 ROS/catkin 编译和设备端通信验证；上机部署必须完成上述编译、重启并先核对 `_timing.csv` 中 `timing_valid=True`。
+2026-10-03 本地验证：Python 计时测试 10/10 通过，包含新字段映射、提前失败保留记录、
+真实零耗时与未执行区分、条件/摊销均值、无效计时不污染总时间等。
+运动学库及回放目标编译通过，选择器测试通过（包含新提前返回/加总断言）。
+R80 pose 300413 同一输入、两种方法各 1186 帧，计时修改前后全部非计时字段一致；
+五阶段加 other 逐帧闭合。数值回放的首帧为初始化记录，不当作真实 selector 调用。
+
+Mac 未完成 ROS/catkin 编译和设备端通信验证。部署后核对 `timing_schema_version=2`；
+正常运动帧 `timing_valid=True`、`paper_timing_valid=True`、`paper_timing_error` 为空，
+并核对实际 R80 CSV 哈希。Guard 等不适用路径应为 `paper_timing_valid=False`。

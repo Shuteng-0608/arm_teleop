@@ -23,3 +23,20 @@ float64 phi2_us
 float64 motion_selection_us
 float64 offset_execution_us
 float64 actuator_conversion_us
+# Exclusive five-stage paper timing, schema 2. Guard/unsupported profiles set
+# paper_timing_valid=false; static calls have no executed stages.
+uint32 timing_schema_version
+bool paper_timing_valid
+float64 stage1_baseline_us
+float64 stage2_gate_us
+float64 stage3_motion_domain_us
+float64 stage4_wrist_candidates_us
+float64 stage5_temporal_selection_us
+bool stage1_executed
+bool stage2_executed
+bool stage3_executed
+bool stage4_executed
+bool stage5_executed
+float64 selector_other_us
+string selector_mode
+string wrist_skip_reason

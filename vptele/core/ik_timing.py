@@ -9,10 +9,16 @@ STAGES = (
     "offset_execution_us", "actuator_conversion_us",
 )
 SERVER_TIMES = ("selector_call_us", "selector_elapsed_us") + STAGES
-TIMES = ("ik_latency_us",) + SERVER_TIMES
+PAPER_STAGES = ("stage1_baseline_us", "stage2_gate_us", "stage3_motion_domain_us",
+                "stage4_wrist_candidates_us", "stage5_temporal_selection_us")
+PAPER_FLAGS = tuple("stage%d_executed" % i for i in range(1, 6))
+PAPER_TIMES = PAPER_STAGES + ("selector_other_us",)
+PAPER_META = ("timing_schema_version", "paper_timing_valid", "paper_timing_error",
+              "selector_mode", "wrist_skip_reason") + PAPER_FLAGS
+RESPONSE_FIELDS = ("timing_valid", "target_is_moving", "timing_runtime_mode") + SERVER_TIMES + PAPER_META + PAPER_TIMES
+TIMES = ("ik_latency_us",) + SERVER_TIMES + PAPER_TIMES
 FIELDS = ("frame_index", "source_timestamp", "method", "startup_call",
-          "call_success", "ik_status", "timing_valid", "target_is_moving",
-          "timing_runtime_mode") + TIMES
+          "call_success", "ik_status", "ik_latency_us") + RESPONSE_FIELDS
 
 
 def capture(frame, method, elapsed_us, response=None, error=None, startup=False):
@@ -23,6 +29,8 @@ def capture(frame, method, elapsed_us, response=None, error=None, startup=False)
                timing_valid=False, target_is_moving="", timing_runtime_mode="",
                ik_latency_us=elapsed_us)
     row.update({name: "" for name in SERVER_TIMES})
+    row.update({name: "" for name in PAPER_META + PAPER_TIMES})
+    row.update(paper_timing_valid=False)
     valid = bool(getattr(response, "timing_valid", False))
     values = [getattr(response, name, None) for name in SERVER_TIMES]
     if valid and all(isinstance(v, (float, int)) and math.isfinite(v) and v >= 0 for v in values):
@@ -30,6 +38,26 @@ def capture(frame, method, elapsed_us, response=None, error=None, startup=False)
         row.update(timing_valid=True,
                    target_is_moving=bool(response.target_is_moving),
                    timing_runtime_mode=str(response.timing_runtime_mode))
+    version = getattr(response, "timing_schema_version", 0)
+    row.update(timing_schema_version=version,
+               selector_mode=str(getattr(response, "selector_mode", "")),
+               wrist_skip_reason=str(getattr(response, "wrist_skip_reason", "")))
+    if version == 2 and getattr(response, "paper_timing_valid", False):
+        durations = [getattr(response, key, None) for key in PAPER_TIMES]
+        flags = [getattr(response, key, None) for key in PAPER_FLAGS]
+        good = row["timing_valid"] and all(
+            isinstance(v, (float, int)) and math.isfinite(v) and v >= 0 for v in durations)
+        good = good and all(isinstance(v, (bool, int)) and v in (0, 1) for v in flags)
+        if good:
+            good = all(flag or duration == 0 for flag, duration in zip(flags, durations))
+            good = good and math.isclose(sum(durations), row["selector_elapsed_us"],
+                                         abs_tol=1e-5, rel_tol=1e-9)
+        if good:
+            row.update(zip(PAPER_TIMES, durations))
+            row.update(zip(PAPER_FLAGS, map(bool, flags)))
+            row["paper_timing_valid"] = True
+        else:
+            row["paper_timing_error"] = "invalid_fields_or_exclusive_sum_mismatch"
     return row
 
 
@@ -59,21 +87,41 @@ def summarize(rows):
     for name, selected in groups.items():
         stats = {}
         for metric in TIMES:
-            valid = [r[metric] for r in selected if isinstance(r[metric], (int, float))
+            eligible = [r for r in selected if metric not in PAPER_TIMES or r.get("paper_timing_valid", False)]
+            valid = [r[metric] for r in eligible if isinstance(r.get(metric), (int, float))
                      and math.isfinite(r[metric]) and r[metric] >= 0]
             # Zero-stage fields cannot establish that the stage was measured.
             samples = [v for v in valid if v > 0] if metric in STAGES else valid
+            executed_count = skipped_count = execution_rate = mean_all_calls = None
+            if metric in PAPER_STAGES:
+                flag = PAPER_FLAGS[PAPER_STAGES.index(metric)]
+                samples = [r[metric] for r in eligible if r[flag]]
+                executed_count = len(samples)
+                skipped_count = len(valid) - executed_count
+                execution_rate = executed_count / len(valid) if valid else None
+                mean_all_calls = sum(valid) / len(valid) if valid else None
             stats[metric] = dict(count=len(samples), missing_count=len(selected)-len(valid),
-                                 zero_count=sum(v == 0 for v in valid))
+                                 zero_count=sum(v == 0 for v in valid),
+                                 executed_count=executed_count, skipped_count=skipped_count,
+                                 execution_rate=execution_rate, mean_all_calls=mean_all_calls)
             stats[metric].update({k: None for k in ("mean", "p50", "p95", "p99", "max")})
             if samples:
                 stats[metric].update(mean=sum(samples)/len(samples), p50=percentile(samples, 50),
                                      p95=percentile(samples, 95), p99=percentile(samples, 99), max=max(samples))
-        output[name] = dict(calls=len(selected), metrics_us=stats)
-    return dict(schema_version=1, units="microseconds", groups=output,
+        paper = [r for r in selected if r.get("paper_timing_valid", False)]
+        paper_total = sum(r["selector_elapsed_us"] for r in paper)
+        shares = {key: sum(r[key] for r in paper) / paper_total if paper_total else None
+                  for key in PAPER_TIMES}
+        output[name] = dict(calls=len(selected), metrics_us=stats,
+                            paper_valid_calls=len(paper), paper_time_fractions=shares,
+                            paper_invalid_calls=sum(bool(r.get("paper_timing_error")) for r in selected))
+    return dict(schema_version=2, units="microseconds", groups=output,
                 notes=["Startup calls are excluded from non-startup groups.",
-                       "Zero stage durations mean unrecorded/not reached and are excluded from stage percentiles.",
-                       "Stage intervals are the library's instrumentation scopes; do not sum them into exclusive percentages.",
+                       "Legacy stage zeros are ambiguous; legacy stages must not be summed with paper stages.",
+                       "Paper stage mean/percentiles/max use executed calls, including true zero durations; rejected candidates count too.",
+                       "Paper execution_rate denominator is valid paper calls in the group; mean_all_calls includes skipped zeros.",
+                       "Paper stages are exclusive; their sum plus selector_other_us equals selector_elapsed_us. IK is included.",
+                       "Guard/experimental profiles are excluded from paper statistics, not from total-time statistics.",
                        "Client call time includes ROS round trip, not CSV I/O or console printing.",
                        "Timing rows describe IK calls, not proof that a command was published."])
 
@@ -107,7 +155,8 @@ class TimingRecorder:
             stream.write("\n")
         with open(self.summary_csv_path, "x", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=("group", "metric_us", "calls", "count",
-                "missing_count", "zero_count", "mean", "p50", "p95", "p99", "max"))
+                "missing_count", "zero_count", "executed_count", "skipped_count", "execution_rate",
+                "mean_all_calls", "mean", "p50", "p95", "p99", "max"))
             writer.writeheader()
             for group, detail in summary["groups"].items():
                 for metric, stats in detail["metrics_us"].items():

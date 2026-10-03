@@ -26,7 +26,7 @@ from core.right_teleop_playback import (
     rounded_solver_state,
     validate_online_solution,
 )
-from core.ik_timing import SERVER_TIMES, TimingRecorder, capture
+from core.ik_timing import RESPONSE_FIELDS, TimingRecorder, capture
 from playback_right_joint_trajectory import (
     call_feedback,
     call_movej,
@@ -125,7 +125,7 @@ def output_fields():
         "publish_lateness_s",
     ]
     fields.extend("q{}".format(index) for index in range(1, 8))
-    fields.extend(("timing_valid", "target_is_moving", "timing_runtime_mode") + SERVER_TIMES)
+    fields.extend(RESPONSE_FIELDS)
     return fields
 
 
@@ -277,7 +277,7 @@ def result_row(
     }
     for index, value in enumerate(result["joints"], start=1):
         row["q{}".format(index)] = value
-    for name in ("timing_valid", "target_is_moving", "timing_runtime_mode") + SERVER_TIMES:
+    for name in RESPONSE_FIELDS:
         row[name] = result.get("timing", {}).get(name, "")
     return row
 
